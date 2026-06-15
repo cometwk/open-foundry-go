@@ -47,6 +47,7 @@ const ODL_FILES = [
   'ward.odl',
   'bed.odl',
   'consultant.odl',
+  'staff.odl',
   'discharge-record.odl',
   'transfer.odl',
   'links.odl',
@@ -81,7 +82,7 @@ describe('NHS Acute Domain Pack — ODL Schema Parsing', () => {
   });
 
   describe('enums', () => {
-    it('declares all 6 enums', () => {
+    it('declares all 7 enums', () => {
       const enumNames = schema.enums.map(e => e.name).sort();
       expect(enumNames).toEqual([
         'BedStatus',
@@ -89,7 +90,15 @@ describe('NHS Acute Domain Pack — ODL Schema Parsing', () => {
         'CareRole',
         'DischargeDestination',
         'PatientStatus',
+        'StaffRole',
         'TriageCategory',
+      ]);
+    });
+
+    it('StaffRole has correct values', () => {
+      const sr = schema.enums.find(e => e.name === 'StaffRole')!;
+      expect(sr.values.map(v => v.name)).toEqual([
+        'NURSE', 'PHYSICIAN', 'ALLIED_HEALTH_PROFESSIONAL', 'HEALTHCARE_ASSISTANT', 'ADMINISTRATIVE', 'PORTER',
       ]);
     });
 
@@ -136,11 +145,11 @@ describe('NHS Acute Domain Pack — ODL Schema Parsing', () => {
     });
   });
 
-  describe('objectTypes (6)', () => {
-    it('declares all 6 ObjectTypes', () => {
+  describe('objectTypes (7)', () => {
+    it('declares all 7 ObjectTypes', () => {
       const names = schema.objectTypes.map(t => t.name).sort();
       expect(names).toEqual([
-        'Bed', 'Consultant', 'DischargeRecord', 'Patient', 'Transfer', 'Ward',
+        'Bed', 'Consultant', 'DischargeRecord', 'Patient', 'Staff', 'Transfer', 'Ward',
       ]);
     });
 
@@ -223,6 +232,31 @@ describe('NHS Acute Domain Pack — ODL Schema Parsing', () => {
         const gmc = consultant.fields.find(f => f.name === 'gmcNumber')!;
         expect(findDirective(gmc.directives, 'unique')).toBeDefined();
         expect(findDirective(gmc.directives, 'indexed')).toBeDefined();
+      });
+    });
+
+    describe('Staff', () => {
+      it('has required fields', () => {
+        const staff = schema.objectTypes.find(t => t.name === 'Staff')!;
+        const fieldNames = staff.fields.map(f => f.name);
+        expect(fieldNames).toContain('staffId');
+        expect(fieldNames).toContain('name');
+        expect(fieldNames).toContain('role');
+        expect(fieldNames).toContain('specialty');
+      });
+
+      it('staffId is @unique @indexed', () => {
+        const staff = schema.objectTypes.find(t => t.name === 'Staff')!;
+        const staffId = staff.fields.find(f => f.name === 'staffId')!;
+        expect(findDirective(staffId.directives, 'unique')).toBeDefined();
+        expect(findDirective(staffId.directives, 'indexed')).toBeDefined();
+      });
+
+      it('role is the StaffRole enum (required)', () => {
+        const staff = schema.objectTypes.find(t => t.name === 'Staff')!;
+        const role = staff.fields.find(f => f.name === 'role')!;
+        expect(role.type.name).toBe('StaffRole');
+        expect(role.type.nonNull).toBe(true);
       });
     });
 
@@ -511,7 +545,7 @@ describe('NHS Acute Domain Pack — pack.yaml manifest', () => {
     const pack = parseYaml(content) as Record<string, unknown>;
 
     const provides = pack['provides'] as Record<string, number>;
-    expect(provides['objectTypes']).toBe(6);
+    expect(provides['objectTypes']).toBe(7);
     expect(provides['linkTypes']).toBe(6);
     expect(provides['actionTypes']).toBe(5);
     expect(provides['connectors']).toBe(1);
@@ -523,7 +557,7 @@ describe('NHS Acute Domain Pack — pack.yaml manifest', () => {
     const pack = parseYaml(content) as Record<string, unknown>;
 
     const schemaFiles = pack['schema'] as string[];
-    expect(schemaFiles).toHaveLength(9);
+    expect(schemaFiles).toHaveLength(10);
     for (const odlFile of ODL_FILES) {
       expect(schemaFiles).toContain(`schema/${odlFile}`);
     }

@@ -36,6 +36,23 @@ describe('CDM mapping profile', () => {
     }
   });
 
+  it('Consultant and Staff both project to the CDM Practitioner resource (v0.2.0 B4)', () => {
+    expect(findMappingBySourceType(NHS_ACUTE_CDM_PROFILE, 'Consultant')?.cdmResource).toBe('Practitioner');
+    expect(findMappingBySourceType(NHS_ACUTE_CDM_PROFILE, 'Staff')?.cdmResource).toBe('Practitioner');
+  });
+
+  it('projects a Staff record to Practitioner with identifier and role', () => {
+    const mapping = findMappingBySourceType(NHS_ACUTE_CDM_PROFILE, 'Staff')!;
+    const rec = projectToCdm(
+      { _id: 's-1', _version: 1, staffId: 'STAFF-9', name: 'Nurse Okafor', role: 'NURSE', specialty: 'General' },
+      mapping, NHS_ACUTE_CDM_PROFILE,
+    );
+    expect(rec.resourceType).toBe('Practitioner');
+    expect(rec['identifier']).toBe('STAFF-9');
+    expect(rec['role']).toBe('NURSE');
+    expect(rec['specialty']).toBe('General');
+  });
+
   it('Ward and Bed both project to the CDM Location resource', () => {
     expect(findMappingBySourceType(NHS_ACUTE_CDM_PROFILE, 'Ward')?.cdmResource).toBe('Location');
     expect(findMappingBySourceType(NHS_ACUTE_CDM_PROFILE, 'Bed')?.cdmResource).toBe('Location');

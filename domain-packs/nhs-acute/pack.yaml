@@ -8,7 +8,7 @@ dependencies:
   openfoundry.core: ">=1.0.0"
 
 provides:
-  objectTypes: 6
+  objectTypes: 7
   linkTypes: 6
   actionTypes: 5
   functions: 0
@@ -22,6 +22,7 @@ schema:
   - schema/ward.odl
   - schema/bed.odl
   - schema/consultant.odl
+  - schema/staff.odl
   - schema/discharge-record.odl
   - schema/transfer.odl
   - schema/links.odl

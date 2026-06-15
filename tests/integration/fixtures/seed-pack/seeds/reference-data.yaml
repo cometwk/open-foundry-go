@@ -91,6 +91,28 @@ objects:
       gmcNumber: "GMC100002"
       specialty: "Cardiology"
 
+  # ── Staff (general clinical/operational staff → CDM Practitioner, B4) ──
+  - type: Staff
+    ref: staff-nurse-okafor
+    fields:
+      staffId: "STAFF-0001"
+      name: "Nurse Okafor"
+      role: "NURSE"
+      specialty: "General"
+  - type: Staff
+    ref: staff-physio-patel
+    fields:
+      staffId: "STAFF-0002"
+      name: "Priya Patel"
+      role: "ALLIED_HEALTH_PROFESSIONAL"
+      specialty: "Physiotherapy"
+  - type: Staff
+    ref: staff-admin-brown
+    fields:
+      staffId: "STAFF-0003"
+      name: "Sam Brown"
+      role: "ADMINISTRATIVE"
+
   # ── Patients (discharged; admitted via the AdmitPatient action in tests) ──
   - type: Patient
     ref: patient-doe

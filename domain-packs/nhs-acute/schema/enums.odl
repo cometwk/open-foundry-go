@@ -46,3 +46,14 @@ enum CareRole {
   SECONDARY
   ON_CALL
 }
+
+# Staff professional category (v0.2.0 B4) — broadens CDM Practitioner coverage
+# beyond Consultant.
+enum StaffRole {
+  NURSE
+  PHYSICIAN
+  ALLIED_HEALTH_PROFESSIONAL
+  HEALTHCARE_ASSISTANT
+  ADMINISTRATIVE
+  PORTER
+}

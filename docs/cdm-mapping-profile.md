@@ -35,7 +35,7 @@ Patient, Ward, Bed, Admission, Discharge, Transfer, Staff, Encounter.
 Coverage caveats, recorded in the gap register rather than fabricated:
 - **Admission** is surfaced as **Encounter** (projected from the `AdmittedTo` link); there is no separate `/Admission` route.
 - **Transfer** is a first-class stored object (v0.2.0 B1), written by the `TransferWard` action and exposed as the CDM `Transfer` resource.
-- **Staff** is consultant-only (only `Consultant` is modelled).
+- **Staff** coverage spans `Consultant` (senior clinical) and the general `Staff` type (nurses, AHPs, healthcare assistants, administrative staff, porters); both project to CDM `Practitioner` (v0.2.0 B4).
 
 ## Resource mappings
 
@@ -73,13 +73,24 @@ field carries the CDM resource name.
 | `bedType` | `type` | |
 | `status` | `status` | **Lossy** — `CLEANING` and `OUT_OF_SERVICE` both → `unavailable` |
 
-### Consultant → CDM `Practitioner`
+### Consultant → CDM `Practitioner` (senior clinical staff)
 | CDM field | Source field | Notes |
 |---|---|---|
 | `id` | `_id` | |
-| `gmcNumber` | `gmcNumber` | |
+| `identifier` | `gmcNumber` | GMC registration number |
 | `name` | `name` | **Lossy** — single free-text string |
+| `role` | _(constant)_ | `"PHYSICIAN"` |
 | `specialty` | `specialty` | |
+
+### Staff → CDM `Practitioner` (general staff, v0.2.0 B4)
+Nurses, AHPs, healthcare assistants, administrative staff, and porters.
+| CDM field | Source field | Notes |
+|---|---|---|
+| `id` | `_id` | |
+| `identifier` | `staffId` | Local staff/professional identifier |
+| `name` | `name` | **Lossy** — single free-text string |
+| `role` | `role` | `StaffRole` (NURSE, PHYSICIAN, ALLIED_HEALTH_PROFESSIONAL, HEALTHCARE_ASSISTANT, ADMINISTRATIVE, PORTER) |
+| `specialty` | `specialty` | Optional |
 
 ### DischargeRecord → CDM `Discharge`
 | CDM field | Source field | Notes |
@@ -139,7 +150,7 @@ what was projected and what was approximated:
 |---|---|---|
 | Admission | Not a distinct resource — surfaced as Encounter via the `AdmittedTo` link; no `/Admission` route | Treat Encounter as the admission record |
 | Transfer | **Resolved (v0.2.0 B1)** — `TransferWard` now writes a first-class `Transfer` object, projected as CDM `Transfer` | No longer a gap; transfers are queryable directly and via the CDM projection |
-| Staff | Only Consultant is modelled; no nurses/AHPs/admin staff | Extend `nhs-acute` with a general Staff/Practitioner type before claiming full CDM staff coverage |
+| Staff | **Resolved (v0.2.0 B4)** — a general `Staff` type (StaffRole) projects to CDM Practitioner alongside Consultant | Practitioner-name decomposition (family/given) remains a later refinement |
 | Patient.name | **Resolved (v0.2.0 B2)** — Patient carries structured `family` + `given` alongside the full `name` | `given` holds space-separated forenames (split for the list form); `prefix`/`suffix` remain out of scope |
 | Patient.identifier | NHS Number optional; local-number-only patients not flagged provisional | Provisional-identity flagging handled upstream (PDS resolution, connector layer) |
 | Terminology | Coded fields are free strings / local enums, not validated against SNOMED CT / dm+d / ODS | Terminology validation added at connector layer (S1.2) and full CDM coverage (S2.2) |
@@ -152,7 +163,7 @@ and GraphQL.
 | Endpoint | Description | Auth |
 |---|---|---|
 | `GET /api/v1/cdm/metadata` | Profile, compatibility matrix, gap register | Public |
-| `GET /api/v1/cdm/{SourceType}` | List projection (Patient, Ward, Bed, Consultant, DischargeRecord, Transfer) | Required |
+| `GET /api/v1/cdm/{SourceType}` | List projection (Patient, Ward, Bed, Consultant, Staff, DischargeRecord, Transfer) | Required |
 | `GET /api/v1/cdm/{SourceType}/{id}` | Single record projection | Required |
 | `GET /api/v1/cdm/{SourceType}/export` | Dataset export, `?format=ndjson` (default) or `csv` | Required |
 | `GET /api/v1/cdm/Encounter?patient={id}` | Admissions for a patient (via AdmittedTo) | Required |
@@ -165,7 +176,7 @@ It reuses the list route's pipeline, so an export never surfaces anything the
 list route would not.
 
 Patient and Encounter projections are consent-gated (subject = patient).
-`Ward`/`Bed`/`Consultant`/`DischargeRecord` are authorization + redaction gated.
+`Ward`/`Bed`/`Consultant`/`Staff`/`DischargeRecord` are authorization + redaction gated.
 
 ## Status
 

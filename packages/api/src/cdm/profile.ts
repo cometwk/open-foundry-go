@@ -79,11 +79,25 @@ export const NHS_ACUTE_CDM_PROFILE: CdmMappingProfile = {
       cdmResource: 'Practitioner',
       sourceType: 'Consultant',
       sourceKind: 'object',
-      note: 'Consultant projected as CDM Practitioner (clinical staff).',
+      note: 'Consultant projected as CDM Practitioner (senior clinical staff).',
       fields: [
         { cdmField: 'id', sourceField: '_id' },
-        { cdmField: 'gmcNumber', sourceField: 'gmcNumber' },
+        { cdmField: 'identifier', sourceField: 'gmcNumber', note: 'GMC registration number.' },
         { cdmField: 'name', sourceField: 'name', lossy: true, note: 'Single free-text name; not decomposed.' },
+        { cdmField: 'role', sourceField: '__const_PHYSICIAN', note: 'Consultants are physicians (constant).' },
+        { cdmField: 'specialty', sourceField: 'specialty' },
+      ],
+    },
+    {
+      cdmResource: 'Practitioner',
+      sourceType: 'Staff',
+      sourceKind: 'object',
+      note: 'General clinical/operational staff projected as CDM Practitioner (v0.2.0 B4) — nurses, AHPs, healthcare assistants, administrative staff, porters.',
+      fields: [
+        { cdmField: 'id', sourceField: '_id' },
+        { cdmField: 'identifier', sourceField: 'staffId', note: 'Local staff/professional identifier.' },
+        { cdmField: 'name', sourceField: 'name', lossy: true, note: 'Single free-text name; not decomposed.' },
+        { cdmField: 'role', sourceField: 'role', note: 'StaffRole category (nurse, AHP, admin, …).' },
         { cdmField: 'specialty', sourceField: 'specialty' },
       ],
     },
@@ -153,8 +167,8 @@ export const NHS_ACUTE_CDM_PROFILE: CdmMappingProfile = {
     },
     {
       area: 'Staff',
-      issue: 'Only Consultant is modelled. Nurses, AHPs, and administrative staff have no ODL type, so CDM Practitioner coverage is consultant-only.',
-      fallback: 'Extend the nhs-acute pack with a general Staff/Practitioner type before claiming full CDM staff coverage.',
+      issue: 'RESOLVED (v0.2.0 B4): a general Staff type (StaffRole: nurse, physician, AHP, healthcare assistant, administrative, porter) projects to CDM Practitioner alongside Consultant. Practitioner name is still a single free-text string (not decomposed).',
+      fallback: 'No longer a coverage gap. Practitioner-name decomposition (family/given) remains a later refinement.',
     },
     {
       area: 'Patient.name',

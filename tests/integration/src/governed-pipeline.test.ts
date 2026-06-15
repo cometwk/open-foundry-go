@@ -187,6 +187,19 @@ describeWithDocker('governed pipeline (live stack)', () => {
     expect(res.status).toBe(400);
   });
 
+  it('projects seeded Staff to the CDM Practitioner resource (v0.2.0 B4)', async () => {
+    const list = await restGet<{
+      resourceType: string;
+      total: number;
+      records: Array<{ resourceType: string; identifier?: string; role?: string }>;
+    }>('/cdm/Staff');
+    expect(list.resourceType).toBe('Practitioner');
+    expect(list.total).toBeGreaterThanOrEqual(1);
+    expect(list.records.every((r) => r.resourceType === 'Practitioner')).toBe(true);
+    // Seeded staff carry a StaffRole (e.g. NURSE / ALLIED_HEALTH_PROFESSIONAL).
+    expect(list.records.some((r) => !!r.role)).toBe(true);
+  });
+
   it('serves the FHIR CapabilityStatement', async () => {
     const cap = await fhirGet<{ resourceType: string; fhirVersion: string }>(
       'metadata',

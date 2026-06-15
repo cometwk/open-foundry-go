@@ -34,6 +34,11 @@ type consultant
     define viewer: [user]
     define self: [user]
 
+type staff
+  relations
+    define viewer: [user]
+    define self: [user]
+
 type discharge_record
   relations
     define clinician: [user]
