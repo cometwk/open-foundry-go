@@ -48,7 +48,9 @@ field carries the CDM resource name.
 |---|---|---|
 | `id` | `_id` | |
 | `nhsNumber` | `nhsNumber` | Provisional-identity flagging is an upstream connector concern |
-| `name` | `name` | **Lossy** — single free-text string, not structured family/given |
+| `name` | `name` | Full display name; structured components carried in `family`/`given` |
+| `family` | `family` | Surname (structured-name decomposition, v0.2.0 B2) |
+| `given` | `given` | **Lossy** — one or more forenames, space-separated; consumers split on whitespace |
 | `birthDate` | `dateOfBirth` | |
 | `status` | `status` | **Lossy** enum remap; `TRANSFERRED` collapses to `active` |
 | `triageCategory` | `triageCategory` | **Lossy** — NHS-local P1–P4, not CDM-coded |
@@ -138,7 +140,7 @@ what was projected and what was approximated:
 | Admission | Not a distinct resource — surfaced as Encounter via the `AdmittedTo` link; no `/Admission` route | Treat Encounter as the admission record |
 | Transfer | **Resolved (v0.2.0 B1)** — `TransferWard` now writes a first-class `Transfer` object, projected as CDM `Transfer` | No longer a gap; transfers are queryable directly and via the CDM projection |
 | Staff | Only Consultant is modelled; no nurses/AHPs/admin staff | Extend `nhs-acute` with a general Staff/Practitioner type before claiming full CDM staff coverage |
-| Patient.name | Single free-text string vs CDM structured family/given | Export carries raw string; marked lossy in provenance |
+| Patient.name | **Resolved (v0.2.0 B2)** — Patient carries structured `family` + `given` alongside the full `name` | `given` holds space-separated forenames (split for the list form); `prefix`/`suffix` remain out of scope |
 | Patient.identifier | NHS Number optional; local-number-only patients not flagged provisional | Provisional-identity flagging handled upstream (PDS resolution, connector layer) |
 | Terminology | Coded fields are free strings / local enums, not validated against SNOMED CT / dm+d / ODS | Terminology validation added at connector layer (S1.2) and full CDM coverage (S2.2) |
 
@@ -161,5 +163,5 @@ Patient and Encounter projections are consent-gated (subject = patient).
 
 This is a **Stage 1 starter slice**: the profile, projection, provenance, and
 read API are complete and tested for the operational subset. A first-class
-Transfer object landed in v0.2.0 (B1). Full CDM coverage, terminology
-validation, and structured-name decomposition are scoped to later stages (S2.2).
+Transfer object (B1) and structured-name decomposition (B2) landed in v0.2.0.
+Full CDM coverage and terminology validation are scoped to later stages (S2.2).

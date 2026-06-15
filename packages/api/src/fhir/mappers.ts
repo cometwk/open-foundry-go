@@ -4,7 +4,8 @@
  * Patient: maps to FHIR Patient per MVP Section 4.6
  *   - identifier[0].system = NHS number system
  *   - identifier[0].value  = nhsNumber field
- *   - name[0].family        = name field
+ *   - name[0].family        = family field (falls back to name when unset)
+ *   - name[0].given         = given field, split on whitespace
  *   - birthDate             = dateOfBirth field
  *   - meta.profile          = NHS Digital Patient profile
  *
@@ -44,16 +45,35 @@ export function mapPatientToFhir(obj: OntologyObject): FhirPatient {
           },
         ]
       : undefined,
-    name: obj.name
-      ? [
-          {
-            family: String(obj.name),
-            use: 'official',
-          },
-        ]
-      : undefined,
+    name: buildFhirName(obj),
     birthDate: toFhirDate(obj.dateOfBirth),
   };
+}
+
+/**
+ * Build the FHIR HumanName array from a Patient.
+ *
+ * Prefers the structured `family`/`given` components (v0.2.0 B2); `given` holds
+ * one or more space-separated forenames, exploded into the FHIR `given[]` array.
+ * Falls back to the legacy single `name` string (mapped to `family`) when no
+ * structured components are present.
+ */
+function buildFhirName(obj: OntologyObject): FhirPatient['name'] {
+  const family = typeof obj.family === 'string' && obj.family.trim() !== '' ? obj.family.trim() : undefined;
+  const given =
+    typeof obj.given === 'string' && obj.given.trim() !== ''
+      ? obj.given.trim().split(/\s+/)
+      : undefined;
+
+  if (family || given) {
+    return [{ family, given, use: 'official' }];
+  }
+
+  if (obj.name) {
+    return [{ family: String(obj.name), use: 'official' }];
+  }
+
+  return undefined;
 }
 
 /**

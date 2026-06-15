@@ -97,6 +97,8 @@ objects:
     fields:
       nhsNumber: "9434765919"
       name: "Jane Doe"
+      given: "Jane"
+      family: "Doe"
       dateOfBirth: "1990-05-15"
       status: "DISCHARGED"
   - type: Patient
@@ -104,6 +106,8 @@ objects:
     fields:
       nhsNumber: "9434765927"
       name: "John Roe"
+      given: "John"
+      family: "Roe"
       dateOfBirth: "1985-03-20"
       status: "DISCHARGED"
   - type: Patient
@@ -111,6 +115,8 @@ objects:
     fields:
       nhsNumber: "9434765935"
       name: "Mary Moe"
+      given: "Mary"
+      family: "Moe"
       dateOfBirth: "1975-11-01"
       status: "DISCHARGED"
 

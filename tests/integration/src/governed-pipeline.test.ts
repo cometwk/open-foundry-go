@@ -61,6 +61,9 @@ describeWithDocker('governed pipeline (live stack)', () => {
     const result = await restPost<ActionResult>('/actions/RegisterPatient', {
       nhsNumber,
       name: 'Pipeline Test',
+      // Structured-name decomposition (v0.2.0 B2): given holds two forenames.
+      given: 'Pipeline Adaeze',
+      family: 'Test',
       dateOfBirth: '1990-05-15',
       presentingComplaint: 'chest pain',
     });
@@ -120,7 +123,7 @@ describeWithDocker('governed pipeline (live stack)', () => {
       resourceType: string;
       id: string;
       identifier: { system: string; value: string }[];
-      name: { family?: string }[];
+      name: { family?: string; given?: string[] }[];
     }>(`Patient/${patientId}`);
     expect(fhir.resourceType).toBe('Patient');
     expect(fhir.id).toBe(patientId);
@@ -130,6 +133,24 @@ describeWithDocker('governed pipeline (live stack)', () => {
     );
     expect(nhsId?.value).toBe(nhsNumber);
     expect(fhir.name.length).toBeGreaterThanOrEqual(1);
+    // v0.2.0 B2: structured name maps to HumanName.family/given[].
+    expect(fhir.name[0]!.family).toBe('Test');
+    expect(fhir.name[0]!.given).toEqual(['Pipeline', 'Adaeze']);
+  });
+
+  it('projects structured family/given to the CDM Patient resource', async () => {
+    const cdm = await restGet<{
+      resourceType: string;
+      family?: string;
+      given?: string;
+      _provenance: { lossyFields: string[] };
+    }>(`/cdm/Patient/${patientId}`);
+    expect(cdm.resourceType).toBe('Patient');
+    expect(cdm.family).toBe('Test');
+    expect(cdm.given).toBe('Pipeline Adaeze');
+    // name is no longer lossy; given carries the space-separated forenames.
+    expect(cdm._provenance.lossyFields).not.toContain('name');
+    expect(cdm._provenance.lossyFields).toContain('given');
   });
 
   it('serves the FHIR CapabilityStatement', async () => {

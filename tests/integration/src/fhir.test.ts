@@ -23,7 +23,7 @@ interface FhirPatient {
     lastUpdated?: string;
   };
   identifier?: Array<{ system: string; value: string }>;
-  name?: Array<{ family: string; use?: string }>;
+  name?: Array<{ family?: string; given?: string[]; use?: string }>;
   birthDate?: string;
 }
 
@@ -66,12 +66,14 @@ describe.skipIf(!dockerAvailable)('FHIR R4 Endpoint', () => {
       expect(nhsId!.value).toBe('9434765919');
     });
 
-    it('should include patient name as family name', async () => {
+    it('should map structured family/given to FHIR HumanName (v0.2.0 B2)', async () => {
       const patient = await fhirGet<FhirPatient>(`Patient/${data.patients.doe.id}`);
 
       expect(patient.name).toBeDefined();
       expect(patient.name!.length).toBeGreaterThanOrEqual(1);
-      expect(patient.name![0]!.family).toBe('Jane Doe');
+      // Seed patient "Jane Doe" carries given="Jane", family="Doe".
+      expect(patient.name![0]!.family).toBe('Doe');
+      expect(patient.name![0]!.given).toEqual(['Jane']);
     });
 
     it('should include birthDate', async () => {

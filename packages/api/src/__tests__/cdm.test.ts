@@ -25,7 +25,7 @@ describe('CDM mapping profile', () => {
     );
   });
 
-  it('records gaps for unmodelled subset items (Transfer, Staff)', () => {
+  it('records gap-register entries (incl. resolved Transfer / Patient.name, open Staff)', () => {
     const areas = NHS_ACUTE_CDM_PROFILE.gaps.map(g => g.area);
     expect(areas).toContain('Transfer');
     expect(areas).toContain('Staff');
@@ -55,6 +55,8 @@ describe('CDM projection', () => {
     _updatedAt: '2026-05-25T10:00:00.000Z',
     nhsNumber: '9434765919',
     name: 'Jane Doe',
+    given: 'Jane',
+    family: 'Doe',
     dateOfBirth: '1980-04-01',
     status: 'DISCHARGED',
     triageCategory: 'P2_URGENT',
@@ -72,6 +74,15 @@ describe('CDM projection', () => {
     expect(rec['status']).toBe('inactive');
   });
 
+  it('projects structured family/given components (v0.2.0 B2)', () => {
+    const mapping = findMappingBySourceType(NHS_ACUTE_CDM_PROFILE, 'Patient')!;
+    const rec = projectToCdm(patient, mapping, NHS_ACUTE_CDM_PROFILE);
+
+    expect(rec['name']).toBe('Jane Doe');
+    expect(rec['family']).toBe('Doe');
+    expect(rec['given']).toBe('Jane');
+  });
+
   it('attaches provenance with source version, timestamp, and lossy fields', () => {
     const mapping = findMappingBySourceType(NHS_ACUTE_CDM_PROFILE, 'Patient')!;
     const rec = projectToCdm(patient, mapping, NHS_ACUTE_CDM_PROFILE);
@@ -81,10 +92,12 @@ describe('CDM projection', () => {
     expect(rec._provenance.sourceVersion).toBe(3);
     expect(rec._provenance.sourceUpdatedAt).toBe('2026-05-25T10:00:00.000Z');
     expect(rec._provenance.profileVersion).toBe(NHS_ACUTE_CDM_PROFILE.profileVersion);
-    // name, status, triageCategory are declared lossy
+    // given, status, triageCategory are declared lossy (name is no longer
+    // lossy now that family/given carry the structured decomposition)
     expect(rec._provenance.lossyFields).toEqual(
-      expect.arrayContaining(['name', 'status', 'triageCategory']),
+      expect.arrayContaining(['given', 'status', 'triageCategory']),
     );
+    expect(rec._provenance.lossyFields).not.toContain('name');
   });
 
   it('injects constant fields (Ward → Location kind=ward)', () => {

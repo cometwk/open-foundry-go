@@ -29,7 +29,9 @@ export const NHS_ACUTE_CDM_PROFILE: CdmMappingProfile = {
       fields: [
         { cdmField: 'id', sourceField: '_id' },
         { cdmField: 'nhsNumber', sourceField: 'nhsNumber', note: 'Local-number-only patients should be flagged provisional upstream (connector concern, not enforced here).' },
-        { cdmField: 'name', sourceField: 'name', lossy: true, note: 'ODL stores a single free-text name; CDM expects structured family/given. Not decomposed here.' },
+        { cdmField: 'name', sourceField: 'name', note: 'Full display name; structured components are carried in family/given (v0.2.0 B2).' },
+        { cdmField: 'family', sourceField: 'family', note: 'Surname (structured-name decomposition, v0.2.0 B2).' },
+        { cdmField: 'given', sourceField: 'given', lossy: true, note: 'One or more forenames, space-separated; CDM/FHIR model given as a list — consumers split on whitespace.' },
         { cdmField: 'birthDate', sourceField: 'dateOfBirth' },
         {
           cdmField: 'status',
@@ -156,8 +158,8 @@ export const NHS_ACUTE_CDM_PROFILE: CdmMappingProfile = {
     },
     {
       area: 'Patient.name',
-      issue: 'ODL stores a single free-text `name`; the CDM expects structured family/given/prefix components.',
-      fallback: 'Name decomposition is deferred; the export carries the raw string. Mark as lossy in provenance.',
+      issue: 'RESOLVED (v0.2.0 B2): Patient now carries structured `family` and `given` components alongside the full `name`. `given` holds one or more space-separated forenames (CDM/FHIR model given as a list); `prefix`/`suffix` are not yet modelled.',
+      fallback: 'Consumers split `given` on whitespace for the canonical list form. Prefix/suffix remain out of scope.',
     },
     {
       area: 'Patient.identifier',

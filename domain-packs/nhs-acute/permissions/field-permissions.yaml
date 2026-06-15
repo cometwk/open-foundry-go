@@ -15,19 +15,27 @@
     clinician:
       - nhsNumber
       - name
+      - family
+      - given
       - dateOfBirth
       - triageCategory
     nurse:
       - nhsNumber
       - name
+      - family
+      - given
       - dateOfBirth
       - triageCategory
     admin:
       - nhsNumber
       - name
+      - family
+      - given
       - dateOfBirth
     viewer:
       - name
+      - family
+      - given
 
 - objectType: DischargeRecord
   alwaysVisible:

@@ -372,6 +372,37 @@ describe('FHIR R4 read-only facade', () => {
     });
   });
 
+  describe('Structured-name decomposition (v0.2.0 B2)', () => {
+    it('maps structured family/given to FHIR HumanName', () => {
+      const patient = createPatientObject('p-1', {
+        name: 'Jane Mary Doe',
+        family: 'Doe',
+        given: 'Jane Mary',
+      });
+      const fhir = mapPatientToFhir(patient);
+
+      expect(fhir.name).toHaveLength(1);
+      expect(fhir.name![0]!.family).toBe('Doe');
+      expect(fhir.name![0]!.given).toEqual(['Jane', 'Mary']);
+      expect(fhir.name![0]!.use).toBe('official');
+    });
+
+    it('falls back to the single name string when no structured components', () => {
+      const patient = createPatientObject('p-1', { name: 'Smith', family: undefined, given: undefined });
+      const fhir = mapPatientToFhir(patient);
+
+      expect(fhir.name![0]!.family).toBe('Smith');
+      expect(fhir.name![0]!.given).toBeUndefined();
+    });
+
+    it('explodes multiple given names on whitespace', () => {
+      const patient = createPatientObject('p-1', { family: 'Doe', given: '  Jane   Mary  ' });
+      const fhir = mapPatientToFhir(patient);
+
+      expect(fhir.name![0]!.given).toEqual(['Jane', 'Mary']);
+    });
+  });
+
   describe('Encounter search (synthesized from AdmittedTo links)', () => {
     it('returns encounters synthesized from AdmittedTo links', async () => {
       const deps = createMockDeps();
