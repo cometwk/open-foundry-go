@@ -142,14 +142,24 @@ OIDC_ISSUER=http://localhost:8180/realms/openfoundry      # must match token `is
 OIDC_JWKS_URI=http://keycloak:8080/realms/openfoundry/protocol/openid-connect/certs
 ```
 
-### Keycloak realm is not auto-provisioned
+### Keycloak realm auto-provisioning  *(resolved in v0.2.0 — A3)*
 
-Keycloak runs `start-dev` with **no realm import** — only the `master` realm
-exists at boot. The `KEYCLOAK_REALM=openfoundry` env names a realm that nothing
-creates, and `init-services.sh` does **not** provision Keycloak (only OpenFGA +
-AGE). Before production auth works you must create the realm, client (with the
-audience + `tenant_id` mappers above), users, and roles yourself — via a realm
-import JSON or a provisioning script.
+Keycloak now boots `start-dev --import-realm` and imports
+`deploy/keycloak/openfoundry-realm.json` on first start: the `openfoundry`
+realm, the `openfoundry` client, the pilot realm roles, two test users
+(`dr-test`, `admin-test`, password `test-password`), and the **three protocol
+mappers the OIDC authenticator requires** — audience (`aud == openfoundry`),
+`tenant_id` (from a user attribute), and a flat top-level `roles` array
+(realm-role mapper, not nested `realm_access.roles`). A host-minted token
+therefore carries `aud`/`tenant_id`/`roles` and passes token validation.
+
+> The realm is persisted in PostgreSQL (`KC_DB=postgres`); re-import only
+> happens on a fresh DB volume. To force re-import, `docker compose down -v`.
+>
+> For the full non-stub end-to-end (a minted token driving a governed action
+> against `NODE_ENV=production`), set `OIDC_ISSUER` to match the token issuer —
+> note the issuer includes the `/auth` relative path,
+> e.g. `http://keycloak:8080/auth/realms/openfoundry`.
 
 ## Authorization Tuples for Actions
 
@@ -159,21 +169,29 @@ Action authorization (`packages/api/src/config.ts`, `createSecurityLayer`) check
 roles. Per the NHS model, relations like `patient.can_discharge` resolve from
 direct `[user]` relations on the patient object (`clinician`, `nurse_in_charge`).
 
-**Footgun:** a freshly created object has no care-team tuples, so `can_admit` /
-`can_discharge` / `can_transfer` are checked *before any tuple exists* → the
-action is **denied for everyone**, including clinicians. (`writeRelationship`
-exists on `AuthorizationService` but is **not** called anywhere in the
-object-lifecycle or action pipeline, and there is no REST/GraphQL tuple-write
-surface.) Ward `assigned` tuples grant only `viewer`/`editor` visibility — **not**
-the action verbs.
-
-**Until a tuple-write API exists, integrators must provision relationship tuples
-out-of-band** by writing directly to OpenFGA. For example, grant the acting
-clinician on admission:
+**Footgun (mitigated in v0.2.0 — A1):** a freshly created object has no care-team
+tuples, so `can_admit` / `can_discharge` / `can_transfer` are checked *before any
+tuple exists* → denied for everyone. v0.2.0 adds a **governed tuple-write API**
+so these no longer require out-of-band writes:
 
 ```
-(user:<sub>, clinician, patient:<id>)
+POST   /api/v1/relationships   { "user", "relation", "objectType", "objectId" }
+DELETE /api/v1/relationships   { ... }            # + GraphQL grant/revokeRelationship
 ```
+
+It grants only relations the merged FGA model declares directly-assignable to
+`user` (`patient.{clinician,nurse_in_charge,admin}`, `ward.{assigned,porter}`);
+computed/link relations like `can_admit`/`admitted_to` are rejected. The caller
+must hold a granter role (`admin`/`nurse_in_charge`); every grant/revoke/denial
+is audited. Example — grant the acting clinician on admission:
+
+```
+POST /api/v1/relationships { "user":"<sub>", "relation":"clinician", "objectType":"Patient", "objectId":"<id>" }
+```
+
+Link-derived tuples (`admitted_to`, `bed_in_ward`) are still minted automatically
+by the action pipeline (`syncLinkTuple`); the API covers the direct `[user]`
+grants only.
 
 ## Driving an Action via REST (with auth)
 
@@ -216,11 +234,13 @@ effects → audit). These bite a production single-trust pilot specifically.
   defaults to `viewer` (`careRelation ?? "viewer"`). But `patient.viewer = viewer
   from admitted_to` — it derives from ward admission, so a freshly seeded/synced
   (un-admitted) patient has no `viewer`, the exemption returns null, and
-  `AdmitPatient` fails `CONSENT_DENIED`. There is **no REST/GraphQL surface to
-  record consent** (only in-process `ConsentService.recordConsent`); integrators
-  must insert a `GRANT` row directly into `consent.consent_records` (the decision
-  enum value is `"GRANT"`, not `"ALLOW"`). *Fix direction: make `careRelation`
-  configurable (e.g. `clinician`) and expose a consent-record API.*
+  `AdmitPatient` fails `CONSENT_DENIED`. **v0.2.0 (A2) adds a consent-record API**
+  (`POST /api/v1/consent` + GraphQL `recordConsent`, role-gated + audited) so
+  consent no longer requires a direct `consent.consent_records` insert (decision
+  enum is `"GRANT"`/`"DENY"`). This is an in-platform two-step flow (record
+  consent → then admit); it does **not** change the exemption default — making
+  `careRelation` configurable (e.g. `clinician`) so first admission succeeds
+  without a prior record remains a separate policy decision.
 
 - **Link-derived ReBAC tuples are now emitted by the pipeline.** On a `createLink`
   / `deleteLink` effect, the action executor writes/deletes the matching OpenFGA
