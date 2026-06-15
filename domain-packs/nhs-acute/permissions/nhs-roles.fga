@@ -39,3 +39,9 @@ type discharge_record
     define clinician: [user]
     define nurse_in_charge: [user]
     define viewer: clinician or nurse_in_charge
+
+type transfer
+  relations
+    define clinician: [user]
+    define nurse_in_charge: [user]
+    define viewer: clinician or nurse_in_charge

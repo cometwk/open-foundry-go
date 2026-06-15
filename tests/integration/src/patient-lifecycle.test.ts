@@ -142,7 +142,13 @@ describe.skipIf(!dockerAvailable)('Patient Lifecycle E2E', () => {
     });
 
     it('should transfer a patient to another ward via GraphQL action', async () => {
-      const result = await graphql<{ transferWard: { success: boolean; errors: string[] | null } }>(
+      const result = await graphql<{
+        transferWard: {
+          success: boolean;
+          errors: string[] | null;
+          affectedObjects: { typeName: string; id: string; changeType: string }[];
+        };
+      }>(
         TRANSFER_WARD,
         {
           input: {
@@ -156,6 +162,35 @@ describe.skipIf(!dockerAvailable)('Patient Lifecycle E2E', () => {
 
       expect(result.errors).toBeUndefined();
       expect(result.data?.transferWard.success).toBe(true);
+
+      // v0.2.0 B1: the transfer is recorded as a first-class Transfer object.
+      const created = result.data?.transferWard.affectedObjects.find(
+        (o) => o.typeName === 'Transfer' && o.changeType === 'CREATED',
+      );
+      expect(created).toBeDefined();
+      const transferId = created!.id;
+
+      // Transfer is queryable via REST, with the ORIGIN ward as fromWard
+      // (the action's effect snapshot resolves patient.currentWard pre-effect).
+      const restTransfer = await restGet<{
+        data: { id: string; patient: string; fromWard: string; toWard: string; reason: string };
+      }>(`/transfers/${transferId}`);
+      expect(restTransfer.data.patient).toBe(data.patients.doe.id);
+      expect(restTransfer.data.fromWard).toBe(data.wards.general.id);
+      expect(restTransfer.data.toWard).toBe(data.wards.cardiology.id);
+      expect(restTransfer.data.reason).toBe('Cardiology consult needed');
+
+      // ...and projected to the CDM Transfer resource with provenance.
+      const cdmTransfer = await restGet<{
+        resourceType: string;
+        sourceLocation: string;
+        destinationLocation: string;
+        _provenance: { sourceType: string; lossyFields: string[] };
+      }>(`/cdm/Transfer/${transferId}`);
+      expect(cdmTransfer.resourceType).toBe('Transfer');
+      expect(cdmTransfer.sourceLocation).toBe(data.wards.general.id);
+      expect(cdmTransfer.destinationLocation).toBe(data.wards.cardiology.id);
+      expect(cdmTransfer._provenance.sourceType).toBe('Transfer');
 
       // Patient should still be ACTIVE after transfer
       const patient = await graphql<{ patient: { status: string } }>(

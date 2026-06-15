@@ -46,16 +46,16 @@ describe('loadDomainPacks', () => {
     expect(packs[0]!.name).toBe('core');
     expect(packs[1]!.name).toBe('nhs-acute');
 
-    // NHS acute provides 5 object types
-    expect(parsed.objectTypes).toHaveLength(5);
+    // NHS acute provides 6 object types
+    expect(parsed.objectTypes).toHaveLength(6);
     const objNames = parsed.objectTypes.map(t => t.name).sort();
-    expect(objNames).toEqual(['Bed', 'Consultant', 'DischargeRecord', 'Patient', 'Ward']);
+    expect(objNames).toEqual(['Bed', 'Consultant', 'DischargeRecord', 'Patient', 'Transfer', 'Ward']);
 
     // 6 link types
     expect(parsed.linkTypes).toHaveLength(6);
 
     // SPI schema should have same counts
-    expect(spiSchema.objectTypes).toHaveLength(5);
+    expect(spiSchema.objectTypes).toHaveLength(6);
     expect(spiSchema.linkTypes).toHaveLength(6);
     expect(spiSchema.version).toBe(1);
   });
@@ -443,7 +443,7 @@ describe('loadDomainPacks with CI fixture external pack', () => {
     const objNames = result.parsed.objectTypes.map(t => t.name);
     expect(objNames).toContain('Patient');  // nhs-acute
     expect(objNames).toContain('Widget');   // test-external
-    expect(result.spiSchema.objectTypes.length).toBe(6); // 5 nhs-acute + 1 fixture
+    expect(result.spiSchema.objectTypes.length).toBe(7); // 6 nhs-acute + 1 fixture
   });
 
   it('loads fixture pack from DOMAIN_PACKS_EXTRA_DIRS env var', async () => {
@@ -669,7 +669,7 @@ describe.skipIf(!rcePackAvailable)('loadDomainPacks with external RCE pack', () 
     expect(objNames).toContain('CorpusEntry'); // rce
 
     // SPI has combined types
-    expect(spiSchema.objectTypes.length).toBe(14); // 5 nhs-acute + 9 rce
+    expect(spiSchema.objectTypes.length).toBe(15); // 6 nhs-acute + 9 rce
     expect(spiSchema.linkTypes.length).toBe(15);   // 6 nhs-acute + 9 rce
   });
 });

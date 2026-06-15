@@ -16,6 +16,17 @@ preconditions:
     error: "Insufficient role for ward transfer"
 
 effects:
+  # Record the transfer first, while patient.currentWard is still the origin
+  # ward (the effect snapshot resolves links pre-effect). v0.2.0 B1 — makes
+  # transfer a first-class, queryable/CDM-projectable entity.
+  - type: createObject
+    objectType: "Transfer"
+    properties:
+      patient: "patient"
+      fromWard: "patient.currentWard"
+      toWard: "toWard"
+      transferDate: "now"
+      reason: "params.reason"
   # Reset old bed status (uses immutable snapshot, so patient.currentBed
   # still resolves to the pre-effect bed)
   - type: updateObject

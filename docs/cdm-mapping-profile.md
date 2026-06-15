@@ -34,7 +34,7 @@ Patient, Ward, Bed, Admission, Discharge, Transfer, Staff, Encounter.
 
 Coverage caveats, recorded in the gap register rather than fabricated:
 - **Admission** is surfaced as **Encounter** (projected from the `AdmittedTo` link); there is no separate `/Admission` route.
-- **Transfer** is an action, not a stored object — not exposed as a resource.
+- **Transfer** is a first-class stored object (v0.2.0 B1), written by the `TransferWard` action and exposed as the CDM `Transfer` resource.
 - **Staff** is consultant-only (only `Consultant` is modelled).
 
 ## Resource mappings
@@ -89,6 +89,19 @@ field carries the CDM resource name.
 | `dischargeDate` | `dischargeDate` | |
 | `notes` | `notes` | **Lossy** — free-text |
 
+### Transfer → CDM `Transfer`
+First-class record written by the `TransferWard` action (v0.2.0 B1). `fromWard`
+is the origin ward (the action's effect snapshot resolves `patient.currentWard`
+before the bed/link moves).
+| CDM field | Source field | Notes |
+|---|---|---|
+| `id` | `_id` | |
+| `patient` | `patient` | |
+| `sourceLocation` | `fromWard` | Origin ward |
+| `destinationLocation` | `toWard` | Destination ward |
+| `transferDate` | `transferDate` | |
+| `reason` | `reason` | **Lossy** — free-text |
+
 ### AdmittedTo (link) → CDM `Encounter`
 Derived from the `AdmittedTo` link, mirroring the FHIR Encounter projection.
 | CDM field | Source field | Notes |
@@ -123,7 +136,7 @@ what was projected and what was approximated:
 | Area | Issue | Fallback |
 |---|---|---|
 | Admission | Not a distinct resource — surfaced as Encounter via the `AdmittedTo` link; no `/Admission` route | Treat Encounter as the admission record |
-| Transfer | No Transfer object type — ward transfer is the `TransferWard` action, not a stored entity | Reconstruct from Encounter/AdmittedTo history; first-class Transfer object is a Stage 1+ extension |
+| Transfer | **Resolved (v0.2.0 B1)** — `TransferWard` now writes a first-class `Transfer` object, projected as CDM `Transfer` | No longer a gap; transfers are queryable directly and via the CDM projection |
 | Staff | Only Consultant is modelled; no nurses/AHPs/admin staff | Extend `nhs-acute` with a general Staff/Practitioner type before claiming full CDM staff coverage |
 | Patient.name | Single free-text string vs CDM structured family/given | Export carries raw string; marked lossy in provenance |
 | Patient.identifier | NHS Number optional; local-number-only patients not flagged provisional | Provisional-identity flagging handled upstream (PDS resolution, connector layer) |
@@ -137,7 +150,7 @@ and GraphQL.
 | Endpoint | Description | Auth |
 |---|---|---|
 | `GET /api/v1/cdm/metadata` | Profile, compatibility matrix, gap register | Public |
-| `GET /api/v1/cdm/{SourceType}` | List projection (Patient, Ward, Bed, Consultant, DischargeRecord) | Required |
+| `GET /api/v1/cdm/{SourceType}` | List projection (Patient, Ward, Bed, Consultant, DischargeRecord, Transfer) | Required |
 | `GET /api/v1/cdm/{SourceType}/{id}` | Single record projection | Required |
 | `GET /api/v1/cdm/Encounter?patient={id}` | Admissions for a patient (via AdmittedTo) | Required |
 
@@ -147,6 +160,6 @@ Patient and Encounter projections are consent-gated (subject = patient).
 ## Status
 
 This is a **Stage 1 starter slice**: the profile, projection, provenance, and
-read API are complete and tested for the operational subset. Full CDM coverage,
-terminology validation, structured-name decomposition, and a first-class
-Transfer object are scoped to later stages (S2.2).
+read API are complete and tested for the operational subset. A first-class
+Transfer object landed in v0.2.0 (B1). Full CDM coverage, terminology
+validation, and structured-name decomposition are scoped to later stages (S2.2).

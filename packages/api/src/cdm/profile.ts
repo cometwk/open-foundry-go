@@ -103,6 +103,20 @@ export const NHS_ACUTE_CDM_PROFILE: CdmMappingProfile = {
       ],
     },
     {
+      cdmResource: 'Transfer',
+      sourceType: 'Transfer',
+      sourceKind: 'object',
+      note: 'First-class Transfer record written by the TransferWard action (v0.2.0 B1).',
+      fields: [
+        { cdmField: 'id', sourceField: '_id' },
+        { cdmField: 'patient', sourceField: 'patient' },
+        { cdmField: 'sourceLocation', sourceField: 'fromWard' },
+        { cdmField: 'destinationLocation', sourceField: 'toWard' },
+        { cdmField: 'transferDate', sourceField: 'transferDate' },
+        { cdmField: 'reason', sourceField: 'reason', lossy: true, note: 'Free-text reason; no canonical CDM structure.' },
+      ],
+    },
+    {
       cdmResource: 'Encounter',
       sourceType: 'AdmittedTo',
       sourceKind: 'link',
@@ -132,8 +146,8 @@ export const NHS_ACUTE_CDM_PROFILE: CdmMappingProfile = {
     },
     {
       area: 'Transfer',
-      issue: 'The ODL model has no Transfer object type — ward transfer is the TransferWard *action*, not a stored entity, so there is nothing to project as a standalone CDM Transfer resource.',
-      fallback: 'Reconstruct transfers from Encounter/AdmittedTo history (admission churn per patient). A first-class Transfer object is a Stage 1+ extension.',
+      issue: 'RESOLVED (v0.2.0 B1): the TransferWard action now writes a first-class Transfer object (patient, fromWard, toWard, transferDate, reason), projected as the CDM Transfer resource.',
+      fallback: 'No longer a gap. Transfers are queryable directly and via the CDM Transfer projection.',
     },
     {
       area: 'Staff',

@@ -48,6 +48,7 @@ const ODL_FILES = [
   'bed.odl',
   'consultant.odl',
   'discharge-record.odl',
+  'transfer.odl',
   'links.odl',
   'actions.odl',
 ];
@@ -135,11 +136,11 @@ describe('NHS Acute Domain Pack — ODL Schema Parsing', () => {
     });
   });
 
-  describe('objectTypes (5)', () => {
-    it('declares all 5 ObjectTypes', () => {
+  describe('objectTypes (6)', () => {
+    it('declares all 6 ObjectTypes', () => {
       const names = schema.objectTypes.map(t => t.name).sort();
       expect(names).toEqual([
-        'Bed', 'Consultant', 'DischargeRecord', 'Patient', 'Ward',
+        'Bed', 'Consultant', 'DischargeRecord', 'Patient', 'Transfer', 'Ward',
       ]);
     });
 
@@ -399,15 +400,25 @@ describe('NHS Acute Domain Pack — Action Manifests', () => {
       expect(m.action).toBe('TransferWard');
       expect(m.version).toBe(1);
       expect(m.preconditions).toHaveLength(5);
-      expect(m.effects).toHaveLength(6);
+      expect(m.effects).toHaveLength(7);
     });
 
     it('effects are in correct order', () => {
       const result = parseActionManifest(readAction('transfer-ward.yaml'));
       const types = result.manifest!.effects.map(e => e.type);
+      // createObject Transfer first (v0.2.0 B1), then the bed/link moves.
       expect(types).toEqual([
-        'updateObject', 'deleteLink', 'deleteLink', 'createLink', 'updateObject', 'createLink',
+        'createObject', 'updateObject', 'deleteLink', 'deleteLink', 'createLink', 'updateObject', 'createLink',
       ]);
+    });
+
+    it('records a Transfer object', () => {
+      const result = parseActionManifest(readAction('transfer-ward.yaml'));
+      const createObj = result.manifest!.effects.find(e => e.type === 'createObject');
+      expect(createObj).toBeDefined();
+      if (createObj?.type === 'createObject') {
+        expect(createObj.objectType).toBe('Transfer');
+      }
     });
   });
 
@@ -500,7 +511,7 @@ describe('NHS Acute Domain Pack — pack.yaml manifest', () => {
     const pack = parseYaml(content) as Record<string, unknown>;
 
     const provides = pack['provides'] as Record<string, number>;
-    expect(provides['objectTypes']).toBe(5);
+    expect(provides['objectTypes']).toBe(6);
     expect(provides['linkTypes']).toBe(6);
     expect(provides['actionTypes']).toBe(5);
     expect(provides['connectors']).toBe(1);
@@ -512,7 +523,7 @@ describe('NHS Acute Domain Pack — pack.yaml manifest', () => {
     const pack = parseYaml(content) as Record<string, unknown>;
 
     const schemaFiles = pack['schema'] as string[];
-    expect(schemaFiles).toHaveLength(8);
+    expect(schemaFiles).toHaveLength(9);
     for (const odlFile of ODL_FILES) {
       expect(schemaFiles).toContain(`schema/${odlFile}`);
     }
