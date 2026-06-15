@@ -96,9 +96,96 @@ function callerCanGrant(roles: string[]): boolean {
 }
 
 /**
- * Build the relationship grant/revoke routes. `verb` is 'link' (grant) or
- * 'unlink' (revoke) for the audit operation type.
+ * Structured result of a relationship change — mapped to REST or GraphQL by
+ * the respective adapter so both surfaces share validation/gate/audit/write.
  */
+export interface RelationshipChangeResult {
+  ok: boolean;
+  code?: string;
+  category?: 'validation' | 'authorization' | 'system';
+  message?: string;
+  data?: Record<string, unknown>;
+}
+
+/**
+ * Core grant/revoke logic shared by the REST routes and the GraphQL resolvers:
+ * parse → validate allowlist → authorize (granter role) → write → audit. Every
+ * grant/revoke and every denial is audited.
+ */
+export async function applyRelationshipChange(
+  deps: ApiDependencies,
+  allowlist: GrantAllowlist,
+  action: 'grant' | 'revoke',
+  body: unknown,
+  actor: { id: string; roles: string[] },
+  traceId: string | undefined,
+): Promise<RelationshipChangeResult> {
+  const parsed = parseBody(body);
+  if ('error' in parsed) {
+    return { ok: false, code: 'VALIDATION_ERROR', category: 'validation', message: parsed.error };
+  }
+
+  const objectTypeSnake = toSnakeCase(parsed.objectType);
+  const grantable = allowlist.get(objectTypeSnake);
+
+  // Validate the relation is directly grantable (never computed/link relations).
+  if (!grantable || !grantable.has(parsed.relation)) {
+    return {
+      ok: false, code: 'INVALID_RELATION', category: 'validation',
+      message:
+        `Relation '${parsed.relation}' is not a directly-grantable relation on ` +
+        `'${parsed.objectType}'. Grantable: ${grantable ? [...grantable].join(', ') : '(none)'}.`,
+    };
+  }
+
+  const subject = fgaUser(parsed.user);
+  const resource = `${objectTypeSnake}:${parsed.objectId}`;
+  const auditActor = { type: 'user' as const, id: actor.id, roles: actor.roles };
+  const opType = action === 'grant' ? ('link' as const) : ('unlink' as const);
+
+  // Authorization gate: only granter roles may grant/revoke. Audit denials.
+  if (!callerCanGrant(actor.roles)) {
+    await deps.auditWriter?.write({
+      actor: auditActor,
+      operation: { type: opType, objectType: objectTypeSnake, objectId: parsed.objectId },
+      detail: { result: 'denied', denialReason: `Caller lacks a granter role (${DEFAULT_GRANTER_ROLES.join('/')})`, after: { subject, relation: parsed.relation } },
+      traceId,
+    });
+    return {
+      ok: false, code: 'FORBIDDEN', category: 'authorization',
+      message: `Not permitted to ${action} relationships (requires one of: ${DEFAULT_GRANTER_ROLES.join(', ')}).`,
+    };
+  }
+
+  try {
+    if (action === 'grant') {
+      await deps.authorizationService.writeRelationship(subject, parsed.relation, resource);
+    } else {
+      await deps.authorizationService.deleteRelationship(subject, parsed.relation, resource);
+    }
+    await deps.auditWriter?.write({
+      actor: auditActor,
+      operation: { type: opType, objectType: objectTypeSnake, objectId: parsed.objectId },
+      detail: { result: 'success', after: { subject, relation: parsed.relation } },
+      traceId,
+    });
+    return {
+      ok: true,
+      data: { subject, relation: parsed.relation, object: resource, [action === 'grant' ? 'granted' : 'revoked']: true },
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Relationship write failed';
+    await deps.auditWriter?.write({
+      actor: auditActor,
+      operation: { type: opType, objectType: objectTypeSnake, objectId: parsed.objectId },
+      detail: { result: 'error', denialReason: message, after: { subject, relation: parsed.relation } },
+      traceId,
+    });
+    return { ok: false, code: 'RELATIONSHIP_WRITE_FAILED', category: 'system', message };
+  }
+}
+
+/** Build the relationship grant/revoke REST routes (thin adapter over the core). */
 export function generateRelationshipRoutes(
   deps: ApiDependencies,
   allowlist: GrantAllowlist,
@@ -108,79 +195,17 @@ export function generateRelationshipRoutes(
     req: RestRequest,
     ctx: ResolverContext,
   ): Promise<RestResponse> => {
-    const { user, requestContext } = ctx;
-    const traceId = requestContext.traceId;
-
-    const parsed = parseBody(req.body);
-    if ('error' in parsed) {
+    const r = await applyRelationshipChange(
+      deps, allowlist, action, req.body,
+      { id: ctx.user.id, roles: ctx.user.roles }, ctx.requestContext.traceId,
+    );
+    if (!r.ok) {
       return createRestErrorResponse({
-        code: 'VALIDATION_ERROR', category: 'validation',
-        message: parsed.error, retryable: false, traceId,
+        code: r.code!, category: r.category!, message: r.message!,
+        retryable: r.category === 'system', traceId: ctx.requestContext.traceId,
       });
     }
-
-    const objectTypeSnake = toSnakeCase(parsed.objectType);
-    const grantable = allowlist.get(objectTypeSnake);
-
-    // Validate the relation is directly grantable (never computed/link relations).
-    if (!grantable || !grantable.has(parsed.relation)) {
-      return createRestErrorResponse({
-        code: 'INVALID_RELATION', category: 'validation',
-        message:
-          `Relation '${parsed.relation}' is not a directly-grantable relation on ` +
-          `'${parsed.objectType}'. Grantable: ${grantable ? [...grantable].join(', ') : '(none)'}.`,
-        retryable: false, traceId,
-      });
-    }
-
-    const subject = fgaUser(parsed.user);
-    const resource = `${objectTypeSnake}:${parsed.objectId}`;
-    const auditActor = { type: 'user' as const, id: user.id, roles: user.roles };
-
-    // Authorization gate: only granter roles may grant/revoke. Audit denials.
-    if (!callerCanGrant(user.roles)) {
-      await deps.auditWriter?.write({
-        actor: auditActor,
-        operation: { type: action === 'grant' ? 'link' : 'unlink', objectType: objectTypeSnake, objectId: parsed.objectId },
-        detail: { result: 'denied', denialReason: `Caller lacks a granter role (${DEFAULT_GRANTER_ROLES.join('/')})`, after: { subject, relation: parsed.relation } },
-        traceId,
-      });
-      return createRestErrorResponse({
-        code: 'FORBIDDEN', category: 'authorization',
-        message: `Not permitted to ${action} relationships (requires one of: ${DEFAULT_GRANTER_ROLES.join(', ')}).`,
-        retryable: false, traceId,
-      });
-    }
-
-    try {
-      if (action === 'grant') {
-        await deps.authorizationService.writeRelationship(subject, parsed.relation, resource);
-      } else {
-        await deps.authorizationService.deleteRelationship(subject, parsed.relation, resource);
-      }
-      await deps.auditWriter?.write({
-        actor: auditActor,
-        operation: { type: action === 'grant' ? 'link' : 'unlink', objectType: objectTypeSnake, objectId: parsed.objectId },
-        detail: { result: 'success', after: { subject, relation: parsed.relation } },
-        traceId,
-      });
-      return {
-        status: 200,
-        body: { data: { subject, relation: parsed.relation, object: resource, [action === 'grant' ? 'granted' : 'revoked']: true } },
-      };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Relationship write failed';
-      await deps.auditWriter?.write({
-        actor: auditActor,
-        operation: { type: action === 'grant' ? 'link' : 'unlink', objectType: objectTypeSnake, objectId: parsed.objectId },
-        detail: { result: 'error', denialReason: message, after: { subject, relation: parsed.relation } },
-        traceId,
-      });
-      return createRestErrorResponse({
-        code: 'RELATIONSHIP_WRITE_FAILED', category: 'system',
-        message, retryable: true, traceId,
-      });
-    }
+    return { status: 200, body: { data: r.data! } };
   };
 
   return [

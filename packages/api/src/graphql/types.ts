@@ -32,6 +32,12 @@ export interface ApiDependencies {
   storage: StorageProvider;
   manifestRegistry?: ManifestRegistry;
   objectSetManager?: ObjectSetManager;
+  /**
+   * Allowlist of directly-grantable `[user]` relations per object type (snake),
+   * derived from the merged FGA model. Powers the relationship grant/revoke
+   * API (REST + GraphQL). Absent → the grant surface rejects everything.
+   */
+  grantAllowlist?: Map<string, Set<string>>;
 }
 
 /**

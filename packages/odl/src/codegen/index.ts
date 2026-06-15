@@ -379,6 +379,22 @@ function generateSharedTypes(): string {
     '  isPublic: Boolean',
     '}',
     '',
+    '# ─── Relationship (care-team) grants (v0.2.0 A1) ───',
+    '',
+    'input RelationshipInput {',
+    '  user: ID!',
+    '  relation: String!',
+    '  objectType: String!',
+    '  objectId: ID!',
+    '}',
+    '',
+    'type RelationshipResult {',
+    '  subject: String!',
+    '  relation: String!',
+    '  object: String!',
+    '  ok: Boolean!',
+    '}',
+    '',
     '# ─── Bulk Actions (Section 5.5) ───',
     '',
     'input BulkActionInput {',
@@ -656,6 +672,9 @@ export function generateGraphQLSchema(schema: ParsedSchema): string {
   mutationFields.push('  createObjectSet(input: CreateObjectSetInput!): ObjectSet!');
   mutationFields.push('  updateObjectSet(id: ID!, input: UpdateObjectSetInput!): ObjectSet!');
   mutationFields.push('  deleteObjectSet(id: ID!): Boolean!');
+  // Care-team relationship grants (v0.2.0 A1) — mirror REST /api/v1/relationships.
+  mutationFields.push('  grantRelationship(input: RelationshipInput!): RelationshipResult!');
+  mutationFields.push('  revokeRelationship(input: RelationshipInput!): RelationshipResult!');
   // TODO: submitBulkAction mutation deferred — requires BulkActionJob resolver
   // and async job tracking infrastructure. Re-add when bulk action pipeline is built.
   if (mutationFields.length > 0) {

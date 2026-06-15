@@ -596,6 +596,8 @@ async function main(): Promise<void> {
     storage,
     manifestRegistry,
     objectSetManager,
+    auditWriter: securityAuditWriter,
+    grantAllowlist,
   };
 
   // ── Express + HTTP Server ──

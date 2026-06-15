@@ -1161,3 +1161,50 @@ describe('GraphQL CDM Encounter resolver', () => {
     expect(Array.isArray(body['records'])).toBe(true);
   });
 });
+
+// ─── Relationship grant/revoke resolvers (v0.2.0 A1) ───
+
+describe('GraphQL relationship resolvers', () => {
+  function depsWithGrant() {
+    const parsed = parseOdl(NHS_ACUTE_ODL);
+    const deps = createMockDeps(parsed);
+    const writeRelationship = vi.fn().mockResolvedValue(undefined);
+    const deleteRelationship = vi.fn().mockResolvedValue(undefined);
+    deps.authorizationService = {
+      ...deps.authorizationService, writeRelationship, deleteRelationship,
+    } as unknown as ApiDependencies['authorizationService'];
+    deps.auditWriter = { write: vi.fn().mockResolvedValue(undefined) } as unknown as ApiDependencies['auditWriter'];
+    deps.grantAllowlist = new Map([['patient', new Set(['clinician'])]]);
+    return { parsed, deps, writeRelationship, deleteRelationship };
+  }
+  const input = { user: 'alice', relation: 'clinician', objectType: 'Patient', objectId: 'p-1' };
+
+  it('registers grant/revoke mutations', () => {
+    const { parsed, deps } = depsWithGrant();
+    const { resolvers } = generateResolvers(parsed, deps);
+    expect(resolvers['Mutation']!['grantRelationship']).toBeTypeOf('function');
+    expect(resolvers['Mutation']!['revokeRelationship']).toBeTypeOf('function');
+  });
+
+  it('grants for an authorized (admin) caller', async () => {
+    const { parsed, deps, writeRelationship } = depsWithGrant();
+    const { resolvers } = generateResolvers(parsed, deps);
+    const ctx = createResolverContext(deps, { ...createMockUser(), roles: ['admin'] });
+    const res = await (resolvers['Mutation']!['grantRelationship'] as (...a: unknown[]) => Promise<Record<string, unknown>>)(
+      null, { input }, ctx,
+    );
+    expect(res.ok).toBe(true);
+    expect(res.object).toBe('patient:p-1');
+    expect(writeRelationship).toHaveBeenCalledWith('user:alice', 'clinician', 'patient:p-1');
+  });
+
+  it('throws (authorization) for a non-granter caller', async () => {
+    const { parsed, deps, writeRelationship } = depsWithGrant();
+    const { resolvers } = generateResolvers(parsed, deps);
+    const ctx = createResolverContext(deps, { ...createMockUser(), roles: ['clinician'] });
+    await expect(
+      (resolvers['Mutation']!['grantRelationship'] as (...a: unknown[]) => Promise<unknown>)(null, { input }, ctx),
+    ).rejects.toThrow(/Not permitted/);
+    expect(writeRelationship).not.toHaveBeenCalled();
+  });
+});

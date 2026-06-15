@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { restPost, restRaw } from './client.js';
+import { restPost, restRaw, graphql } from './client.js';
 import { ensureStackUp, dockerAvailable } from './setup.js';
 import { CONFIG } from './config.js';
 
@@ -72,5 +72,15 @@ describeWithDocker('Relationship grant API', () => {
     expect(res.status).toBe(200);
     const json = (await res.json()) as { data: { revoked: boolean } };
     expect(json.data.revoked).toBe(true);
+  });
+
+  it('grants via the GraphQL mutation (parity with REST)', async () => {
+    const res = await graphql<{ grantRelationship: { object: string; ok: boolean } }>(
+      `mutation ($input: RelationshipInput!) { grantRelationship(input: $input) { subject relation object ok } }`,
+      { input: { user: 'gql-clinician', relation: 'clinician', objectType: 'Patient', objectId: patientId } },
+    );
+    expect(res.errors).toBeUndefined();
+    expect(res.data?.grantRelationship.ok).toBe(true);
+    expect(res.data?.grantRelationship.object).toBe(`patient:${patientId}`);
   });
 });

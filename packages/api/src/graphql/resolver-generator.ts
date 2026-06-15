@@ -38,6 +38,7 @@ import {
   handleEncounterSearch,
   OBJECT_SOURCE_TYPES,
 } from '../cdm/index.js';
+import { applyRelationshipChange } from '../relationships/router.js';
 
 // ─── Helpers ───
 
@@ -443,6 +444,9 @@ export function generateResolvers(
 
   // FDP/CDM read-only projection resolvers (cdmMetadata/cdmRecord/cdmRecords).
   generateCdmResolvers(resolvers, deps);
+
+  // Relationship (care-team) grant/revoke resolvers (v0.2.0 A1).
+  generateRelationshipResolvers(resolvers, deps);
 
   return { resolvers, pubsub };
 }
@@ -1283,6 +1287,43 @@ function generateCdmResolvers(resolvers: ResolverMap, deps: ApiDependencies): vo
     if (res.status !== 200) throwForStatus(res.status, res.body, ctx.requestContext.traceId);
     return res.body;
   };
+}
+
+/**
+ * Care-team relationship grant/revoke mutations (v0.2.0 A1), reusing the exact
+ * same core (validation + allowlist + granter-role gate + audit) as the REST
+ * /api/v1/relationships routes. Maps the structured result onto GraphQL errors.
+ */
+function generateRelationshipResolvers(resolvers: ResolverMap, deps: ApiDependencies): void {
+  const run = (action: 'grant' | 'revoke') => async (
+    _parent: unknown,
+    args: { input: Record<string, unknown> },
+    ctx: ResolverContext,
+  ) => {
+    const { user, requestContext } = ctx;
+    const result = await applyRelationshipChange(
+      deps,
+      deps.grantAllowlist ?? new Map(),
+      action,
+      args.input,
+      { id: user.id, roles: user.roles },
+      requestContext.traceId,
+    );
+    if (!result.ok) {
+      throw createOpenFoundryError({
+        code: result.code ?? 'RELATIONSHIP_ERROR',
+        category: (result.category ?? 'system') as ErrorCategory,
+        message: result.message ?? 'Relationship change failed',
+        retryable: result.category === 'system',
+        traceId: requestContext.traceId,
+      });
+    }
+    const d = result.data!;
+    return { subject: d['subject'], relation: d['relation'], object: d['object'], ok: true };
+  };
+
+  resolvers['Mutation']!['grantRelationship'] = run('grant');
+  resolvers['Mutation']!['revokeRelationship'] = run('revoke');
 }
 
 function objectSetToGraphQL(def: {
