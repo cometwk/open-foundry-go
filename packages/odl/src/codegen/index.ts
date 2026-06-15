@@ -395,6 +395,22 @@ function generateSharedTypes(): string {
     '  ok: Boolean!',
     '}',
     '',
+    '# ─── Consent record (v0.2.0 A2) ───',
+    '',
+    'input ConsentInput {',
+    '  subject: ID!',
+    '  purpose: String',
+    '  decision: String',
+    '  evidence: String',
+    '}',
+    '',
+    'type ConsentResult {',
+    '  subject: String!',
+    '  purpose: String!',
+    '  decision: String!',
+    '  recorded: Boolean!',
+    '}',
+    '',
     '# ─── Bulk Actions (Section 5.5) ───',
     '',
     'input BulkActionInput {',
@@ -675,6 +691,8 @@ export function generateGraphQLSchema(schema: ParsedSchema): string {
   // Care-team relationship grants (v0.2.0 A1) — mirror REST /api/v1/relationships.
   mutationFields.push('  grantRelationship(input: RelationshipInput!): RelationshipResult!');
   mutationFields.push('  revokeRelationship(input: RelationshipInput!): RelationshipResult!');
+  // Consent record (v0.2.0 A2) — mirror REST /api/v1/consent.
+  mutationFields.push('  recordConsent(input: ConsentInput!): ConsentResult!');
   // TODO: submitBulkAction mutation deferred — requires BulkActionJob resolver
   // and async job tracking infrastructure. Re-add when bulk action pipeline is built.
   if (mutationFields.length > 0) {

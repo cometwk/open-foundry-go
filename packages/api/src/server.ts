@@ -50,6 +50,7 @@ import { generateRestRoutes, generateOpenApiSpec } from './rest/index.js';
 import { createFhirRouter } from './fhir/index.js';
 import { createCdmRouter } from './cdm/index.js';
 import { generateRelationshipRoutes, buildGrantAllowlist } from './relationships/router.js';
+import { generateConsentRoutes } from './consent/router.js';
 import { InMemorySubscribableEventBus, SubscriptionManager } from './subscriptions/index.js';
 import type { SubscribableEventBus } from './subscriptions/index.js';
 import { RedpandaEventBus } from './events/index.js';
@@ -848,6 +849,7 @@ async function main(): Promise<void> {
   const restRoutes = [
     ...generateRestRoutes(schema, deps),
     ...generateRelationshipRoutes(deps, grantAllowlist),
+    ...generateConsentRoutes(deps),
   ];
   for (const route of restRoutes) {
     const method = route.method.toLowerCase() as 'get' | 'post' | 'put' | 'delete';

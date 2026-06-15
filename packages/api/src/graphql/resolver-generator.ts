@@ -39,6 +39,7 @@ import {
   OBJECT_SOURCE_TYPES,
 } from '../cdm/index.js';
 import { applyRelationshipChange } from '../relationships/router.js';
+import { applyConsentRecord } from '../consent/router.js';
 
 // ─── Helpers ───
 
@@ -447,6 +448,9 @@ export function generateResolvers(
 
   // Relationship (care-team) grant/revoke resolvers (v0.2.0 A1).
   generateRelationshipResolvers(resolvers, deps);
+
+  // Consent record resolver (v0.2.0 A2).
+  generateConsentResolvers(resolvers, deps);
 
   return { resolvers, pubsub };
 }
@@ -1324,6 +1328,34 @@ function generateRelationshipResolvers(resolvers: ResolverMap, deps: ApiDependen
 
   resolvers['Mutation']!['grantRelationship'] = run('grant');
   resolvers['Mutation']!['revokeRelationship'] = run('revoke');
+}
+
+/**
+ * Consent-record mutation (v0.2.0 A2), reusing the same core (validation +
+ * recorder-role gate + audit) as the REST /api/v1/consent route.
+ */
+function generateConsentResolvers(resolvers: ResolverMap, deps: ApiDependencies): void {
+  resolvers['Mutation']!['recordConsent'] = async (
+    _parent: unknown,
+    args: { input: Record<string, unknown> },
+    ctx: ResolverContext,
+  ) => {
+    const { user, requestContext } = ctx;
+    const result = await applyConsentRecord(
+      deps, args.input,
+      { id: user.id, roles: user.roles }, requestContext.tenantId, requestContext.traceId,
+    );
+    if (!result.ok) {
+      throw createOpenFoundryError({
+        code: result.code ?? 'CONSENT_ERROR',
+        category: (result.category ?? 'system') as ErrorCategory,
+        message: result.message ?? 'Consent record failed',
+        retryable: result.category === 'system',
+        traceId: requestContext.traceId,
+      });
+    }
+    return result.data;
+  };
 }
 
 function objectSetToGraphQL(def: {

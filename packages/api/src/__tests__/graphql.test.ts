@@ -1208,3 +1208,37 @@ describe('GraphQL relationship resolvers', () => {
     expect(writeRelationship).not.toHaveBeenCalled();
   });
 });
+
+// ─── Consent record resolver (v0.2.0 A2) ───
+
+describe('GraphQL recordConsent resolver', () => {
+  function depsWithConsent() {
+    const parsed = parseOdl(NHS_ACUTE_ODL);
+    const deps = createMockDeps(parsed);
+    const recordConsent = vi.fn().mockResolvedValue(undefined);
+    deps.consentService = { recordConsent } as unknown as ApiDependencies['consentService'];
+    deps.auditWriter = { write: vi.fn().mockResolvedValue(undefined) } as unknown as ApiDependencies['auditWriter'];
+    return { parsed, deps, recordConsent };
+  }
+
+  it('records consent for an authorized caller', async () => {
+    const { parsed, deps, recordConsent } = depsWithConsent();
+    const { resolvers } = generateResolvers(parsed, deps);
+    const ctx = createResolverContext(deps, { ...createMockUser(), roles: ['admin'] });
+    const res = await (resolvers['Mutation']!['recordConsent'] as (...a: unknown[]) => Promise<Record<string, unknown>>)(
+      null, { input: { subject: 'p-1' } }, ctx,
+    );
+    expect(res.recorded).toBe(true);
+    expect(recordConsent).toHaveBeenCalledWith('p-1', 'DIRECT_CARE', 'GRANT', undefined, 'tenant-1');
+  });
+
+  it('throws for a non-recorder caller', async () => {
+    const { parsed, deps, recordConsent } = depsWithConsent();
+    const { resolvers } = generateResolvers(parsed, deps);
+    const ctx = createResolverContext(deps, { ...createMockUser(), roles: ['receptionist'] });
+    await expect(
+      (resolvers['Mutation']!['recordConsent'] as (...a: unknown[]) => Promise<unknown>)(null, { input: { subject: 'p-1' } }, ctx),
+    ).rejects.toThrow(/Not permitted/);
+    expect(recordConsent).not.toHaveBeenCalled();
+  });
+});
