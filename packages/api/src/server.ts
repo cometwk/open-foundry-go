@@ -49,6 +49,7 @@ import { createGraphQLServer, buildResolverContext } from './graphql/index.js';
 import { generateRestRoutes, generateOpenApiSpec } from './rest/index.js';
 import { createFhirRouter } from './fhir/index.js';
 import { createCdmRouter } from './cdm/index.js';
+import { generateRelationshipRoutes, buildGrantAllowlist } from './relationships/router.js';
 import { InMemorySubscribableEventBus, SubscriptionManager } from './subscriptions/index.js';
 import type { SubscribableEventBus } from './subscriptions/index.js';
 import { RedpandaEventBus } from './events/index.js';
@@ -387,17 +388,23 @@ async function main(): Promise<void> {
       'FATAL: production authorization requires OPENFGA_URL and OPENFGA_STORE_ID',
     );
   }
+  // Merged OpenFGA model (schema + pack permission overrides). Pure/cheap, so
+  // computed unconditionally — the relationship grant API derives its allowlist
+  // from it even in dev (where the OpenFGA client is the allow-all stub).
+  const mergedFgaDsl = permissionOverrides.length > 0
+    ? mergeOpenFGAOverrides(generateOpenFGASchema(schema), permissionOverrides)
+    : generateOpenFGASchema(schema);
+  const fgaModelJson = fgaDslToJson(mergedFgaDsl);
+  // Allowlist of directly-grantable [user] relations (e.g. patient.clinician,
+  // ward.assigned) for the /api/v1/relationships grant API (Epic A1).
+  const grantAllowlist = buildGrantAllowlist(fgaModelJson);
+
   // ── OpenFGA Authorization Model Sync ──
-  // Generate the merged OpenFGA model from schema + pack permission overrides,
-  // then POST to OpenFGA so all pack types are authorized.
+  // Push the merged model to OpenFGA so all pack types are authorized.
   let linkTupleMap: LinkTupleMap | undefined;
   if (!isDev && process.env['OPENFGA_URL'] && process.env['OPENFGA_STORE_ID']) {
     try {
-      const baseDSL = generateOpenFGASchema(schema);
-      const mergedDSL = permissionOverrides.length > 0
-        ? mergeOpenFGAOverrides(baseDSL, permissionOverrides)
-        : baseDSL;
-      const modelJson = fgaDslToJson(mergedDSL);
+      const modelJson = fgaModelJson;
       // Derive which ontology links map to ReBAC tuples, so the action pipeline
       // can mint them on link create/delete (only links whose snake(linkType)
       // relation exists in the merged model are synced).
@@ -836,7 +843,10 @@ async function main(): Promise<void> {
   );
 
   // ── REST at /api/v1/* ──
-  const restRoutes = generateRestRoutes(schema, deps);
+  const restRoutes = [
+    ...generateRestRoutes(schema, deps),
+    ...generateRelationshipRoutes(deps, grantAllowlist),
+  ];
   for (const route of restRoutes) {
     const method = route.method.toLowerCase() as 'get' | 'post' | 'put' | 'delete';
     app[method](route.pattern, async (req, res) => {
