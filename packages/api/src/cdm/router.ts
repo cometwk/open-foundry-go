@@ -10,6 +10,7 @@
  *   GET /api/v1/cdm/metadata                  → profile + compatibility matrix + gap register
  *   GET /api/v1/cdm/{SourceType}              → list projection (object-kind)
  *   GET /api/v1/cdm/{SourceType}/{id}         → single projection (object-kind)
+ *   GET /api/v1/cdm/{SourceType}/export       → dataset export (object-kind), ?format=ndjson|csv
  *   GET /api/v1/cdm/Encounter?patient={id}    → admission projection (link-kind, via AdmittedTo)
  */
 
@@ -42,6 +43,12 @@ export interface CdmRouterConfig {
 }
 
 const QUERY_LIMIT = 100;
+/** Higher cap for dataset export — pulls the full authorised set in one pass. */
+const EXPORT_LIMIT = 10_000;
+
+/** Export formats supported by the dataset-export route. */
+const EXPORT_FORMATS = ['ndjson', 'csv'] as const;
+type ExportFormat = (typeof EXPORT_FORMATS)[number];
 
 function jsonHeaders(): Record<string, string> {
   return { 'Content-Type': 'application/json; charset=utf-8' };
@@ -118,6 +125,15 @@ export function createCdmRouter(config: CdmRouterConfig) {
       return error(404, `CDM source type '${head}' is not exposed. Known: ${OBJECT_SOURCE_TYPES.join(', ')}, Encounter.`);
     }
 
+    // Dataset export: GET /cdm/{SourceType}/export?format=ndjson|csv
+    if (id === 'export') {
+      const requested = (req.query['format'] ?? 'ndjson').toLowerCase();
+      if (!EXPORT_FORMATS.includes(requested as ExportFormat)) {
+        return error(400, `Unsupported export format '${requested}'. Use one of: ${EXPORT_FORMATS.join(', ')}.`);
+      }
+      return handleObjectExport(deps, req.user, head, requested as ExportFormat);
+    }
+
     return id
       ? handleObjectRead(deps, req.user, head, id)
       : handleObjectList(deps, req.user, head);
@@ -170,60 +186,72 @@ export async function handleObjectRead(
   }
 }
 
+/**
+ * Fetch the authorised, redacted, consent-filtered, CDM-projected records for an
+ * object-kind source type. Shared by the list and export routes.
+ */
+async function collectObjectRecords(
+  deps: ApiDependencies,
+  user: AuthenticatedUserInfo,
+  sourceType: string,
+  limit: number,
+): Promise<CdmRecord[]> {
+  const ctx = ctxFor(user);
+  const mapping = findMappingBySourceType(NHS_ACUTE_CDM_PROFILE, sourceType)!;
+  const fgaType = toSnakeCase(sourceType);
+  const allowedObjects = await deps.authorizationService.listObjects(`user:${user.id}`, 'viewer', fgaType);
+
+  // '*' sentinel (dev stub / unrestricted) → no id filter; otherwise restrict.
+  const unrestricted = allowedObjects.includes('*');
+  const allowedIds = unrestricted
+    ? []
+    : allowedObjects
+        .map(o => o.split(':').pop())
+        .filter((v): v is string => !!v);
+
+  if (!unrestricted && allowedIds.length === 0) {
+    return [];
+  }
+
+  // Match-all pass-through (also excludes soft-deleted) mirrors the REST
+  // route generator; when restricted, filter by the authorized id set.
+  const filter: FilterExpression = unrestricted
+    ? ({ field: '_deleted_at', operator: 'exists', value: false } as FieldPredicate)
+    : ({ field: '_id', operator: 'in', value: allowedIds } as FieldPredicate);
+
+  const page = await deps.objectManager.query(
+    sourceType,
+    filter,
+    { limit, offset: 0 },
+    ctx,
+  );
+
+  const redacted = deps.authorizationService.redactFieldsBatch(
+    user.id, user.roles, sourceType, page.items as unknown as Record<string, unknown>[],
+  );
+
+  let rows = redacted.map(r => r.data);
+
+  if (deps.consentService && isConsentSubject(sourceType)) {
+    const consentResult = await deps.consentService.filterList(
+      rows,
+      (item: Record<string, unknown>) => String(item['_id'] ?? item['id'] ?? ''),
+      DataPurpose.DIRECT_CARE, user.id, user.tenantId,
+    );
+    rows = consentResult.edges as Record<string, unknown>[];
+  }
+
+  return rows.map(r => projectToCdm(r, mapping, NHS_ACUTE_CDM_PROFILE));
+}
+
 export async function handleObjectList(
   deps: ApiDependencies,
   user: AuthenticatedUserInfo,
   sourceType: string,
 ): Promise<CdmResponse> {
   try {
-    const ctx = ctxFor(user);
     const mapping = findMappingBySourceType(NHS_ACUTE_CDM_PROFILE, sourceType)!;
-    const fgaType = toSnakeCase(sourceType);
-    const allowedObjects = await deps.authorizationService.listObjects(`user:${user.id}`, 'viewer', fgaType);
-
-    // '*' sentinel (dev stub / unrestricted) → no id filter; otherwise restrict.
-    const unrestricted = allowedObjects.includes('*');
-    const allowedIds = unrestricted
-      ? []
-      : allowedObjects
-          .map(o => o.split(':').pop())
-          .filter((v): v is string => !!v);
-
-    if (!unrestricted && allowedIds.length === 0) {
-      // Empty result still advertises the CDM resource name (not the OF source type).
-      return { status: 200, headers: jsonHeaders(), body: { resourceType: mapping.cdmResource, total: 0, records: [] } };
-    }
-
-    // Match-all pass-through (also excludes soft-deleted) mirrors the REST
-    // route generator; when restricted, filter by the authorized id set.
-    const filter: FilterExpression = unrestricted
-      ? ({ field: '_deleted_at', operator: 'exists', value: false } as FieldPredicate)
-      : ({ field: '_id', operator: 'in', value: allowedIds } as FieldPredicate);
-
-    const page = await deps.objectManager.query(
-      sourceType,
-      filter,
-      { limit: QUERY_LIMIT, offset: 0 },
-      ctx,
-    );
-
-    const redacted = deps.authorizationService.redactFieldsBatch(
-      user.id, user.roles, sourceType, page.items as unknown as Record<string, unknown>[],
-    );
-
-    let rows = redacted.map(r => r.data);
-
-    if (deps.consentService && isConsentSubject(sourceType)) {
-      const consentResult = await deps.consentService.filterList(
-        rows,
-        (item: Record<string, unknown>) => String(item['_id'] ?? item['id'] ?? ''),
-        DataPurpose.DIRECT_CARE, user.id, user.tenantId,
-      );
-      rows = consentResult.edges as Record<string, unknown>[];
-    }
-
-    const records: CdmRecord[] = rows.map(r => projectToCdm(r, mapping, NHS_ACUTE_CDM_PROFILE));
-
+    const records = await collectObjectRecords(deps, user, sourceType, QUERY_LIMIT);
     return {
       status: 200,
       headers: jsonHeaders(),
@@ -233,6 +261,80 @@ export async function handleObjectList(
     logger.error({ err: err instanceof Error ? err.message : 'unknown' }, 'CDM object list error');
     return error(500, 'Internal server error');
   }
+}
+
+/**
+ * Dataset export for an object-kind source type as NDJSON or CSV. Reuses the
+ * same auth / redaction / consent / projection pipeline as the list route, so
+ * an export never leaks anything the list route would not.
+ */
+export async function handleObjectExport(
+  deps: ApiDependencies,
+  user: AuthenticatedUserInfo,
+  sourceType: string,
+  format: ExportFormat,
+): Promise<CdmResponse> {
+  try {
+    const mapping = findMappingBySourceType(NHS_ACUTE_CDM_PROFILE, sourceType)!;
+    const records = await collectObjectRecords(deps, user, sourceType, EXPORT_LIMIT);
+    const filenameBase = `${mapping.cdmResource}-${sourceType}`;
+
+    if (format === 'csv') {
+      return {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/csv; charset=utf-8',
+          'Content-Disposition': `attachment; filename="${filenameBase}.csv"`,
+        },
+        body: toCsv(mapping.fields.map(f => f.cdmField), records),
+      };
+    }
+
+    // NDJSON: one full CDM record (incl. _provenance) per line.
+    return {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/x-ndjson; charset=utf-8',
+        'Content-Disposition': `attachment; filename="${filenameBase}.ndjson"`,
+      },
+      body: records.map(r => JSON.stringify(r)).join('\n'),
+    };
+  } catch (err) {
+    logger.error({ err: err instanceof Error ? err.message : 'unknown' }, 'CDM object export error');
+    return error(500, 'Internal server error');
+  }
+}
+
+/**
+ * Serialise CDM records to CSV. Columns are the resource's mapped CDM fields
+ * plus `resourceType`/`id` and a flattened `_lossyFields` provenance column.
+ * Nested values are JSON-encoded; the full structured form is in NDJSON.
+ */
+function toCsv(cdmFields: string[], records: CdmRecord[]): string {
+  const columns = ['resourceType', 'id', ...cdmFields.filter(c => c !== 'id'), '_lossyFields'];
+  const escape = (value: unknown): string => {
+    if (value === undefined || value === null) return '';
+    let str: string;
+    if (value instanceof Date) {
+      str = value.toISOString();
+    } else if (typeof value === 'object') {
+      str = JSON.stringify(value);
+    } else {
+      str = String(value);
+    }
+    return /[",\n\r]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+  };
+  const header = columns.join(',');
+  const lines = records.map(rec => {
+    const row = rec as unknown as Record<string, unknown>;
+    return columns
+      .map(col => {
+        if (col === '_lossyFields') return escape((rec._provenance?.lossyFields ?? []).join(';'));
+        return escape(row[col]);
+      })
+      .join(',');
+  });
+  return [header, ...lines].join('\n');
 }
 
 export async function handleEncounterSearch(

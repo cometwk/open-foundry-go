@@ -272,3 +272,83 @@ describe('CDM router contract', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('CDM dataset export (v0.2.0 B3)', () => {
+  const rows = [
+    { _id: 'p-1', _version: 1, nhsNumber: '111', name: 'Jane Doe', given: 'Jane', family: 'Doe', status: 'ACTIVE' },
+    { _id: 'p-2', _version: 1, nhsNumber: '222', name: 'John, Jr Roe', given: 'John', family: 'Roe', status: 'DISCHARGED' },
+  ];
+
+  it('exports NDJSON by default — one full CDM record per line', async () => {
+    const { deps } = makeDeps({ listResult: ['*'], queryItems: rows });
+    const router = createCdmRouter({ deps });
+    const res = await router({ method: 'GET', path: 'Patient/export', query: {}, user: makeUser() });
+
+    expect(res.status).toBe(200);
+    expect(res.headers['Content-Type']).toContain('application/x-ndjson');
+    expect(res.headers['Content-Disposition']).toContain('attachment');
+    expect(res.headers['Content-Disposition']).toContain('.ndjson');
+
+    const lines = (res.body as string).split('\n');
+    expect(lines).toHaveLength(2);
+    const first = JSON.parse(lines[0]!);
+    expect(first.resourceType).toBe('Patient');
+    expect(first.family).toBe('Doe');
+    expect(first._provenance.sourceType).toBe('Patient');
+  });
+
+  it('exports CSV with a header row and lossy-field provenance column', async () => {
+    const { deps } = makeDeps({ listResult: ['*'], queryItems: rows });
+    const router = createCdmRouter({ deps });
+    const res = await router({ method: 'GET', path: 'Patient/export', query: { format: 'csv' }, user: makeUser() });
+
+    expect(res.status).toBe(200);
+    expect(res.headers['Content-Type']).toContain('text/csv');
+    expect(res.headers['Content-Disposition']).toContain('.csv');
+
+    const lines = (res.body as string).split('\n');
+    expect(lines[0]).toContain('resourceType,id');
+    expect(lines[0]).toContain('_lossyFields');
+    expect(lines).toHaveLength(3); // header + 2 rows
+    // Value with a comma is quoted.
+    expect(lines[2]).toContain('"John, Jr Roe"');
+    // given is declared lossy in the profile → appears in the provenance column.
+    expect(lines[1]).toContain('given');
+  });
+
+  it('serialises Date-valued columns as clean ISO in CSV (no double-quoting)', async () => {
+    const dateRows = [
+      { _id: 'p-9', _version: 1, nhsNumber: '999', name: 'Date Pat', status: 'ACTIVE', dateOfBirth: new Date('1992-07-20T00:00:00.000Z') },
+    ];
+    const { deps } = makeDeps({ listResult: ['*'], queryItems: dateRows });
+    const router = createCdmRouter({ deps });
+    const res = await router({ method: 'GET', path: 'Patient/export', query: { format: 'csv' }, user: makeUser() });
+
+    const lines = (res.body as string).split('\n');
+    // birthDate column carries a bare ISO date — not wrapped in extra quotes.
+    expect(lines[1]).toContain('1992-07-20T00:00:00.000Z');
+    expect(lines[1]).not.toContain('"""');
+  });
+
+  it('rejects an unsupported export format', async () => {
+    const { deps } = makeDeps({ listResult: ['*'], queryItems: rows });
+    const router = createCdmRouter({ deps });
+    const res = await router({ method: 'GET', path: 'Patient/export', query: { format: 'xml' }, user: makeUser() });
+    expect(res.status).toBe(400);
+  });
+
+  it('export honours authorization (restricted with no ids → empty body)', async () => {
+    const { deps } = makeDeps({ listResult: [], queryItems: rows });
+    const router = createCdmRouter({ deps });
+    const res = await router({ method: 'GET', path: 'Patient/export', query: {}, user: makeUser() });
+    expect(res.status).toBe(200);
+    expect(res.body).toBe('');
+  });
+
+  it('requires authentication', async () => {
+    const { deps } = makeDeps({});
+    const router = createCdmRouter({ deps });
+    const res = await router({ method: 'GET', path: 'Patient/export', query: {} });
+    expect(res.status).toBe(401);
+  });
+});

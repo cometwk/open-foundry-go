@@ -13,7 +13,7 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { dockerAvailable, ensureStackUp } from './setup.js';
-import { restGet, restPost, graphql, fhirGet } from './client.js';
+import { restGet, restPost, graphql, fhirGet, restRaw } from './client.js';
 
 // ---------------------------------------------------------------------------
 // A valid, unique-per-run NHS number (10 digits, mod-11 checksum). nhsNumber is
@@ -151,6 +151,40 @@ describeWithDocker('governed pipeline (live stack)', () => {
     // name is no longer lossy; given carries the space-separated forenames.
     expect(cdm._provenance.lossyFields).not.toContain('name');
     expect(cdm._provenance.lossyFields).toContain('given');
+  });
+
+  it('exports the Patient dataset as NDJSON (v0.2.0 B3)', async () => {
+    const res = await restRaw('/cdm/Patient/export');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('application/x-ndjson');
+    expect(res.headers.get('content-disposition')).toContain('attachment');
+
+    const text = await res.text();
+    const lines = text.split('\n').filter(Boolean);
+    expect(lines.length).toBeGreaterThanOrEqual(1);
+    const records = lines.map((l) => JSON.parse(l) as { resourceType: string; id: string; _provenance: unknown });
+    expect(records.every((r) => r.resourceType === 'Patient')).toBe(true);
+    expect(records.every((r) => !!r._provenance)).toBe(true);
+    // The patient registered earlier in this suite is in the export.
+    expect(records.some((r) => r.id === patientId)).toBe(true);
+  });
+
+  it('exports the Patient dataset as CSV (v0.2.0 B3)', async () => {
+    const res = await restRaw('/cdm/Patient/export?format=csv');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/csv');
+
+    const text = await res.text();
+    const lines = text.split('\n').filter(Boolean);
+    expect(lines[0]).toContain('resourceType,id');
+    expect(lines[0]).toContain('_lossyFields');
+    // Data row count matches the NDJSON export (header + >=1 row).
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('rejects an unsupported export format (v0.2.0 B3)', async () => {
+    const res = await restRaw('/cdm/Patient/export?format=xml');
+    expect(res.status).toBe(400);
   });
 
   it('serves the FHIR CapabilityStatement', async () => {

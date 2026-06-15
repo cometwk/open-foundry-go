@@ -939,7 +939,13 @@ async function main(): Promise<void> {
       for (const [key, value] of Object.entries(result.headers)) {
         res.setHeader(key, value);
       }
-      res.status(result.status).json(result.body);
+      // Dataset-export routes return a pre-serialised string (NDJSON/CSV) with
+      // their own Content-Type; send it raw rather than JSON-encoding it.
+      if (typeof result.body === 'string') {
+        res.status(result.status).send(result.body);
+      } else {
+        res.status(result.status).json(result.body);
+      }
     } catch (err) {
       if (err && typeof err === 'object' && 'status' in err && (err as { status: number }).status === 401) {
         res.status(401).json({ error: { code: 401, message: 'Authentication required' } });

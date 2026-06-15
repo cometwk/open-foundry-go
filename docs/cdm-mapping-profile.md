@@ -154,7 +154,15 @@ and GraphQL.
 | `GET /api/v1/cdm/metadata` | Profile, compatibility matrix, gap register | Public |
 | `GET /api/v1/cdm/{SourceType}` | List projection (Patient, Ward, Bed, Consultant, DischargeRecord, Transfer) | Required |
 | `GET /api/v1/cdm/{SourceType}/{id}` | Single record projection | Required |
+| `GET /api/v1/cdm/{SourceType}/export` | Dataset export, `?format=ndjson` (default) or `csv` | Required |
 | `GET /api/v1/cdm/Encounter?patient={id}` | Admissions for a patient (via AdmittedTo) | Required |
+
+The export route (v0.2.0 B3) streams the full authorised, redacted,
+consent-filtered, CDM-projected set for an object-kind source type. NDJSON
+carries the complete record including `_provenance`; CSV is a flattened tabular
+view (CDM fields + `resourceType`/`id` + a `_lossyFields` provenance column).
+It reuses the list route's pipeline, so an export never surfaces anything the
+list route would not.
 
 Patient and Encounter projections are consent-gated (subject = patient).
 `Ward`/`Bed`/`Consultant`/`DischargeRecord` are authorization + redaction gated.
