@@ -22,7 +22,7 @@ data exercised in tests is synthetic, but the CDM target is not invented.
 
 | Open Foundry | Profile version | CDM revision | CDM status |
 |---|---|---|---|
-| `nhs-acute` 0.2.0 | 0.1.0 | `fdp-cdm-draft` | DAPB4121 draft-in-progress; revalidate quarterly |
+| `nhs-acute` 0.2.0 | 0.2.0 | `fdp-cdm-draft` | DAPB4121 draft-in-progress; revalidate quarterly |
 
 Profile version is independent of the platform and spec version tracks. When the
 upstream CDM revises, bump `cdmVersion` + `profileVersion` and re-run the gap
@@ -138,9 +138,9 @@ what was projected and what was approximated:
   "sourceId": "p-1",
   "sourceVersion": 3,
   "sourceUpdatedAt": "2026-05-25T10:00:00.000Z",
-  "profileVersion": "0.1.0",
+  "profileVersion": "0.2.0",
   "cdmVersion": "fdp-cdm-draft",
-  "lossyFields": ["name", "status", "triageCategory"]
+  "lossyFields": ["given", "status", "triageCategory"]
 }
 ```
 
@@ -168,12 +168,17 @@ and GraphQL.
 | `GET /api/v1/cdm/{SourceType}/export` | Dataset export, `?format=ndjson` (default) or `csv` | Required |
 | `GET /api/v1/cdm/Encounter?patient={id}` | Admissions for a patient (via AdmittedTo) | Required |
 
-The export route (v0.2.0 B3) streams the full authorised, redacted,
-consent-filtered, CDM-projected set for an object-kind source type. NDJSON
-carries the complete record including `_provenance`; CSV is a flattened tabular
-view (CDM fields + `resourceType`/`id` + a `_lossyFields` provenance column).
-It reuses the list route's pipeline, so an export never surfaces anything the
-list route would not.
+The export route (v0.2.0 B3) streams the authorised, redacted, consent-filtered,
+CDM-projected set for an object-kind source type. NDJSON carries the complete
+record including `_provenance`; CSV is a flattened tabular view (CDM fields +
+`resourceType`/`id` + a `_lossyFields` provenance column). It reuses the list
+route's pipeline, so an export never surfaces anything the list route would not.
+
+The export is capped at **10,000 rows**. The response carries
+`X-CDM-Export-Limit` and `X-CDM-Export-Truncated` (`true` when the cap was hit
+and rows were left behind) so a consumer never mistakes a partial extract for a
+complete one; a truncated export is also logged server-side. Datasets larger
+than the cap need a paged/streaming export (not yet implemented).
 
 Patient and Encounter projections are consent-gated (subject = patient).
 `Ward`/`Bed`/`Consultant`/`Staff`/`DischargeRecord` are authorization + redaction gated.

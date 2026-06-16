@@ -1262,7 +1262,7 @@ function generateCdmResolvers(resolvers: ResolverMap, deps: ApiDependencies): vo
     return res.body;
   };
 
-  // Query: cdmRecords(sourceType): JSON! — { resourceType, total, records }
+  // Query: cdmRecords(sourceType): JSON! — { resourceType, total, truncated, records }
   resolvers['Query']!['cdmRecords'] = async (
     _parent: unknown,
     args: { sourceType: string },

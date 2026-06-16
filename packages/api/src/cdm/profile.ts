@@ -14,7 +14,11 @@
 import type { CdmMappingProfile } from './types.js';
 
 export const NHS_ACUTE_CDM_PROFILE: CdmMappingProfile = {
-  profileVersion: '0.1.0',
+  // Bumped to 0.2.0 for the Epic B mapping-surface changes (first-class
+  // Transfer, structured family/given, Consultant identifier/role alignment,
+  // and the Staff→Practitioner mapping). Carried into every record's
+  // _provenance.profileVersion so consumers can distinguish the semantics.
+  profileVersion: '0.2.0',
   cdmVersion: 'fdp-cdm-draft',
   cdmStatus:
     'DAPB4121 draft-in-progress; this profile pins a placeholder revision label. ' +

@@ -362,10 +362,45 @@ describe('CDM dataset export (v0.2.0 B3)', () => {
     expect(res.body).toBe('');
   });
 
+  it('signals an un-truncated export via headers (not capped)', async () => {
+    const { deps } = makeDeps({ listResult: ['*'], queryItems: rows });
+    const router = createCdmRouter({ deps });
+    const res = await router({ method: 'GET', path: 'Patient/export', query: {}, user: makeUser() });
+    expect(res.headers['X-CDM-Export-Truncated']).toBe('false');
+    expect(res.headers['X-CDM-Export-Limit']).toBeDefined();
+  });
+
   it('requires authentication', async () => {
     const { deps } = makeDeps({});
     const router = createCdmRouter({ deps });
     const res = await router({ method: 'GET', path: 'Patient/export', query: {} });
     expect(res.status).toBe(401);
+  });
+});
+
+describe('CDM truncation signalling', () => {
+  // The mock objectManager.query ignores the limit and returns all queryItems,
+  // so a queryItems set larger than the route limit exercises the +1 probe and
+  // the capped/slice logic. The list route uses QUERY_LIMIT=100.
+  const overLimit = Array.from({ length: 101 }, (_, i) => ({
+    _id: `p-${i}`, _version: 1, name: `Pat ${i}`, status: 'ACTIVE',
+  }));
+
+  it('list route caps at QUERY_LIMIT and flags truncated', async () => {
+    const { deps } = makeDeps({ listResult: ['*'], queryItems: overLimit });
+    const router = createCdmRouter({ deps });
+    const res = await router({ method: 'GET', path: 'Patient', query: {}, user: makeUser() });
+
+    const body = res.body as { total: number; truncated: boolean; records: unknown[] };
+    expect(body.truncated).toBe(true);
+    expect(body.records).toHaveLength(100);
+    expect(body.total).toBe(100);
+  });
+
+  it('list route reports truncated=false when under the cap', async () => {
+    const { deps } = makeDeps({ listResult: ['*'], queryItems: overLimit.slice(0, 5) });
+    const router = createCdmRouter({ deps });
+    const res = await router({ method: 'GET', path: 'Patient', query: {}, user: makeUser() });
+    expect((res.body as { truncated: boolean }).truncated).toBe(false);
   });
 });

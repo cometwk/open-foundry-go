@@ -19,7 +19,7 @@
       - given
       - dateOfBirth
       - triageCategory
-    nurse:
+    nurse_in_charge:
       - nhsNumber
       - name
       - family

@@ -621,6 +621,38 @@ describe('NHS Acute Domain Pack — OpenFGA permissions', () => {
   });
 });
 
+describe('NHS Acute Domain Pack — field permissions', () => {
+  interface FieldPermEntry {
+    objectType: string;
+    alwaysVisible?: string[];
+    fieldsByRelation?: Record<string, string[]>;
+  }
+
+  function loadFieldPermissions(): FieldPermEntry[] {
+    const path = resolve(PACK_ROOT, 'permissions', 'field-permissions.yaml');
+    return parseYaml(readFileSync(path, 'utf-8')) as FieldPermEntry[];
+  }
+
+  it('Patient relations use the platform role nurse_in_charge, not the dead "nurse" key', () => {
+    // Runtime role mapping (CIS2 / realm) emits `nurse_in_charge`; redaction
+    // matches relation keys exactly, so a `nurse` key would never fire.
+    const patient = loadFieldPermissions().find(e => e.objectType === 'Patient')!;
+    const relations = Object.keys(patient.fieldsByRelation ?? {});
+    expect(relations).toContain('nurse_in_charge');
+    expect(relations).not.toContain('nurse');
+  });
+
+  it('structured-name fields (family/given) are visible to every relation that sees name', () => {
+    const patient = loadFieldPermissions().find(e => e.objectType === 'Patient')!;
+    for (const [relation, fields] of Object.entries(patient.fieldsByRelation ?? {})) {
+      if (fields.includes('name')) {
+        expect(fields, `relation ${relation} should expose family`).toContain('family');
+        expect(fields, `relation ${relation} should expose given`).toContain('given');
+      }
+    }
+  });
+});
+
 describe('NHS Acute Domain Pack — Connector config', () => {
   it('pas-jdbc.yaml has expected structure', () => {
     const connPath = resolve(PACK_ROOT, 'connectors', 'pas-jdbc.yaml');

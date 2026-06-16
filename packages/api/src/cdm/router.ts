@@ -43,7 +43,11 @@ export interface CdmRouterConfig {
 }
 
 const QUERY_LIMIT = 100;
-/** Higher cap for dataset export — pulls the full authorised set in one pass. */
+/**
+ * Row cap for dataset export. Larger sets are truncated to this many rows and
+ * the response flags truncation (X-CDM-Export-Truncated). A paged/streaming
+ * export would be needed to lift the cap.
+ */
 const EXPORT_LIMIT = 10_000;
 
 /** Export formats supported by the dataset-export route. */
@@ -187,15 +191,31 @@ export async function handleObjectRead(
 }
 
 /**
+ * Result of {@link collectObjectRecords}. `capped` is true when the underlying
+ * query returned at least `limit` rows — i.e. more matching rows may exist
+ * beyond the page — so callers can signal truncation rather than silently
+ * returning a partial set.
+ */
+interface CollectedRecords {
+  records: CdmRecord[];
+  capped: boolean;
+}
+
+/**
  * Fetch the authorised, redacted, consent-filtered, CDM-projected records for an
  * object-kind source type. Shared by the list and export routes.
+ *
+ * Queries `limit + 1` rows so a full page can be distinguished from a page that
+ * exactly fills the limit; the extra row is dropped and `capped` reflects
+ * whether rows were left behind (measured before redaction/consent so the
+ * signal is honest regardless of how many rows those stages remove).
  */
 async function collectObjectRecords(
   deps: ApiDependencies,
   user: AuthenticatedUserInfo,
   sourceType: string,
   limit: number,
-): Promise<CdmRecord[]> {
+): Promise<CollectedRecords> {
   const ctx = ctxFor(user);
   const mapping = findMappingBySourceType(NHS_ACUTE_CDM_PROFILE, sourceType)!;
   const fgaType = toSnakeCase(sourceType);
@@ -210,7 +230,7 @@ async function collectObjectRecords(
         .filter((v): v is string => !!v);
 
   if (!unrestricted && allowedIds.length === 0) {
-    return [];
+    return { records: [], capped: false };
   }
 
   // Match-all pass-through (also excludes soft-deleted) mirrors the REST
@@ -222,12 +242,16 @@ async function collectObjectRecords(
   const page = await deps.objectManager.query(
     sourceType,
     filter,
-    { limit, offset: 0 },
+    { limit: limit + 1, offset: 0 },
     ctx,
   );
 
+  // Whether the query hit the cap (more rows may exist); drop the probe row.
+  const capped = page.items.length > limit;
+  const items = capped ? page.items.slice(0, limit) : page.items;
+
   const redacted = deps.authorizationService.redactFieldsBatch(
-    user.id, user.roles, sourceType, page.items as unknown as Record<string, unknown>[],
+    user.id, user.roles, sourceType, items as unknown as Record<string, unknown>[],
   );
 
   let rows = redacted.map(r => r.data);
@@ -241,7 +265,7 @@ async function collectObjectRecords(
     rows = consentResult.edges as Record<string, unknown>[];
   }
 
-  return rows.map(r => projectToCdm(r, mapping, NHS_ACUTE_CDM_PROFILE));
+  return { records: rows.map(r => projectToCdm(r, mapping, NHS_ACUTE_CDM_PROFILE)), capped };
 }
 
 export async function handleObjectList(
@@ -251,11 +275,11 @@ export async function handleObjectList(
 ): Promise<CdmResponse> {
   try {
     const mapping = findMappingBySourceType(NHS_ACUTE_CDM_PROFILE, sourceType)!;
-    const records = await collectObjectRecords(deps, user, sourceType, QUERY_LIMIT);
+    const { records, capped } = await collectObjectRecords(deps, user, sourceType, QUERY_LIMIT);
     return {
       status: 200,
       headers: jsonHeaders(),
-      body: { resourceType: mapping.cdmResource, total: records.length, records },
+      body: { resourceType: mapping.cdmResource, total: records.length, truncated: capped, records },
     };
   } catch (err) {
     logger.error({ err: err instanceof Error ? err.message : 'unknown' }, 'CDM object list error');
@@ -276,8 +300,22 @@ export async function handleObjectExport(
 ): Promise<CdmResponse> {
   try {
     const mapping = findMappingBySourceType(NHS_ACUTE_CDM_PROFILE, sourceType)!;
-    const records = await collectObjectRecords(deps, user, sourceType, EXPORT_LIMIT);
+    const { records, capped } = await collectObjectRecords(deps, user, sourceType, EXPORT_LIMIT);
     const filenameBase = `${mapping.cdmResource}-${sourceType}`;
+
+    // The export is capped at EXPORT_LIMIT rows. If the underlying query hit the
+    // cap, signal truncation explicitly (header + warning) so a consumer never
+    // mistakes a partial extract for a complete one.
+    if (capped) {
+      logger.warn(
+        { sourceType, limit: EXPORT_LIMIT },
+        'CDM export truncated at EXPORT_LIMIT — extract is incomplete',
+      );
+    }
+    const truncationHeaders: Record<string, string> = {
+      'X-CDM-Export-Truncated': String(capped),
+      'X-CDM-Export-Limit': String(EXPORT_LIMIT),
+    };
 
     if (format === 'csv') {
       return {
@@ -285,6 +323,7 @@ export async function handleObjectExport(
         headers: {
           'Content-Type': 'text/csv; charset=utf-8',
           'Content-Disposition': `attachment; filename="${filenameBase}.csv"`,
+          ...truncationHeaders,
         },
         body: toCsv(mapping.fields.map(f => f.cdmField), records),
       };
@@ -296,6 +335,7 @@ export async function handleObjectExport(
       headers: {
         'Content-Type': 'application/x-ndjson; charset=utf-8',
         'Content-Disposition': `attachment; filename="${filenameBase}.ndjson"`,
+        ...truncationHeaders,
       },
       body: records.map(r => JSON.stringify(r)).join('\n'),
     };
