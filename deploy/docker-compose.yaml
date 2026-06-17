@@ -219,6 +219,9 @@ services:
       # with DEFAULT_CONSENT_PURPOSE=KYC.
       CONSENT_PURPOSES: ${CONSENT_PURPOSES:-}
       DEFAULT_CONSENT_PURPOSE: ${DEFAULT_CONSENT_PURPOSE:-}
+      # Object types whose @param marks an action's consent subject. Unset →
+      # Patient (NHS). Non-NHS: e.g. CONSENT_SUBJECT_TYPES=Customer.
+      CONSENT_SUBJECT_TYPES: ${CONSENT_SUBJECT_TYPES:-}
       # Legitimate-relationship consent exemption. Platform default is OFF; this
       # NHS reference stack enables it (NHS Act 2006 s251 direct-care exemption).
       # Non-NHS deployments leave it false for pure explicit-consent semantics.

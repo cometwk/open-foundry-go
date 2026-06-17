@@ -22,7 +22,7 @@ import type { ActionActor, ActionContext } from '@openfoundry/actions';
 import type { RedactionResult } from '@openfoundry/security';
 import { PubSub } from 'graphql-subscriptions';
 import type { ApiDependencies, ResolverContext, PaginationArgs } from './types.js';
-import { DEFAULT_CONSENT_PURPOSE } from './types.js';
+import { DEFAULT_CONSENT_PURPOSE, DEFAULT_CONSENT_SUBJECT_TYPES } from './types.js';
 import { resolvePagination, buildConnection, decodeCursor } from './pagination.js';
 import { paginateWithConsent } from '../consent-pagination.js';
 import { createOpenFoundryError, wrapError } from './errors.js';
@@ -957,14 +957,15 @@ function generateMutationResolver(
         roles: user.roles,
       };
 
-      // Build ActionContext — derive consent from action schema.
-      // If the action has a Patient-typed @param, use DIRECT_CARE purpose
-      // and the patient ID from input as consent subject.
-      const patientParam = action.fields.find(
-        f => isParamField(f) && f.type.name === 'Patient',
+      // Build ActionContext — derive consent from action schema. If the action
+      // has a @param whose type is a configured consent-subject type (default
+      // Patient), check consent for that subject under the default purpose.
+      const subjectTypes = deps.consentSubjectTypes ?? DEFAULT_CONSENT_SUBJECT_TYPES;
+      const subjectParam = action.fields.find(
+        f => isParamField(f) && subjectTypes.includes(f.type.name),
       );
-      const consentSubjectId = patientParam
-        ? String(args.input[patientParam.name] ?? '')
+      const consentSubjectId = subjectParam
+        ? String(args.input[subjectParam.name] ?? '')
         : undefined;
       const actionCtx: ActionContext = {
         requestContext,

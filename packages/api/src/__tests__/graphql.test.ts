@@ -465,6 +465,35 @@ describe('GraphQL API', () => {
       expect(actor.type).toBe('user');
       expect(actor.roles).toEqual(['clinician']);
     });
+
+    it('derives the consent subject from a Patient @param by default', async () => {
+      const deps = createMockDeps(parsed);
+      const executeMock = deps.actionExecutor.execute as ReturnType<typeof vi.fn>;
+      executeMock.mockResolvedValue({ success: true, actionId: 'a', errors: [], affectedObjects: [] });
+      const { resolvers } = generateResolvers(parsed, deps);
+
+      await M(resolvers, 'dischargePatient')(
+        null, { input: { patient: 'p-1', destination: 'HOME' } }, createResolverContext(deps),
+      );
+      const actionCtx = executeMock.mock.calls[0]![3];
+      expect(actionCtx.consentSubjectId).toBe('p-1');
+      expect(actionCtx.consentPurpose).toBeDefined();
+    });
+
+    it('honours configurable consentSubjectTypes — Patient is no longer hardcoded', async () => {
+      // With a non-NHS subject-type set, a Patient @param is NOT a consent
+      // subject (proves the old `=== "Patient"` literal is gone).
+      const deps = { ...createMockDeps(parsed), consentSubjectTypes: ['Customer'] };
+      const executeMock = deps.actionExecutor.execute as ReturnType<typeof vi.fn>;
+      executeMock.mockResolvedValue({ success: true, actionId: 'a', errors: [], affectedObjects: [] });
+      const { resolvers } = generateResolvers(parsed, deps);
+
+      await M(resolvers, 'dischargePatient')(
+        null, { input: { patient: 'p-1', destination: 'HOME' } }, createResolverContext(deps),
+      );
+      const actionCtx = executeMock.mock.calls[0]![3];
+      expect(actionCtx.consentSubjectId).toBeUndefined();
+    });
   });
 
   describe('field-level redaction', () => {

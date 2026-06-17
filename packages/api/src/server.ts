@@ -418,6 +418,10 @@ async function main(): Promise<void> {
   // CONSENT_PURPOSES=KYC,AML_MONITORING. Warn if the default purpose used for
   // read access checks is outside the configured vocabulary.
   const consentPurposes = parseRoles(process.env['CONSENT_PURPOSES']);
+  // Object types whose @param marks an action's consent subject (env
+  // CONSENT_SUBJECT_TYPES). Unset → ['Patient'] (back-compat); a non-NHS
+  // deployment sets its own subject type(s), e.g. Customer.
+  const consentSubjectTypes = parseRoles(process.env['CONSENT_SUBJECT_TYPES']);
   if (consentPurposes && !consentPurposes.includes(DEFAULT_CONSENT_PURPOSE)) {
     logger.warn(
       { defaultConsentPurpose: DEFAULT_CONSENT_PURPOSE, consentPurposes },
@@ -645,6 +649,7 @@ async function main(): Promise<void> {
     granterRoles,
     consentRecorderRoles,
     consentPurposes,
+    ...(consentSubjectTypes ? { consentSubjectTypes } : {}),
     cdmEnabled,
   };
 

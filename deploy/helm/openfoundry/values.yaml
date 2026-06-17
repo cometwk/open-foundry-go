@@ -122,6 +122,9 @@ governance:
   # Default purpose for access checks; must be within consentPurposes when that
   # is set. Empty → platform default (DIRECT_CARE).
   defaultConsentPurpose: ""
+  # Object types whose @param marks an action's consent subject. Empty → Patient
+  # (NHS). A non-NHS deployment sets its own, e.g. [Customer].
+  consentSubjectTypes: []
   # Legitimate-relationship consent exemption (NHS s251 reference case).
   # Generic default OFF — enable + set purpose for an NHS deployment:
   #   directCareExemption: true

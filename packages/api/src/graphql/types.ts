@@ -58,6 +58,12 @@ export interface ApiDependencies {
    */
   consentPurposes?: readonly string[];
   /**
+   * Object types that act as an action's consent subject when present as a
+   * `@param` (env CONSENT_SUBJECT_TYPES). Absent → `['Patient']` (back-compat).
+   * A non-NHS deployment sets its own subject type(s), e.g. `Customer`.
+   */
+  consentSubjectTypes?: readonly string[];
+  /**
    * Whether the FDP/CDM projection surface (REST `/api/v1/cdm/*` + the GraphQL
    * cdm* queries) is enabled — true only when a loaded pack declares the `cdm`
    * capability. `false` omits the CDM resolvers (and the server omits the SDL
@@ -140,6 +146,14 @@ export const DEFAULT_CONSENT_PURPOSE: DataPurpose = (() => {
     ? (v as DataPurpose)
     : DataPurpose.DIRECT_CARE;
 })();
+
+/**
+ * Object types whose presence as an action `@param` marks the action's consent
+ * subject (consent is checked for that object before the action runs). Default
+ * `Patient` (the NHS subject); a deployment overrides via `deps.consentSubjectTypes`
+ * (env CONSENT_SUBJECT_TYPES), e.g. `Customer` for an AML deployment.
+ */
+export const DEFAULT_CONSENT_SUBJECT_TYPES: readonly string[] = ['Patient'];
 
 /**
  * Default page size when first/last not specified.

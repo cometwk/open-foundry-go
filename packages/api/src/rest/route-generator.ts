@@ -21,7 +21,7 @@ import type { OntologyObject, FilterExpression, AggregateQuery, AggregateField, 
 import type { ActionActor, ActionContext } from '@openfoundry/actions';
 import type { RedactionResult } from '@openfoundry/security';
 import type { ApiDependencies, ResolverContext } from '../graphql/types.js';
-import { DEFAULT_CONSENT_PURPOSE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '../graphql/types.js';
+import { DEFAULT_CONSENT_PURPOSE, DEFAULT_CONSENT_SUBJECT_TYPES, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '../graphql/types.js';
 import type { RestRequest, RestResponse, RestRoute } from './types.js';
 import { createRestErrorResponse, wrapErrorToRest } from './errors.js';
 import { lowerFirst, toSnakeCase } from '../utils.js';
@@ -898,13 +898,15 @@ function generateActionRoute(
           roles: user.roles,
         };
 
-        // Derive consent from action schema — if the action has a
-        // Patient-typed @param, use DIRECT_CARE and the patient ID.
-        const patientParam = action.fields.find(
-          f => isParamField(f) && f.type.name === 'Patient',
+        // Derive consent from action schema — if the action has a @param whose
+        // type is a configured consent-subject type (default Patient), check
+        // consent for that subject under the deployment's default purpose.
+        const subjectTypes = deps.consentSubjectTypes ?? DEFAULT_CONSENT_SUBJECT_TYPES;
+        const subjectParam = action.fields.find(
+          f => isParamField(f) && subjectTypes.includes(f.type.name),
         );
-        const consentSubjectId = patientParam
-          ? String(input[patientParam.name] ?? '')
+        const consentSubjectId = subjectParam
+          ? String(input[subjectParam.name] ?? '')
           : undefined;
         const actionCtx: ActionContext = {
           requestContext,

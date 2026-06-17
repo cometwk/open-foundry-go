@@ -247,8 +247,11 @@ effects → audit). These bite a production single-trust pilot specifically.
   `consent.consent_records` insert (decision enum is `"GRANT"`/`"DENY"`). The
   recordable purpose vocabulary is the open `DataPurpose` string type — default
   is the NHS preset, configurable via `CONSENT_PURPOSES` (Epic C); the exemption
-  purpose is `CONSENT_EXEMPTION_PURPOSE` (default `DIRECT_CARE`). This is an
-  in-platform two-step flow (record consent → then admit).
+  purpose is `CONSENT_EXEMPTION_PURPOSE` (default `DIRECT_CARE`). Which object
+  type drives an action's consent check is `CONSENT_SUBJECT_TYPES` (default
+  `Patient`) — a non-NHS deployment sets e.g. `Customer` to consent-gate actions
+  on its own subject. This is an in-platform two-step flow (record consent →
+  then admit).
 
 - **Link-derived ReBAC tuples are now emitted by the pipeline.** On a `createLink`
   / `deleteLink` effect, the action executor writes/deletes the matching OpenFGA
