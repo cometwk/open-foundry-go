@@ -131,21 +131,25 @@ export interface PageInfo {
 export type ConsentPurpose = DataPurpose;
 
 /**
+ * Resolve the default consent purpose from an env value. `DataPurpose` is an
+ * open string type, so ANY non-empty purpose is accepted (the consent vocabulary
+ * is deployment-defined via CONSENT_PURPOSES, validated separately at boot).
+ * Unset/blank → `DIRECT_CARE` (the NHS-preset back-compat default).
+ */
+export function resolveDefaultConsentPurpose(value: string | undefined): DataPurpose {
+  return value && value.trim() !== '' ? value.trim() : DataPurpose.DIRECT_CARE;
+}
+
+/**
  * Default consent purpose applied to read/list access checks (REST + GraphQL)
  * and as the fallback when recording consent without an explicit purpose.
  *
- * Deployment policy: `DataPurpose` is a UK-IG/healthcare-shaped taxonomy, so the
- * built-in default (`DIRECT_CARE`) is NHS-flavoured. A non-NHS deployment that
- * enables consent overrides this via the `DEFAULT_CONSENT_PURPOSE` env var
- * (validated against `DataPurpose`) rather than inheriting "access implies
- * direct care". Resolved once at load; unset/invalid → `DIRECT_CARE`.
+ * Deployment policy: a non-NHS deployment sets `DEFAULT_CONSENT_PURPOSE` to a
+ * purpose in its own vocabulary (e.g. `KYC`); the built-in default `DIRECT_CARE`
+ * is the NHS-preset back-compat value. Resolved once at module load.
  */
-export const DEFAULT_CONSENT_PURPOSE: DataPurpose = (() => {
-  const v = process.env['DEFAULT_CONSENT_PURPOSE'];
-  return v && (Object.values(DataPurpose) as string[]).includes(v)
-    ? (v as DataPurpose)
-    : DataPurpose.DIRECT_CARE;
-})();
+export const DEFAULT_CONSENT_PURPOSE: DataPurpose =
+  resolveDefaultConsentPurpose(process.env['DEFAULT_CONSENT_PURPOSE']);
 
 /**
  * Object types whose presence as an action `@param` marks the action's consent

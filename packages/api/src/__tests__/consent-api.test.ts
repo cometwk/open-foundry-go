@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { applyConsentRecord, generateConsentRoutes } from '../consent/router.js';
 import type { ApiDependencies } from '../graphql/types.js';
+import { resolveDefaultConsentPurpose } from '../graphql/types.js';
 
 function mockDeps(withConsent = true, recorderRoles?: readonly string[], consentPurposes?: readonly string[]) {
   const recordConsent = vi.fn().mockResolvedValue(undefined);
@@ -109,6 +110,19 @@ describe('applyConsentRecord', () => {
     const r = await applyConsentRecord(nd.deps, { subject: 'p-1' }, ADMIN, 'default', 't1');
     expect(r.ok).toBe(false);
     expect(r.code).toBe('CONSENT_NOT_CONFIGURED');
+  });
+});
+
+describe('resolveDefaultConsentPurpose (open string model)', () => {
+  it('accepts any non-empty purpose — a non-NHS default is honoured, not coerced to DIRECT_CARE', () => {
+    expect(resolveDefaultConsentPurpose('KYC')).toBe('KYC');
+    expect(resolveDefaultConsentPurpose('  AML_MONITORING  ')).toBe('AML_MONITORING');
+  });
+
+  it('falls back to DIRECT_CARE when unset or blank', () => {
+    expect(resolveDefaultConsentPurpose(undefined)).toBe('DIRECT_CARE');
+    expect(resolveDefaultConsentPurpose('')).toBe('DIRECT_CARE');
+    expect(resolveDefaultConsentPurpose('   ')).toBe('DIRECT_CARE');
   });
 });
 
