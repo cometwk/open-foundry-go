@@ -2,13 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { applyConsentRecord, generateConsentRoutes } from '../consent/router.js';
 import type { ApiDependencies } from '../graphql/types.js';
 
-function mockDeps(withConsent = true, recorderRoles?: readonly string[]) {
+function mockDeps(withConsent = true, recorderRoles?: readonly string[], consentPurposes?: readonly string[]) {
   const recordConsent = vi.fn().mockResolvedValue(undefined);
   const auditWrite = vi.fn().mockResolvedValue(undefined);
   const deps = {
     consentService: withConsent ? { recordConsent } : undefined,
     auditWriter: { write: auditWrite },
     ...(recorderRoles ? { consentRecorderRoles: recorderRoles } : {}),
+    ...(consentPurposes ? { consentPurposes } : {}),
   } as unknown as ApiDependencies;
   return { deps, recordConsent, auditWrite };
 }
@@ -76,10 +77,25 @@ describe('applyConsentRecord', () => {
     expect(r.code).toBe('VALIDATION_ERROR');
   });
 
-  it('rejects an unknown purpose', async () => {
+  it('rejects an unknown purpose (default = standard NHS preset)', async () => {
     const r = await applyConsentRecord(d.deps, { subject: 'p-1', purpose: 'MARKETING' }, ADMIN, 'default', 't1');
     expect(r.ok).toBe(false);
     expect(r.code).toBe('INVALID_PURPOSE');
+  });
+
+  it('accepts a deployment-defined purpose from deps.consentPurposes (non-NHS vocabulary)', async () => {
+    const nd = mockDeps(true, undefined, ['KYC', 'AML_MONITORING']);
+    const r = await applyConsentRecord(nd.deps, { subject: 'cust-1', purpose: 'KYC' }, ADMIN, 'default', 't1');
+    expect(r.ok).toBe(true);
+    expect(nd.recordConsent).toHaveBeenCalledWith('cust-1', 'KYC', 'GRANT', undefined, 'default');
+  });
+
+  it('rejects an NHS purpose when the configured vocabulary excludes it', async () => {
+    const nd = mockDeps(true, undefined, ['KYC', 'AML_MONITORING']);
+    const r = await applyConsentRecord(nd.deps, { subject: 'cust-1', purpose: 'DIRECT_CARE' }, ADMIN, 'default', 't1');
+    expect(r.ok).toBe(false);
+    expect(r.code).toBe('INVALID_PURPOSE');
+    expect(r.message).toContain('KYC');
   });
 
   it('rejects an invalid decision', async () => {

@@ -72,8 +72,10 @@ export class ConsentService implements ConsentManager {
     tenantId?: string,
   ): Promise<ConsentDecision> {
     return withSpan(tracer, "consent.check", {}, async () => {
-      // 1. Direct care exemption (Section 7.3.3)
-      if (this.config.directCareExemptionEnabled && purpose === DataPurposeEnum.DIRECT_CARE) {
+      // 1. Legitimate-relationship exemption (Section 7.3.3). Applies to the
+      // configured exemption purpose (default DIRECT_CARE — the NHS s251 case).
+      const exemptionPurpose = this.config.exemptionPurpose ?? DataPurposeEnum.DIRECT_CARE;
+      if (this.config.directCareExemptionEnabled && purpose === exemptionPurpose) {
         const decision = await this.evaluateDirectCareExemption(subjectId, requestor, tenantId);
         if (decision) {
           return decision;
@@ -337,7 +339,7 @@ export class ConsentService implements ConsentManager {
 
     return {
       allowed: true,
-      purpose: DataPurposeEnum.DIRECT_CARE,
+      purpose: this.config.exemptionPurpose ?? DataPurposeEnum.DIRECT_CARE,
       basis: "legitimate_interest" as const,
     };
   }

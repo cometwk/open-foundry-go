@@ -969,7 +969,7 @@ function generateMutationResolver(
       const actionCtx: ActionContext = {
         requestContext,
         ...(consentSubjectId ? {
-          consentPurpose: DataPurpose.DIRECT_CARE,
+          consentPurpose: DEFAULT_CONSENT_PURPOSE,
           consentSubjectId,
         } : {}),
       };

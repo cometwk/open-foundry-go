@@ -213,9 +213,17 @@ services:
       #   CONSENT_RECORDER_ROLES=admin,nurse_in_charge,clinician
       RELATIONSHIP_GRANTER_ROLES: ${RELATIONSHIP_GRANTER_ROLES:-admin}
       CONSENT_RECORDER_ROLES: ${CONSENT_RECORDER_ROLES:-admin}
-      # Consent purpose for access checks (DataPurpose). NHS uses DIRECT_CARE;
-      # left to the platform default unless overridden.
+      # Consent vocabulary + default purpose (DataPurpose is an open string type).
+      # Unset → platform default (standard NHS/UK-IG preset, DIRECT_CARE default).
+      # A non-NHS deployment defines its own, e.g. CONSENT_PURPOSES=KYC,AML_MONITORING
+      # with DEFAULT_CONSENT_PURPOSE=KYC.
+      CONSENT_PURPOSES: ${CONSENT_PURPOSES:-}
       DEFAULT_CONSENT_PURPOSE: ${DEFAULT_CONSENT_PURPOSE:-}
+      # Legitimate-relationship consent exemption. Platform default is OFF; this
+      # NHS reference stack enables it (NHS Act 2006 s251 direct-care exemption).
+      # Non-NHS deployments leave it false for pure explicit-consent semantics.
+      CONSENT_DIRECT_CARE_EXEMPTION: ${CONSENT_DIRECT_CARE_EXEMPTION:-true}
+      CONSENT_EXEMPTION_PURPOSE: ${CONSENT_EXEMPTION_PURPOSE:-}
     volumes:
       - ${DOMAIN_PACKS_HOST_DIR:-./empty-packs}:/external-packs:ro
     depends_on:

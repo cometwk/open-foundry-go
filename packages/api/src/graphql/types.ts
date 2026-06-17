@@ -51,6 +51,13 @@ export interface ApiDependencies {
    */
   consentRecorderRoles?: readonly string[];
   /**
+   * Allowed consent-purpose vocabulary for this deployment (env CONSENT_PURPOSES).
+   * `DataPurpose` is an open string type; this is the set accepted when recording
+   * consent. Absent → the standard NHS/UK-IG preset (back-compat). A non-NHS
+   * deployment sets its own (e.g. `KYC,AML_MONITORING`).
+   */
+  consentPurposes?: readonly string[];
+  /**
    * Whether the FDP/CDM projection surface (REST `/api/v1/cdm/*` + the GraphQL
    * cdm* queries) is enabled — true only when a loaded pack declares the `cdm`
    * capability. `false` omits the CDM resolvers (and the server omits the SDL

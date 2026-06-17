@@ -55,6 +55,7 @@ import { InMemorySubscribableEventBus, SubscriptionManager } from './subscriptio
 import type { SubscribableEventBus } from './subscriptions/index.js';
 import { RedpandaEventBus } from './events/index.js';
 import type { ApiDependencies, ResolverContext } from './graphql/types.js';
+import { DEFAULT_CONSENT_PURPOSE } from './graphql/types.js';
 import type { RestRequest } from './rest/types.js';
 import {
   parsePostgresUrl,
@@ -411,6 +412,19 @@ async function main(): Promise<void> {
   const granterRoles = parseRoles(process.env['RELATIONSHIP_GRANTER_ROLES']) ?? ['admin'];
   const consentRecorderRoles = parseRoles(process.env['CONSENT_RECORDER_ROLES']) ?? ['admin'];
 
+  // Deployment-defined consent-purpose vocabulary (env CONSENT_PURPOSES). Unset →
+  // the consent router falls back to the standard NHS/UK-IG preset (back-compat).
+  // `DataPurpose` is an open string type, so a non-NHS deployment can define e.g.
+  // CONSENT_PURPOSES=KYC,AML_MONITORING. Warn if the default purpose used for
+  // read access checks is outside the configured vocabulary.
+  const consentPurposes = parseRoles(process.env['CONSENT_PURPOSES']);
+  if (consentPurposes && !consentPurposes.includes(DEFAULT_CONSENT_PURPOSE)) {
+    logger.warn(
+      { defaultConsentPurpose: DEFAULT_CONSENT_PURPOSE, consentPurposes },
+      'DEFAULT_CONSENT_PURPOSE is not in CONSENT_PURPOSES — read access checks use a purpose outside the recordable vocabulary',
+    );
+  }
+
   // Capability-gated facades. The FHIR (/fhir/*) and FDP/CDM (REST /api/v1/cdm/*
   // + the GraphQL cdm* queries) surfaces are NHS-shaped and only enabled when a
   // loaded pack opts in via `capabilities:` in pack.yaml. Computed before the
@@ -520,9 +534,18 @@ async function main(): Promise<void> {
   const consentStore = (storage instanceof PostgresStorageProvider)
     ? new PostgresConsentStore(storage.pool)
     : new MemoryConsentStore();
+  // Legitimate-relationship consent exemption (NHS s251 is the reference case).
+  // Generic default OFF — a deployment opts in via CONSENT_DIRECT_CARE_EXEMPTION
+  // and may set the purpose it applies to (CONSENT_EXEMPTION_PURPOSE, default
+  // DIRECT_CARE). The NHS reference stack enables it (see docker-compose).
+  const exemptionEnabled = process.env['CONSENT_DIRECT_CARE_EXEMPTION'] === 'true';
   const consentService = new ConsentService(consentStore, authorizationService, {
-    directCareExemptionEnabled: true,
+    directCareExemptionEnabled: exemptionEnabled,
+    ...(process.env['CONSENT_EXEMPTION_PURPOSE']
+      ? { exemptionPurpose: process.env['CONSENT_EXEMPTION_PURPOSE'] }
+      : {}),
   });
+  logger.info(`Consent: relationship-exemption ${exemptionEnabled ? 'enabled' : 'disabled'}`);
   if (storage instanceof PostgresStorageProvider) {
     logger.info('Consent: PostgreSQL (persistent)');
   } else {
@@ -621,6 +644,7 @@ async function main(): Promise<void> {
     grantAllowlist,
     granterRoles,
     consentRecorderRoles,
+    consentPurposes,
     cdmEnabled,
   };
 

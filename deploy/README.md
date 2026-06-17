@@ -233,19 +233,22 @@ effects → audit). These bite a production single-trust pilot specifically.
   fail (2) for a missing roles claim — two separate root causes for the same
   "clinician can't act" symptom.
 
-- **Consent blocks admission of a not-yet-admitted patient.** With
-  `directCareExemptionEnabled: true` (gateway default), the DIRECT_CARE exemption
-  (`consent-service.ts` `evaluateDirectCareExemption`) checks a care relation that
-  defaults to `viewer` (`careRelation ?? "viewer"`). But `patient.viewer = viewer
-  from admitted_to` — it derives from ward admission, so a freshly seeded/synced
-  (un-admitted) patient has no `viewer`, the exemption returns null, and
-  `AdmitPatient` fails `CONSENT_DENIED`. **v0.2.0 (A2) adds a consent-record API**
-  (`POST /api/v1/consent` + GraphQL `recordConsent`, role-gated + audited) so
-  consent no longer requires a direct `consent.consent_records` insert (decision
-  enum is `"GRANT"`/`"DENY"`). This is an in-platform two-step flow (record
-  consent → then admit); it does **not** change the exemption default — making
-  `careRelation` configurable (e.g. `clinician`) so first admission succeeds
-  without a prior record remains a separate policy decision.
+- **Consent blocks admission of a not-yet-admitted patient.** The
+  legitimate-relationship exemption (`consent-service.ts`
+  `evaluateDirectCareExemption`) is the NHS s251 direct-care case. It is OFF by
+  the platform default and enabled per-deployment via
+  `CONSENT_DIRECT_CARE_EXEMPTION=true` (this NHS reference compose sets it). When
+  on, it checks a care relation that defaults to `viewer` (`careRelation ??
+  "viewer"`). But `patient.viewer = viewer from admitted_to` — it derives from
+  ward admission, so a freshly seeded/synced (un-admitted) patient has no
+  `viewer`, the exemption returns null, and `AdmitPatient` fails `CONSENT_DENIED`.
+  **v0.2.0 (A2) adds a consent-record API** (`POST /api/v1/consent` + GraphQL
+  `recordConsent`, role-gated + audited) so consent no longer requires a direct
+  `consent.consent_records` insert (decision enum is `"GRANT"`/`"DENY"`). The
+  recordable purpose vocabulary is the open `DataPurpose` string type — default
+  is the NHS preset, configurable via `CONSENT_PURPOSES` (Epic C); the exemption
+  purpose is `CONSENT_EXEMPTION_PURPOSE` (default `DIRECT_CARE`). This is an
+  in-platform two-step flow (record consent → then admit).
 
 - **Link-derived ReBAC tuples are now emitted by the pipeline.** On a `createLink`
   / `deleteLink` effect, the action executor writes/deletes the matching OpenFGA

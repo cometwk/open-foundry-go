@@ -9,6 +9,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   DataPurpose,
+  STANDARD_DATA_PURPOSES,
+  type ConsentRecord,
   type DateTime,
   type Duration,
   type PlatformError,
@@ -39,6 +41,17 @@ describe('@openfoundry/spi type exports', () => {
     expect(DataPurpose.SERVICE_MANAGEMENT).toBe('SERVICE_MANAGEMENT');
     expect(DataPurpose.RESEARCH).toBe('RESEARCH');
     expect(DataPurpose.NATIONAL_REPORTING).toBe('NATIONAL_REPORTING');
+  });
+
+  it('DataPurpose is an OPEN string type — STANDARD_DATA_PURPOSES is the preset, not the universe', () => {
+    expect(STANDARD_DATA_PURPOSES).toEqual([
+      'DIRECT_CARE', 'CARE_PLANNING', 'SERVICE_MANAGEMENT', 'RESEARCH', 'NATIONAL_REPORTING',
+    ]);
+    // A deployment-defined purpose is a valid DataPurpose (compiles + round-trips).
+    const record: ConsentRecord = {
+      subjectId: 'cust-1', purpose: 'KYC', decision: 'GRANT', grantedAt: '2026-01-01T00:00:00Z',
+    };
+    expect(record.purpose).toBe('KYC');
   });
 
   it('can construct an OntologyObject', () => {

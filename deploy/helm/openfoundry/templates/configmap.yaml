@@ -49,6 +49,15 @@ data:
   {{- if and .Values.governance .Values.governance.consentRecorderRoles }}
   CONSENT_RECORDER_ROLES: {{ .Values.governance.consentRecorderRoles | join "," | quote }}
   {{- end }}
+  {{- if and .Values.governance .Values.governance.consentPurposes }}
+  CONSENT_PURPOSES: {{ .Values.governance.consentPurposes | join "," | quote }}
+  {{- end }}
   {{- if and .Values.governance .Values.governance.defaultConsentPurpose }}
   DEFAULT_CONSENT_PURPOSE: {{ .Values.governance.defaultConsentPurpose | quote }}
+  {{- end }}
+  {{- if and .Values.governance .Values.governance.directCareExemption }}
+  CONSENT_DIRECT_CARE_EXEMPTION: "true"
+  {{- end }}
+  {{- if and .Values.governance .Values.governance.exemptionPurpose }}
+  CONSENT_EXEMPTION_PURPOSE: {{ .Values.governance.exemptionPurpose | quote }}
   {{- end }}

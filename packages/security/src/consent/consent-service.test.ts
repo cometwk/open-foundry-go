@@ -209,6 +209,26 @@ describe("ConsentService", () => {
       // No exemption, no explicit consent → denied
       expect(decision.allowed).toBe(false);
     });
+
+    it("applies to a deployment-configured exemptionPurpose (non-NHS, v0.2.0 Epic C)", async () => {
+      const custom = new ConsentService(store, authz, {
+        directCareExemptionEnabled: true,
+        exemptionPurpose: "SERVICE_OPERATION",
+        careRelation: "viewer",
+      });
+      fga.addTuple({ user: "user:agent-1", relation: "assigned", object: "ward:cardiology" });
+      fga.addTuple({ user: "ward:cardiology", relation: "admitted_to", object: "patient:1" });
+
+      // Exemption fires for the configured purpose...
+      const ok = await custom.checkConsent("patient:1", "SERVICE_OPERATION", "user:agent-1");
+      expect(ok.allowed).toBe(true);
+      expect(ok.purpose).toBe("SERVICE_OPERATION");
+      expect(ok.basis).toBe("legitimate_interest");
+
+      // ...but NOT for DIRECT_CARE when that is not the configured exemption purpose.
+      const denied = await custom.checkConsent("patient:1", DataPurpose.DIRECT_CARE, "user:agent-1");
+      expect(denied.allowed).toBe(false);
+    });
   });
 
   // -------------------------------------------------------------------------

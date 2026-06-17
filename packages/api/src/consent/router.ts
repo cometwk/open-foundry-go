@@ -13,7 +13,8 @@
  * a first admission succeed without a prior consent record / care relation.
  */
 
-import { DataPurpose } from '@openfoundry/spi';
+import type { DataPurpose } from '@openfoundry/spi';
+import { STANDARD_DATA_PURPOSES } from '@openfoundry/spi';
 import type { ApiDependencies, ResolverContext } from '../graphql/types.js';
 import { DEFAULT_CONSENT_PURPOSE } from '../graphql/types.js';
 import type { RestRoute, RestRequest, RestResponse } from '../rest/types.js';
@@ -26,8 +27,6 @@ import { createRestErrorResponse } from '../rest/errors.js';
  * (an NHS deployment adds nurse_in_charge / clinician).
  */
 export const DEFAULT_CONSENT_RECORDER_ROLES = ['admin'] as const;
-
-const VALID_PURPOSES = new Set<string>(Object.values(DataPurpose));
 
 export interface ConsentChangeResult {
   ok: boolean;
@@ -61,14 +60,17 @@ export async function applyConsentRecord(
 ): Promise<ConsentChangeResult> {
   const b = (body ?? {}) as ConsentBody;
   const recorderRoles = deps.consentRecorderRoles ?? DEFAULT_CONSENT_RECORDER_ROLES;
+  // Deployment-defined purpose vocabulary (env CONSENT_PURPOSES); defaults to the
+  // standard NHS/UK-IG preset for back-compat. A non-NHS deployment sets its own.
+  const validPurposes = deps.consentPurposes ?? STANDARD_DATA_PURPOSES;
 
   const subject = typeof b.subject === 'string' ? b.subject.trim() : '';
   if (!subject) {
     return { ok: false, code: 'VALIDATION_ERROR', category: 'validation', message: 'Missing required field: subject' };
   }
   const purpose = (b.purpose ?? DEFAULT_CONSENT_PURPOSE).toString();
-  if (!VALID_PURPOSES.has(purpose)) {
-    return { ok: false, code: 'INVALID_PURPOSE', category: 'validation', message: `Unknown purpose '${purpose}'. Valid: ${[...VALID_PURPOSES].join(', ')}.` };
+  if (!validPurposes.includes(purpose)) {
+    return { ok: false, code: 'INVALID_PURPOSE', category: 'validation', message: `Unknown purpose '${purpose}'. Valid: ${validPurposes.join(', ')}.` };
   }
   const decision = (b.decision ?? 'GRANT').toString().toUpperCase();
   if (decision !== 'GRANT' && decision !== 'DENY') {

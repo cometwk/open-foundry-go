@@ -10,16 +10,26 @@
  */
 export interface ConsentManagerConfig {
   /**
-   * Whether the direct care exemption is enabled (Section 7.3.3).
-   * When true, DIRECT_CARE purpose with a legitimate care relationship
-   * (verified via ReBAC) presumes consent under NHS Act 2006 Section 251.
+   * Whether the "legitimate-relationship" consent exemption is enabled
+   * (Section 7.3.3). When true, a request for `exemptionPurpose` (default
+   * `DIRECT_CARE`) backed by a verified ReBAC relationship to the subject
+   * presumes consent. The NHS instance of this is the Act 2006 s251 direct-care
+   * exemption; the mechanism itself is purpose-agnostic.
    *
-   * Defaults to true for NHS deployments.
+   * Defaults to off for generic deployments; NHS deployments enable it.
    */
   directCareExemptionEnabled: boolean;
 
   /**
-   * The ReBAC relation used to verify legitimate care relationships.
+   * Purpose the relationship-exemption applies to. Default: `DIRECT_CARE` (the
+   * NHS reference purpose). A non-NHS deployment that enables the exemption sets
+   * its own purpose (e.g. a "service operation" purpose). `DataPurpose` is an
+   * open string, so any value is accepted.
+   */
+  exemptionPurpose?: string;
+
+  /**
+   * The ReBAC relation used to verify legitimate relationships.
    * Checked via AuthorizationService.check(requestor, relation, subject).
    * Default: "viewer"
    */

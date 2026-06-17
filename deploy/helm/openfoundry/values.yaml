@@ -115,9 +115,19 @@ governance:
     - admin
   consentRecorderRoles:
     - admin
-  # A DataPurpose value (DIRECT_CARE | CARE_PLANNING | SERVICE_MANAGEMENT |
-  # RESEARCH | NATIONAL_REPORTING). Empty → platform default (DIRECT_CARE).
+  # Consent-purpose vocabulary (DataPurpose is an open string type). Empty → the
+  # standard NHS/UK-IG preset. A non-NHS deployment lists its own purposes, e.g.
+  # [KYC, AML_MONITORING].
+  consentPurposes: []
+  # Default purpose for access checks; must be within consentPurposes when that
+  # is set. Empty → platform default (DIRECT_CARE).
   defaultConsentPurpose: ""
+  # Legitimate-relationship consent exemption (NHS s251 reference case).
+  # Generic default OFF — enable + set purpose for an NHS deployment:
+  #   directCareExemption: true
+  #   exemptionPurpose: DIRECT_CARE
+  directCareExemption: false
+  exemptionPurpose: ""
 
 # HELM-25: Configurable runtime environment
 nodeEnv: production
