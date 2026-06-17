@@ -237,19 +237,22 @@ Clinicians never "admit" real patients inside Open Foundry in Stage 1 unless the
 - Provenance-preserving projection: `packages/api/src/cdm/mappers.ts` — every record carries a `_provenance` envelope (source type/version/timestamp + lossy fields).
 - Read API at `/api/v1/cdm/*`: public `metadata` (profile + compatibility matrix + gap register), authenticated per-resource list/by-id projections, and Encounter-by-patient (via `AdmittedTo`). Reuses the FHIR/GraphQL auth + redaction + consent pipeline.
 - Human-readable canonical mapping document: `docs/cdm-mapping-profile.md`.
-- Tests: `packages/api/src/__tests__/cdm.test.ts` (19 tests — profile completeness, projection, enum remaps, provenance, gap register, and the GraphQL CDM resolvers incl. Encounter).
+- Tests: `packages/api/src/__tests__/cdm.test.ts` (31 tests — profile completeness, projection, enum remaps, provenance, gap register, GraphQL CDM resolvers incl. Encounter, NDJSON/CSV export, truncation signalling, and Staff/structured-name projection).
 
-The GraphQL CDM view is now implemented (`cdmMetadata` / `cdmRecord` /
-`cdmRecords` queries, reusing the same handlers as the REST router).
-Remaining for full S1.0: dataset export, structured-name decomposition,
-terminology validation, first-class Transfer object, and broader Staff
-coverage (tracked in the gap register and §S2.2).
+The GraphQL CDM view is implemented (`cdmMetadata` / `cdmRecord` / `cdmRecords` /
+`cdmEncounters` queries, reusing the same handlers as the REST router;
+capability-gated alongside the REST mount). v0.2.0 also closed the remaining
+S1.0 items: dataset export (`/api/v1/cdm/{Resource}/export?format=ndjson|csv`),
+structured-name decomposition (Patient `family`/`given`), first-class Transfer
+object, and broader Staff→Practitioner coverage. **Terminology validation**
+(SNOMED/dm+d/ODS) is the only S1.0 item still open — deferred to the connector
+layer (§S1.2) and full CDM coverage (§S2.2).
 
 **Deliverables.**
 
 - ODL ↔ FDP/CDM mapping profile for the Stage 1 operational subset, expressed as ODL directives plus a separate human-readable canonical mapping document. *(Done — declarative profile + `docs/cdm-mapping-profile.md`.)*
 - Provenance-preserving transform pipeline: source system → Open Foundry ontology → CDM-shaped export view, with lineage retained end-to-end. *(Done — projection preserves `_provenance`.)*
-- A read API that emits ontology contents in the CDM shape (initially as a GraphQL view + REST projection; later a dataset export). *(REST projection done; GraphQL view + dataset export remain.)*
+- A read API that emits ontology contents in the CDM shape (initially as a GraphQL view + REST projection; later a dataset export). *(Done — REST projection + GraphQL view + NDJSON/CSV dataset export, all capability-gated.)*
 - A versioned **CDM compatibility matrix**: which OF version targets which CDM revision, including the DAPB4121 status at the time of cut. *(Done — in profile + mapping doc.)*
 - Documented gap register: where ODL semantics and CDM semantics differ, where mappings are lossy, what the safe fallback is. *(Done — 5 entries.)*
 

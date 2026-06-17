@@ -45,6 +45,14 @@ description: "Example external domain pack"
 dependencies:
   openfoundry.core: ">=1.0.0"
 
+# Optional: platform capabilities this pack opts into. The FHIR facade (/fhir/*)
+# and the FDP/CDM projection (/api/v1/cdm/*) are NHS-shaped and only mounted when
+# a loaded pack declares them — so a deployment without an NHS-style pack does
+# not expose these endpoints. Most packs omit this.
+capabilities:
+  - cdm
+  - fhir
+
 schema:
   - schema/types.odl
   - schema/links.odl
@@ -70,6 +78,7 @@ permissions:
 | `namespace` | Recommended | ODL namespace, dot-separated (used for dependency resolution) |
 | `description` | No | Human-readable summary |
 | `dependencies` | No | Map of `namespace: ">=X.Y.Z"` constraints |
+| `capabilities` | No | Capability-gated facades this pack opts into (`cdm`, `fhir`). Omit unless the pack provides NHS/CDM-shaped data. |
 | `schema` | Recommended | ODL files to compile (relative paths); omit for metadata-only packs |
 | `actions` | No | Action manifest YAML files |
 | `connectors` | No | Connector configuration YAML files |
@@ -241,6 +250,15 @@ store at boot.
 | `DOMAIN_PACKS` | Comma-separated pack names to activate. Omit to load all discovered packs. `core` is always included. | `core,nhs-acute,my-pack` |
 | `DOMAIN_PACKS_EXTRA_DIRS` | Path-separated directories to scan for external packs. Colon-separated on Linux, semicolon on Windows. Each entry is either a parent directory (subdirectories scanned) or a direct pack directory (containing `pack.yaml`). | `/external-packs:/opt/packs` |
 | `DOMAIN_PACKS_HOST_DIR` | Docker Compose only — host path mounted at `/external-packs` in the container. | `../../my-pack` |
+
+**Governance is deployment policy, not NHS-fixed.** A non-NHS deployment sets its
+own consent vocabulary and grant roles rather than inheriting the NHS defaults:
+`CONSENT_PURPOSES` (open `DataPurpose` vocabulary; default = NHS preset),
+`DEFAULT_CONSENT_PURPOSE`, `CONSENT_SUBJECT_TYPES` (action consent-subject types;
+default `Patient`), `CONSENT_DIRECT_CARE_EXEMPTION` (default off),
+`CONSENT_EXEMPTION_PURPOSE`, `RELATIONSHIP_GRANTER_ROLES` /
+`CONSENT_RECORDER_ROLES` (default `admin`). See `deploy/.env.example` and
+`deploy/README.md`.
 
 ### Docker Compose
 

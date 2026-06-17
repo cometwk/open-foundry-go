@@ -1951,14 +1951,22 @@ interface ConsentDecision {
   restrictions?: FieldRestriction[];  // Fields that MUST be redacted even if consent is granted
 }
 
-enum DataPurpose {
-  DIRECT_CARE
-  CARE_PLANNING
-  SERVICE_MANAGEMENT
-  RESEARCH
-  NATIONAL_REPORTING
-}
+// DataPurpose is an OPEN string type — a deployment defines its own consent
+// vocabulary (e.g. an AML deployment uses KYC / AML_MONITORING). The platform
+// treats it opaquely (stored + matched as a string, never switched on). The
+// values below are the standard NHS/UK-IG preset shipped for convenience and
+// used as the back-compat default vocabulary, not the closed universe.
+type DataPurpose = string;
+
+const STANDARD_DATA_PURPOSES = [
+  'DIRECT_CARE', 'CARE_PLANNING', 'SERVICE_MANAGEMENT', 'RESEARCH', 'NATIONAL_REPORTING',
+];
 ```
+
+The recordable vocabulary, the default purpose for access checks, and the object
+type(s) that act as an action's consent subject are all deployment policy
+(`CONSENT_PURPOSES`, `DEFAULT_CONSENT_PURPOSE`, `CONSENT_SUBJECT_TYPES`); the
+defaults preserve the NHS preset and `Patient` subject.
 
 #### 7.3.1 Consent in the Query Pipeline
 
@@ -1972,9 +1980,9 @@ For read operations, the consent check runs **after** the ReBAC permission check
 
 For write operations, the consent check is a dedicated step in the execution pipeline (see Section 5.3). A consent denial prevents the action from executing and returns a `CONSENT_DENIED` error.
 
-#### 7.3.3 Direct Care Exemption
+#### 7.3.3 Legitimate-Relationship Exemption (NHS Direct Care)
 
-For NHS deployments, the Healthcare Domain Pack configures the consent manager with a **direct care exemption**: when the stated purpose is `DIRECT_CARE` and the actor has a legitimate relationship with the patient (verified via ReBAC), consent is presumed under Section 251 of the NHS Act 2006. This exemption MUST be configurable and MAY be overridden by patient-level opt-outs registered via the National Data Opt-Out service.
+The consent manager supports a configurable **legitimate-relationship exemption**: when the stated purpose matches the configured exemption purpose and the actor has a legitimate relationship with the subject (verified via ReBAC), consent is presumed. The exemption is **off by default** and enabled per-deployment (`CONSENT_DIRECT_CARE_EXEMPTION`), with a configurable purpose (`CONSENT_EXEMPTION_PURPOSE`, default `DIRECT_CARE`). The NHS instance of this is the direct-care exemption under Section 251 of the NHS Act 2006 (purpose `DIRECT_CARE`); the mechanism itself is purpose-agnostic. It MAY be overridden by subject-level opt-outs (e.g. the NHS National Data Opt-Out service).
 
 #### 7.3.4 Consent Revocation
 
