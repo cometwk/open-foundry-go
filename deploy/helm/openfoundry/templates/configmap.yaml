@@ -49,3 +49,6 @@ data:
   {{- if and .Values.governance .Values.governance.consentRecorderRoles }}
   CONSENT_RECORDER_ROLES: {{ .Values.governance.consentRecorderRoles | join "," | quote }}
   {{- end }}
+  {{- if and .Values.governance .Values.governance.defaultConsentPurpose }}
+  DEFAULT_CONSENT_PURPOSE: {{ .Values.governance.defaultConsentPurpose | quote }}
+  {{- end }}

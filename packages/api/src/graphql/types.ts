@@ -7,7 +7,8 @@ import type {
   AuditWriter,
 } from '@openfoundry/security';
 import type { ParsedSchema } from '@openfoundry/odl';
-import type { RequestContext, StorageProvider, DataPurpose } from '@openfoundry/spi';
+import type { RequestContext, StorageProvider } from '@openfoundry/spi';
+import { DataPurpose } from '@openfoundry/spi';
 
 /**
  * Registry that resolves action names to parsed YAML manifests.
@@ -49,6 +50,14 @@ export interface ApiDependencies {
    * (env CONSENT_RECORDER_ROLES). Absent → generic default (`admin`).
    */
   consentRecorderRoles?: readonly string[];
+  /**
+   * Whether the FDP/CDM projection surface (REST `/api/v1/cdm/*` + the GraphQL
+   * cdm* queries) is enabled — true only when a loaded pack declares the `cdm`
+   * capability. `false` omits the CDM resolvers (and the server omits the SDL
+   * fields + REST mount), so non-NHS deployments expose no CDM surface.
+   * Absent/undefined is treated as enabled (back-compat for tests/spec dumps).
+   */
+  cdmEnabled?: boolean;
 }
 
 /**
@@ -109,9 +118,21 @@ export interface PageInfo {
 export type ConsentPurpose = DataPurpose;
 
 /**
- * Default consent purpose for GraphQL queries.
+ * Default consent purpose applied to read/list access checks (REST + GraphQL)
+ * and as the fallback when recording consent without an explicit purpose.
+ *
+ * Deployment policy: `DataPurpose` is a UK-IG/healthcare-shaped taxonomy, so the
+ * built-in default (`DIRECT_CARE`) is NHS-flavoured. A non-NHS deployment that
+ * enables consent overrides this via the `DEFAULT_CONSENT_PURPOSE` env var
+ * (validated against `DataPurpose`) rather than inheriting "access implies
+ * direct care". Resolved once at load; unset/invalid → `DIRECT_CARE`.
  */
-export const DEFAULT_CONSENT_PURPOSE = 'DIRECT_CARE' as const;
+export const DEFAULT_CONSENT_PURPOSE: DataPurpose = (() => {
+  const v = process.env['DEFAULT_CONSENT_PURPOSE'];
+  return v && (Object.values(DataPurpose) as string[]).includes(v)
+    ? (v as DataPurpose)
+    : DataPurpose.DIRECT_CARE;
+})();
 
 /**
  * Default page size when first/last not specified.

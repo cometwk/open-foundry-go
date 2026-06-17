@@ -444,7 +444,11 @@ export function generateResolvers(
   generateObjectSetResolvers(resolvers, deps);
 
   // FDP/CDM read-only projection resolvers (cdmMetadata/cdmRecord/cdmRecords).
-  generateCdmResolvers(resolvers, deps);
+  // Capability-gated: omitted when the deployment's packs do not declare `cdm`
+  // (mirrors the SDL gate + REST mount), so non-NHS deployments register none.
+  if (deps.cdmEnabled !== false) {
+    generateCdmResolvers(resolvers, deps);
+  }
 
   // Relationship (care-team) grant/revoke resolvers (v0.2.0 A1).
   generateRelationshipResolvers(resolvers, deps);

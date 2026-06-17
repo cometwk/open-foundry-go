@@ -103,17 +103,21 @@ cors:
 fhirBaseUrl: ""
 
 # Governance policy: platform roles allowed to grant relationships / record
-# consent. The platform default is `admin` only; this NHS reference chart adds
-# the clinical roles. Non-NHS deployments set these to their own roles (or
-# leave empty to keep the generic `admin`-only default).
+# consent, and the default consent purpose for access checks. Defaults are
+# generic (`admin` only) — no domain-specific roles are forced. NHS deployments
+# override, e.g.:
+#   governance:
+#     relationshipGranterRoles: [admin, nurse_in_charge]
+#     consentRecorderRoles: [admin, nurse_in_charge, clinician]
+#     defaultConsentPurpose: DIRECT_CARE
 governance:
   relationshipGranterRoles:
     - admin
-    - nurse_in_charge
   consentRecorderRoles:
     - admin
-    - nurse_in_charge
-    - clinician
+  # A DataPurpose value (DIRECT_CARE | CARE_PLANNING | SERVICE_MANAGEMENT |
+  # RESEARCH | NATIONAL_REPORTING). Empty → platform default (DIRECT_CARE).
+  defaultConsentPurpose: ""
 
 # HELM-25: Configurable runtime environment
 nodeEnv: production

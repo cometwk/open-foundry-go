@@ -182,12 +182,13 @@ DELETE /api/v1/relationships   { ... }            # + GraphQL grant/revokeRelati
 It grants only relations the merged FGA model declares directly-assignable to
 `user` (`patient.{clinician,nurse_in_charge,admin}`, `ward.{assigned,porter}`);
 computed/link relations like `can_admit`/`admitted_to` are rejected. The caller
-must hold a granter role — the generic platform default is `admin` only, and a
-deployment broadens it via `RELATIONSHIP_GRANTER_ROLES` (this NHS stack sets
-`admin,nurse_in_charge`); consent recording is gated likewise by
-`CONSENT_RECORDER_ROLES` (default `admin`; NHS adds `nurse_in_charge,clinician`).
-Every grant/revoke/denial is audited. Example — grant the acting clinician on
-admission:
+must hold a granter role — the generic platform default is `admin` only. A
+deployment broadens it via `RELATIONSHIP_GRANTER_ROLES`; consent recording is
+gated likewise by `CONSENT_RECORDER_ROLES`. Both default to `admin` in the
+shipped manifests — NHS deployments add the clinical roles in `.env`
+(`admin,nurse_in_charge` and `admin,nurse_in_charge,clinician`; see
+`.env.example`). Every grant/revoke/denial is audited. Example — grant the
+acting clinician on admission:
 
 ```
 POST /api/v1/relationships { "user":"<sub>", "relation":"clinician", "objectType":"Patient", "objectId":"<id>" }
@@ -314,8 +315,10 @@ capabilities:
 ```
 
 `nhs-acute` declares both. A deployment that loads only non-NHS packs (e.g.
-`aml`, `supply-chain`) does **not** expose these endpoints — requests return 404
-rather than NHS-shaped metadata/errors. Boot logs the resolved capabilities
+`aml`, `supply-chain`) does **not** expose these endpoints — the REST routes
+return 404 **and** the GraphQL `cdm*` queries (`cdmMetadata`/`cdmRecord`/
+`cdmRecords`/`cdmEncounters`) are omitted from the schema entirely (no SDL
+fields, no resolvers). Boot logs the resolved capabilities
 (`Capabilities: cdm=… fhir=…`).
 
 For full details (pack.yaml format, Helm config, permissions, connectors, troubleshooting), see [docs/external-domain-packs.md](../docs/external-domain-packs.md).

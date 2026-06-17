@@ -411,6 +411,15 @@ async function main(): Promise<void> {
   const granterRoles = parseRoles(process.env['RELATIONSHIP_GRANTER_ROLES']) ?? ['admin'];
   const consentRecorderRoles = parseRoles(process.env['CONSENT_RECORDER_ROLES']) ?? ['admin'];
 
+  // Capability-gated facades. The FHIR (/fhir/*) and FDP/CDM (REST /api/v1/cdm/*
+  // + the GraphQL cdm* queries) surfaces are NHS-shaped and only enabled when a
+  // loaded pack opts in via `capabilities:` in pack.yaml. Computed before the
+  // GraphQL schema is built so the SDL, resolvers, and REST mount stay in lockstep.
+  const packCapabilities = new Set(packs.flatMap(p => p.capabilities ?? []));
+  const cdmEnabled = packCapabilities.has('cdm');
+  const fhirEnabled = packCapabilities.has('fhir');
+  logger.info(`Capabilities: cdm=${cdmEnabled} fhir=${fhirEnabled} (declared by loaded packs)`);
+
   // ── OpenFGA Authorization Model Sync ──
   // Push the merged model to OpenFGA so all pack types are authorized.
   let linkTupleMap: LinkTupleMap | undefined;
@@ -612,6 +621,7 @@ async function main(): Promise<void> {
     grantAllowlist,
     granterRoles,
     consentRecorderRoles,
+    cdmEnabled,
   };
 
   // ── Express + HTTP Server ──
@@ -917,18 +927,10 @@ async function main(): Promise<void> {
     res.json(openApiSpec);
   });
 
-  // Capability-gated facades: FHIR (/fhir/*) and the FDP/CDM projection
-  // (/api/v1/cdm/*) are NHS-shaped and only mounted when a loaded pack opts in
-  // via `capabilities:` in its pack.yaml. A non-NHS deployment (e.g. aml or
-  // supply-chain only) therefore does not expose these endpoints at all.
-  const packCapabilities = new Set(packs.flatMap(p => p.capabilities ?? []));
-  logger.info(
-    `Capabilities: cdm=${packCapabilities.has('cdm')} fhir=${packCapabilities.has('fhir')} ` +
-    `(declared by loaded packs)`,
-  );
-
-  // ── FDP/CDM projection at /api/v1/cdm/* (S1.0) — mounted only with `cdm` ──
-  if (packCapabilities.has('cdm')) {
+  // ── FDP/CDM projection at /api/v1/cdm/* (S1.0) — mounted only with `cdm`.
+  // cdmEnabled/fhirEnabled were resolved above (before GraphQL schema build) so
+  // the REST mount, GraphQL SDL, and GraphQL resolvers all gate identically. ──
+  if (cdmEnabled) {
   const cdmHandler = createCdmRouter({ deps });
   // Public metadata: profile, compatibility matrix, gap register (non-sensitive
   // schema mapping info — mirrors the public openapi.json endpoint).
@@ -982,7 +984,7 @@ async function main(): Promise<void> {
   } // end cdm capability gate
 
   // ── FHIR at /fhir/* — mounted only when a pack declares the `fhir` capability ──
-  if (packCapabilities.has('fhir')) {
+  if (fhirEnabled) {
   const fhirBaseUrl = process.env['FHIR_BASE_URL'] ?? `http://localhost:${PORT}/fhir`;
   if (!isDev && !process.env['FHIR_BASE_URL']) {
     logger.warn('WARNING: FHIR_BASE_URL not set — Bundle fullUrl links will use http://localhost. Set FHIR_BASE_URL to the externally routable address.');

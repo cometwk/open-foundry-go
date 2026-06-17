@@ -39,8 +39,10 @@ export interface GraphQLServerInstance {
  * the same PubSub instance that subscription resolvers listen on.
  */
 export function createGraphQLServer(config: GraphQLServerConfig): GraphQLServerInstance {
-  // 1. Generate GraphQL SDL from ODL schema
-  const sdl = generateGraphQLSchema(config.schema);
+  // 1. Generate GraphQL SDL from ODL schema. CDM fields are capability-gated:
+  // omitted when the deployment's packs do not declare `cdm` (config.deps.
+  // cdmEnabled === false), keeping the SDL in lockstep with the resolvers.
+  const sdl = generateGraphQLSchema(config.schema, { cdm: config.deps.cdmEnabled });
 
   // 2. Generate resolvers (creates a single PubSub instance)
   const { resolvers, pubsub } = generateResolvers(config.schema, config.deps);

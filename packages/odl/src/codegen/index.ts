@@ -543,7 +543,18 @@ function collectFilterEnumNames(schema: ParsedSchema): Set<string> {
  * - Field nullability follows Section 7.1.3 (non-primary fields nullable)
  * - Includes shared types for tools, bulk actions, and change events
  */
-export function generateGraphQLSchema(schema: ParsedSchema): string {
+/** Codegen options that gate capability-specific surfaces. */
+export interface GraphQLSchemaOptions {
+  /**
+   * Include the FDP/CDM projection query fields (cdmMetadata/cdmRecord/…).
+   * Defaults to included; pass `false` to omit them for deployments whose
+   * loaded packs do not declare the `cdm` capability (parity with the
+   * capability-gated REST `/api/v1/cdm/*` mount).
+   */
+  cdm?: boolean;
+}
+
+export function generateGraphQLSchema(schema: ParsedSchema, options?: GraphQLSchemaOptions): string {
   const sections: string[] = [];
   const objectTypeNames = new Set(schema.objectTypes.map(o => o.name));
 
@@ -670,12 +681,16 @@ export function generateGraphQLSchema(schema: ParsedSchema): string {
   // FDP/CDM read-only projection (Section S1.0). Records are a version-pinned
   // CDM shape with per-record provenance; returned as JSON since the projection
   // is profile-driven and intentionally flexible (mirrors GET /api/v1/cdm/*).
-  queryFields.push('  cdmMetadata: JSON!');
-  queryFields.push('  cdmRecord(sourceType: String!, id: ID!): JSON');
-  queryFields.push('  cdmRecords(sourceType: String!): JSON!');
-  // Encounter is a link-kind CDM resource (derived from AdmittedTo), addressed
-  // by patient — mirrors REST GET /api/v1/cdm/Encounter?patient={id}.
-  queryFields.push('  cdmEncounters(patient: ID!): JSON!');
+  // Capability-gated: omitted when the deployment's packs do not declare `cdm`
+  // (parity with the REST mount), so non-NHS deployments expose no CDM surface.
+  if (options?.cdm !== false) {
+    queryFields.push('  cdmMetadata: JSON!');
+    queryFields.push('  cdmRecord(sourceType: String!, id: ID!): JSON');
+    queryFields.push('  cdmRecords(sourceType: String!): JSON!');
+    // Encounter is a link-kind CDM resource (derived from AdmittedTo), addressed
+    // by patient — mirrors REST GET /api/v1/cdm/Encounter?patient={id}.
+    queryFields.push('  cdmEncounters(patient: ID!): JSON!');
+  }
   sections.push(['type Query {', ...queryFields, '}'].join('\n'));
 
   // 11. Mutation type

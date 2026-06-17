@@ -290,6 +290,27 @@ describe('GraphQL schema codegen', () => {
       const queryBlock = extractTypeBlock(sdl, 'type Query');
       expect(queryBlock).toContain('availableTools(filter: ToolFilter): [ToolDescriptor!]!');
     });
+
+    it('includes the CDM projection queries by default', () => {
+      const sdl = generateGraphQLSchema(parseOdl(NHS_ACUTE_ODL));
+      const queryBlock = extractTypeBlock(sdl, 'type Query');
+      expect(queryBlock).toContain('cdmMetadata: JSON!');
+      expect(queryBlock).toContain('cdmRecords(sourceType: String!): JSON!');
+      expect(queryBlock).toContain('cdmEncounters(patient: ID!): JSON!');
+    });
+
+    it('omits the CDM projection queries when cdm capability is disabled', () => {
+      // Parity with the capability-gated REST mount: a non-NHS deployment whose
+      // packs do not declare `cdm` exposes no CDM surface over GraphQL either.
+      const sdl = generateGraphQLSchema(parseOdl(NHS_ACUTE_ODL), { cdm: false });
+      expect(sdl).not.toContain('cdmMetadata');
+      expect(sdl).not.toContain('cdmRecords');
+      expect(sdl).not.toContain('cdmEncounters');
+      // ...but the rest of the Query type is intact and still valid SDL.
+      const queryBlock = extractTypeBlock(sdl, 'type Query');
+      expect(queryBlock).toContain('patient(id: ID!): Patient');
+      buildSDL(sdl);
+    });
   });
 
   describe('Filter inputs', () => {

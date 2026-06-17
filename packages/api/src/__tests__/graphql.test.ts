@@ -259,6 +259,23 @@ describe('GraphQL API', () => {
       expect(resolvers['Query']!['availableTools']).toBeTypeOf('function');
     });
 
+    it('registers CDM resolvers by default (cdmEnabled undefined)', () => {
+      const deps = createMockDeps(parsed);
+      const { resolvers } = generateResolvers(parsed, deps);
+      expect(resolvers['Query']!['cdmMetadata']).toBeTypeOf('function');
+      expect(resolvers['Query']!['cdmRecords']).toBeTypeOf('function');
+    });
+
+    it('omits CDM resolvers when cdmEnabled is false (non-NHS deployment)', () => {
+      const deps = { ...createMockDeps(parsed), cdmEnabled: false };
+      const { resolvers } = generateResolvers(parsed, deps);
+      expect(resolvers['Query']!['cdmMetadata']).toBeUndefined();
+      expect(resolvers['Query']!['cdmRecords']).toBeUndefined();
+      expect(resolvers['Query']!['cdmEncounters']).toBeUndefined();
+      // Generic object resolvers are unaffected.
+      expect(resolvers['Query']!['patient']).toBeTypeOf('function');
+    });
+
     it('generates subscription resolvers for each ObjectType', () => {
       const deps = createMockDeps(parsed);
       const { resolvers } = generateResolvers(parsed, deps);

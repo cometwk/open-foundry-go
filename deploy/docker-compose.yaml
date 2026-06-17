@@ -207,10 +207,15 @@ services:
       DOMAIN_PACKS: ${DOMAIN_PACKS:-}
       DOMAIN_PACKS_EXTRA_DIRS: ${DOMAIN_PACKS_EXTRA_DIRS:-}
       # Deployment policy: platform roles allowed to grant relationships / record
-      # consent. Generic default is `admin` only; this NHS reference stack adds
-      # the clinical roles. Non-NHS deployments simply omit these.
-      RELATIONSHIP_GRANTER_ROLES: ${RELATIONSHIP_GRANTER_ROLES:-admin,nurse_in_charge}
-      CONSENT_RECORDER_ROLES: ${CONSENT_RECORDER_ROLES:-admin,nurse_in_charge,clinician}
+      # consent. Generic default is `admin` only — no NHS roles are forced here.
+      # NHS deployments set these in .env (see .env.example):
+      #   RELATIONSHIP_GRANTER_ROLES=admin,nurse_in_charge
+      #   CONSENT_RECORDER_ROLES=admin,nurse_in_charge,clinician
+      RELATIONSHIP_GRANTER_ROLES: ${RELATIONSHIP_GRANTER_ROLES:-admin}
+      CONSENT_RECORDER_ROLES: ${CONSENT_RECORDER_ROLES:-admin}
+      # Consent purpose for access checks (DataPurpose). NHS uses DIRECT_CARE;
+      # left to the platform default unless overridden.
+      DEFAULT_CONSENT_PURPOSE: ${DEFAULT_CONSENT_PURPOSE:-}
     volumes:
       - ${DOMAIN_PACKS_HOST_DIR:-./empty-packs}:/external-packs:ro
     depends_on:

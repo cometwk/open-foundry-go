@@ -15,6 +15,7 @@
 
 import { DataPurpose } from '@openfoundry/spi';
 import type { ApiDependencies, ResolverContext } from '../graphql/types.js';
+import { DEFAULT_CONSENT_PURPOSE } from '../graphql/types.js';
 import type { RestRoute, RestRequest, RestResponse } from '../rest/types.js';
 import { createRestErrorResponse } from '../rest/errors.js';
 
@@ -65,7 +66,7 @@ export async function applyConsentRecord(
   if (!subject) {
     return { ok: false, code: 'VALIDATION_ERROR', category: 'validation', message: 'Missing required field: subject' };
   }
-  const purpose = (b.purpose ?? DataPurpose.DIRECT_CARE).toString();
+  const purpose = (b.purpose ?? DEFAULT_CONSENT_PURPOSE).toString();
   if (!VALID_PURPOSES.has(purpose)) {
     return { ok: false, code: 'INVALID_PURPOSE', category: 'validation', message: `Unknown purpose '${purpose}'. Valid: ${[...VALID_PURPOSES].join(', ')}.` };
   }
