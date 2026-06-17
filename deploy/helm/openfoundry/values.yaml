@@ -102,6 +102,19 @@ cors:
 # -- FHIR base URL (used in Bundle fullUrl links; must be externally routable)
 fhirBaseUrl: ""
 
+# Governance policy: platform roles allowed to grant relationships / record
+# consent. The platform default is `admin` only; this NHS reference chart adds
+# the clinical roles. Non-NHS deployments set these to their own roles (or
+# leave empty to keep the generic `admin`-only default).
+governance:
+  relationshipGranterRoles:
+    - admin
+    - nurse_in_charge
+  consentRecorderRoles:
+    - admin
+    - nurse_in_charge
+    - clinician
+
 # HELM-25: Configurable runtime environment
 nodeEnv: production
 

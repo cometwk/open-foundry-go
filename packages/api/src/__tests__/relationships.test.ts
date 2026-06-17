@@ -41,13 +41,14 @@ function mockUser(roles: string[]): AuthenticatedUserInfo {
   return { id: 'caller-1', name: 'Caller', email: 'c@x', roles, groups: [], tenantId: 'default' };
 }
 
-function mockDeps() {
+function mockDeps(granterRoles?: readonly string[]) {
   const writeRelationship = vi.fn().mockResolvedValue(undefined);
   const deleteRelationship = vi.fn().mockResolvedValue(undefined);
   const auditWrite = vi.fn().mockResolvedValue(undefined);
   const deps = {
     authorizationService: { writeRelationship, deleteRelationship },
     auditWriter: { write: auditWrite },
+    ...(granterRoles ? { granterRoles } : {}),
   } as unknown as ApiDependencies;
   return { deps, writeRelationship, deleteRelationship, auditWrite };
 }
@@ -86,7 +87,7 @@ describe('relationship grant/revoke routes', () => {
   });
 
   it('normalises an already-qualified user string', async () => {
-    await grantRoute(routes).handler({ body: { ...body, user: 'user:bob' } } as never, ctxFor(['nurse_in_charge']));
+    await grantRoute(routes).handler({ body: { ...body, user: 'user:bob' } } as never, ctxFor(['admin']));
     expect(d.writeRelationship).toHaveBeenCalledWith('user:bob', 'clinician', 'patient:p-1');
   });
 
@@ -97,6 +98,22 @@ describe('relationship grant/revoke routes', () => {
     expect(d.auditWrite).toHaveBeenCalledWith(expect.objectContaining({
       detail: expect.objectContaining({ result: 'denied' }),
     }));
+  });
+
+  it('defaults to admin-only: a non-admin (nurse_in_charge) is denied without config', async () => {
+    // Generic platform default — NHS clinical roles are NOT granters unless a
+    // deployment opts in via deps.granterRoles.
+    const res = await grantRoute(routes).handler({ body } as never, ctxFor(['nurse_in_charge']));
+    expect(res.status).toBe(403);
+    expect(d.writeRelationship).not.toHaveBeenCalled();
+  });
+
+  it('honours configured granterRoles (deps.granterRoles) for non-NHS/NHS deployments', async () => {
+    const configured = mockDeps(['admin', 'nurse_in_charge']);
+    const configuredRoutes = generateRelationshipRoutes(configured.deps, ALLOW);
+    const res = await grantRoute(configuredRoutes).handler({ body } as never, ctxFor(['nurse_in_charge']));
+    expect(res.status).toBe(200);
+    expect(configured.writeRelationship).toHaveBeenCalledWith('user:alice', 'clinician', 'patient:p-1');
   });
 
   it('rejects a non-grantable relation (400) without writing', async () => {

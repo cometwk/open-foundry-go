@@ -38,6 +38,17 @@ export interface ApiDependencies {
    * API (REST + GraphQL). Absent → the grant surface rejects everything.
    */
   grantAllowlist?: Map<string, Set<string>>;
+  /**
+   * Platform roles permitted to grant/revoke relationships. Deployment policy
+   * (env RELATIONSHIP_GRANTER_ROLES). Absent → generic default (`admin`). NHS
+   * deployments add clinical roles (e.g. nurse_in_charge) via config.
+   */
+  granterRoles?: readonly string[];
+  /**
+   * Platform roles permitted to record consent decisions. Deployment policy
+   * (env CONSENT_RECORDER_ROLES). Absent → generic default (`admin`).
+   */
+  consentRecorderRoles?: readonly string[];
 }
 
 /**

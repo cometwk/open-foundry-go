@@ -43,3 +43,9 @@ data:
   {{- if .Values.fhirBaseUrl }}
   FHIR_BASE_URL: {{ .Values.fhirBaseUrl | quote }}
   {{- end }}
+  {{- if and .Values.governance .Values.governance.relationshipGranterRoles }}
+  RELATIONSHIP_GRANTER_ROLES: {{ .Values.governance.relationshipGranterRoles | join "," | quote }}
+  {{- end }}
+  {{- if and .Values.governance .Values.governance.consentRecorderRoles }}
+  CONSENT_RECORDER_ROLES: {{ .Values.governance.consentRecorderRoles | join "," | quote }}
+  {{- end }}

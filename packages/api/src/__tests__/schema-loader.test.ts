@@ -58,6 +58,11 @@ describe('loadDomainPacks', () => {
     expect(spiSchema.objectTypes).toHaveLength(7);
     expect(spiSchema.linkTypes).toHaveLength(6);
     expect(spiSchema.version).toBe(1);
+
+    // nhs-acute opts into the FHIR + CDM capability-gated facades.
+    expect(packs[1]!.capabilities).toEqual(expect.arrayContaining(['fhir', 'cdm']));
+    // core declares no NHS facades.
+    expect(packs[0]!.capabilities ?? []).not.toContain('fhir');
   });
 
   it('converts object types correctly', async () => {

@@ -42,6 +42,13 @@ interface PackManifest {
   connectors?: string[];
   permissions?: string[];
   seed?: string[];
+  /**
+   * Optional platform capabilities this pack opts into (e.g. "fhir", "cdm").
+   * Capability-gated API surfaces (the FHIR facade, the FDP/CDM projection) are
+   * only mounted when at least one loaded pack declares them — so a non-NHS
+   * deployment is not forced to expose NHS-shaped endpoints.
+   */
+  capabilities?: string[];
 }
 
 /** Connector manifest loaded from a domain pack. */

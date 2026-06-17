@@ -18,8 +18,13 @@ import type { ApiDependencies, ResolverContext } from '../graphql/types.js';
 import type { RestRoute, RestRequest, RestResponse } from '../rest/types.js';
 import { createRestErrorResponse } from '../rest/errors.js';
 
-/** Roles permitted to record consent. */
-export const DEFAULT_CONSENT_RECORDER_ROLES = ['admin', 'nurse_in_charge', 'clinician'] as const;
+/**
+ * Generic default roles permitted to record consent. `admin` is the universal
+ * platform role; deployments broaden this via deps.consentRecorderRoles
+ * (env CONSENT_RECORDER_ROLES) rather than hardcoding domain-specific roles
+ * (an NHS deployment adds nurse_in_charge / clinician).
+ */
+export const DEFAULT_CONSENT_RECORDER_ROLES = ['admin'] as const;
 
 const VALID_PURPOSES = new Set<string>(Object.values(DataPurpose));
 
@@ -38,8 +43,8 @@ interface ConsentBody {
   evidence?: string;
 }
 
-function callerCanRecord(roles: string[]): boolean {
-  return roles.some((r) => (DEFAULT_CONSENT_RECORDER_ROLES as readonly string[]).includes(r));
+function callerCanRecord(roles: string[], recorderRoles: readonly string[]): boolean {
+  return roles.some((r) => recorderRoles.includes(r));
 }
 
 /**
@@ -54,6 +59,7 @@ export async function applyConsentRecord(
   traceId: string | undefined,
 ): Promise<ConsentChangeResult> {
   const b = (body ?? {}) as ConsentBody;
+  const recorderRoles = deps.consentRecorderRoles ?? DEFAULT_CONSENT_RECORDER_ROLES;
 
   const subject = typeof b.subject === 'string' ? b.subject.trim() : '';
   if (!subject) {
@@ -75,13 +81,13 @@ export async function applyConsentRecord(
   // (e.g. an AML Customer) are not mislabelled as 'patient' in the audit trail.
   const auditOp = { type: 'update' as const, objectType: 'consent', objectId: subject };
 
-  if (!callerCanRecord(actor.roles)) {
+  if (!callerCanRecord(actor.roles, recorderRoles)) {
     await deps.auditWriter?.write({
       actor: auditActor, operation: auditOp,
-      detail: { result: 'denied', denialReason: `Caller lacks a consent-recorder role (${DEFAULT_CONSENT_RECORDER_ROLES.join('/')})`, after: { purpose, decision } },
+      detail: { result: 'denied', denialReason: `Caller lacks a consent-recorder role (${recorderRoles.join('/')})`, after: { purpose, decision } },
       traceId,
     });
-    return { ok: false, code: 'FORBIDDEN', category: 'authorization', message: `Not permitted to record consent (requires one of: ${DEFAULT_CONSENT_RECORDER_ROLES.join(', ')}).` };
+    return { ok: false, code: 'FORBIDDEN', category: 'authorization', message: `Not permitted to record consent (requires one of: ${recorderRoles.join(', ')}).` };
   }
 
   if (!deps.consentService) {

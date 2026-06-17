@@ -182,8 +182,12 @@ DELETE /api/v1/relationships   { ... }            # + GraphQL grant/revokeRelati
 It grants only relations the merged FGA model declares directly-assignable to
 `user` (`patient.{clinician,nurse_in_charge,admin}`, `ward.{assigned,porter}`);
 computed/link relations like `can_admit`/`admitted_to` are rejected. The caller
-must hold a granter role (`admin`/`nurse_in_charge`); every grant/revoke/denial
-is audited. Example — grant the acting clinician on admission:
+must hold a granter role — the generic platform default is `admin` only, and a
+deployment broadens it via `RELATIONSHIP_GRANTER_ROLES` (this NHS stack sets
+`admin,nurse_in_charge`); consent recording is gated likewise by
+`CONSENT_RECORDER_ROLES` (default `admin`; NHS adds `nurse_in_charge,clinician`).
+Every grant/revoke/denial is audited. Example — grant the acting clinician on
+admission:
 
 ```
 POST /api/v1/relationships { "user":"<sub>", "relation":"clinician", "objectType":"Patient", "objectId":"<id>" }
@@ -296,6 +300,23 @@ To load domain packs from outside the monorepo:
 3. Restart the api-gateway: `docker compose up -d --build api-gateway`
 
 The host path is mounted read-only at `/external-packs` inside the container. The schema loader scans it for `pack.yaml` files using the same discovery logic as the primary `domain-packs/` directory.
+
+### Capability-gated facades (FHIR / CDM)
+
+The FHIR facade (`/fhir/*`) and the FDP/CDM projection (`/api/v1/cdm/*`) are
+NHS-shaped and **only mounted when a loaded pack opts in** via `capabilities:` in
+its `pack.yaml`:
+
+```yaml
+capabilities:
+  - fhir
+  - cdm
+```
+
+`nhs-acute` declares both. A deployment that loads only non-NHS packs (e.g.
+`aml`, `supply-chain`) does **not** expose these endpoints — requests return 404
+rather than NHS-shaped metadata/errors. Boot logs the resolved capabilities
+(`Capabilities: cdm=… fhir=…`).
 
 For full details (pack.yaml format, Helm config, permissions, connectors, troubleshooting), see [docs/external-domain-packs.md](../docs/external-domain-packs.md).
 

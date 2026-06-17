@@ -2,18 +2,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { applyConsentRecord, generateConsentRoutes } from '../consent/router.js';
 import type { ApiDependencies } from '../graphql/types.js';
 
-function mockDeps(withConsent = true) {
+function mockDeps(withConsent = true, recorderRoles?: readonly string[]) {
   const recordConsent = vi.fn().mockResolvedValue(undefined);
   const auditWrite = vi.fn().mockResolvedValue(undefined);
   const deps = {
     consentService: withConsent ? { recordConsent } : undefined,
     auditWriter: { write: auditWrite },
+    ...(recorderRoles ? { consentRecorderRoles: recorderRoles } : {}),
   } as unknown as ApiDependencies;
   return { deps, recordConsent, auditWrite };
 }
 
 const ADMIN = { id: 'u1', roles: ['admin'] };
 const CLERK = { id: 'u2', roles: ['receptionist'] };
+const NURSE = { id: 'u3', roles: ['nurse_in_charge'] };
 
 describe('applyConsentRecord', () => {
   let d: ReturnType<typeof mockDeps>;
@@ -44,6 +46,27 @@ describe('applyConsentRecord', () => {
     expect(d.recordConsent).not.toHaveBeenCalled();
     expect(d.auditWrite).toHaveBeenCalledWith(expect.objectContaining({
       detail: expect.objectContaining({ result: 'denied' }),
+    }));
+  });
+
+  it('defaults to admin-only: a clinical role (nurse_in_charge) is denied without config', async () => {
+    const r = await applyConsentRecord(d.deps, { subject: 'p-1' }, NURSE, 'default', 't1');
+    expect(r.ok).toBe(false);
+    expect(r.category).toBe('authorization');
+    expect(d.recordConsent).not.toHaveBeenCalled();
+  });
+
+  it('honours configured consentRecorderRoles (deps.consentRecorderRoles)', async () => {
+    const nd = mockDeps(true, ['admin', 'nurse_in_charge', 'clinician']);
+    const r = await applyConsentRecord(nd.deps, { subject: 'p-1' }, NURSE, 'default', 't1');
+    expect(r.ok).toBe(true);
+    expect(nd.recordConsent).toHaveBeenCalledWith('p-1', 'DIRECT_CARE', 'GRANT', undefined, 'default');
+  });
+
+  it('audits consent as a pack-agnostic "consent" object, not "patient"', async () => {
+    await applyConsentRecord(d.deps, { subject: 'cust-1' }, ADMIN, 'default', 't1');
+    expect(d.auditWrite).toHaveBeenCalledWith(expect.objectContaining({
+      operation: expect.objectContaining({ objectType: 'consent', objectId: 'cust-1' }),
     }));
   });
 

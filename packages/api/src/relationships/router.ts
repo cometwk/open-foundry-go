@@ -14,9 +14,10 @@
  * - allowlist: ONLY relations declared as directly-assignable to `user` in the
  *   merged FGA model may be granted (never computed relations like can_admit,
  *   never link-typed direct relations like admitted_to). Pack-agnostic.
- * - authorization: the caller must hold a granter role (default admin /
- *   nurse_in_charge); unauthorized callers are denied (403) and the denial is
- *   audited.
+ * - authorization: the caller must hold a granter role (generic default
+ *   `admin`; configurable per deployment via deps.granterRoles, e.g. an NHS
+ *   deployment adds nurse_in_charge). Unauthorized callers are denied (403) and
+ *   the denial is audited.
  * - audit: every grant/revoke (and every denial) emits an audit record — the
  *   underlying writeRelationship/deleteRelationship primitives do not.
  */
@@ -29,8 +30,12 @@ import { toSnakeCase } from '../utils.js';
 /** objectType (snake_case) → set of directly-grantable `[user]` relations. */
 export type GrantAllowlist = Map<string, Set<string>>;
 
-/** Roles permitted to grant/revoke relationships. */
-export const DEFAULT_GRANTER_ROLES = ['admin', 'nurse_in_charge'] as const;
+/**
+ * Generic default roles permitted to grant/revoke relationships. `admin` is the
+ * universal platform role; deployments broaden this via deps.granterRoles
+ * (env RELATIONSHIP_GRANTER_ROLES) rather than hardcoding domain-specific roles.
+ */
+export const DEFAULT_GRANTER_ROLES = ['admin'] as const;
 
 // Minimal structural view of the OpenFGA model JSON (compatible with server.ts
 // FgaAuthorizationModel) — avoids a circular import.
@@ -91,8 +96,8 @@ function fgaUser(user: string): string {
   return user.includes(':') ? user : `user:${user}`;
 }
 
-function callerCanGrant(roles: string[]): boolean {
-  return roles.some((r) => (DEFAULT_GRANTER_ROLES as readonly string[]).includes(r));
+function callerCanGrant(roles: string[], granterRoles: readonly string[]): boolean {
+  return roles.some((r) => granterRoles.includes(r));
 }
 
 /**
@@ -125,6 +130,8 @@ export async function applyRelationshipChange(
     return { ok: false, code: 'VALIDATION_ERROR', category: 'validation', message: parsed.error };
   }
 
+  const granterRoles = deps.granterRoles ?? DEFAULT_GRANTER_ROLES;
+
   const objectTypeSnake = toSnakeCase(parsed.objectType);
   const grantable = allowlist.get(objectTypeSnake);
 
@@ -144,16 +151,16 @@ export async function applyRelationshipChange(
   const opType = action === 'grant' ? ('link' as const) : ('unlink' as const);
 
   // Authorization gate: only granter roles may grant/revoke. Audit denials.
-  if (!callerCanGrant(actor.roles)) {
+  if (!callerCanGrant(actor.roles, granterRoles)) {
     await deps.auditWriter?.write({
       actor: auditActor,
       operation: { type: opType, objectType: objectTypeSnake, objectId: parsed.objectId },
-      detail: { result: 'denied', denialReason: `Caller lacks a granter role (${DEFAULT_GRANTER_ROLES.join('/')})`, after: { subject, relation: parsed.relation } },
+      detail: { result: 'denied', denialReason: `Caller lacks a granter role (${granterRoles.join('/')})`, after: { subject, relation: parsed.relation } },
       traceId,
     });
     return {
       ok: false, code: 'FORBIDDEN', category: 'authorization',
-      message: `Not permitted to ${action} relationships (requires one of: ${DEFAULT_GRANTER_ROLES.join(', ')}).`,
+      message: `Not permitted to ${action} relationships (requires one of: ${granterRoles.join(', ')}).`,
     };
   }
 

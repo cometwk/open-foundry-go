@@ -158,7 +158,9 @@ what was projected and what was approximated:
 ## API
 
 Read-only; passes through the same auth / redaction / consent pipeline as FHIR
-and GraphQL.
+and GraphQL. The whole `/api/v1/cdm/*` surface is **capability-gated**: it is
+only mounted when a loaded pack declares `cdm` in its `pack.yaml` `capabilities:`
+(`nhs-acute` does). Deployments without an NHS-style pack do not expose it.
 
 | Endpoint | Description | Auth |
 |---|---|---|

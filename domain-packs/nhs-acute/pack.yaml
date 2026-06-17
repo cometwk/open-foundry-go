@@ -7,6 +7,14 @@ namespace: nhs.acute
 dependencies:
   openfoundry.core: ">=1.0.0"
 
+# Platform capabilities this pack opts into. The FHIR facade (/fhir/*) and the
+# FDP/CDM projection (/api/v1/cdm/*) are NHS-shaped and only mounted when a
+# loaded pack declares them — so AML/supply-chain-only deployments don't expose
+# NHS endpoints.
+capabilities:
+  - fhir
+  - cdm
+
 provides:
   objectTypes: 7
   linkTypes: 6

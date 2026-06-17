@@ -400,6 +400,17 @@ async function main(): Promise<void> {
   // ward.assigned) for the /api/v1/relationships grant API (Epic A1).
   const grantAllowlist = buildGrantAllowlist(fgaModelJson);
 
+  // Deployment policy: which platform roles may grant relationships / record
+  // consent. Generic default is `admin` only; an NHS deployment broadens these
+  // via env (e.g. RELATIONSHIP_GRANTER_ROLES=admin,nurse_in_charge) rather than
+  // forcing clinical role names on every deployment.
+  const parseRoles = (v: string | undefined): string[] | undefined => {
+    const roles = (v ?? '').split(',').map(r => r.trim()).filter(Boolean);
+    return roles.length > 0 ? roles : undefined;
+  };
+  const granterRoles = parseRoles(process.env['RELATIONSHIP_GRANTER_ROLES']) ?? ['admin'];
+  const consentRecorderRoles = parseRoles(process.env['CONSENT_RECORDER_ROLES']) ?? ['admin'];
+
   // ── OpenFGA Authorization Model Sync ──
   // Push the merged model to OpenFGA so all pack types are authorized.
   let linkTupleMap: LinkTupleMap | undefined;
@@ -599,6 +610,8 @@ async function main(): Promise<void> {
     objectSetManager,
     auditWriter: securityAuditWriter,
     grantAllowlist,
+    granterRoles,
+    consentRecorderRoles,
   };
 
   // ── Express + HTTP Server ──
@@ -904,7 +917,18 @@ async function main(): Promise<void> {
     res.json(openApiSpec);
   });
 
-  // ── FDP/CDM projection at /api/v1/cdm/* (S1.0) ──
+  // Capability-gated facades: FHIR (/fhir/*) and the FDP/CDM projection
+  // (/api/v1/cdm/*) are NHS-shaped and only mounted when a loaded pack opts in
+  // via `capabilities:` in its pack.yaml. A non-NHS deployment (e.g. aml or
+  // supply-chain only) therefore does not expose these endpoints at all.
+  const packCapabilities = new Set(packs.flatMap(p => p.capabilities ?? []));
+  logger.info(
+    `Capabilities: cdm=${packCapabilities.has('cdm')} fhir=${packCapabilities.has('fhir')} ` +
+    `(declared by loaded packs)`,
+  );
+
+  // ── FDP/CDM projection at /api/v1/cdm/* (S1.0) — mounted only with `cdm` ──
+  if (packCapabilities.has('cdm')) {
   const cdmHandler = createCdmRouter({ deps });
   // Public metadata: profile, compatibility matrix, gap register (non-sensitive
   // schema mapping info — mirrors the public openapi.json endpoint).
@@ -955,8 +979,10 @@ async function main(): Promise<void> {
       res.status(500).json({ error: { code: 500, message: 'Internal server error' } });
     }
   });
+  } // end cdm capability gate
 
-  // ── FHIR at /fhir/* ──
+  // ── FHIR at /fhir/* — mounted only when a pack declares the `fhir` capability ──
+  if (packCapabilities.has('fhir')) {
   const fhirBaseUrl = process.env['FHIR_BASE_URL'] ?? `http://localhost:${PORT}/fhir`;
   if (!isDev && !process.env['FHIR_BASE_URL']) {
     logger.warn('WARNING: FHIR_BASE_URL not set — Bundle fullUrl links will use http://localhost. Set FHIR_BASE_URL to the externally routable address.');
@@ -997,6 +1023,7 @@ async function main(): Promise<void> {
       res.status(500).json({ resourceType: 'OperationOutcome', issue: [{ severity: 'fatal', code: 'exception', diagnostics: 'Internal server error' }] });
     }
   });
+  } // end fhir capability gate
 
   // ── Graceful shutdown ──
   const SHUTDOWN_TIMEOUT_MS = 5_000;
