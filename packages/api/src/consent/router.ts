@@ -70,7 +70,10 @@ export async function applyConsentRecord(
   const evidence = typeof b.evidence === 'string' ? b.evidence : undefined;
 
   const auditActor = { type: 'user' as const, id: actor.id, roles: actor.roles };
-  const auditOp = { type: 'update' as const, objectType: 'patient', objectId: subject };
+  // The audited object is the consent record itself (keyed by data-subject id),
+  // not a domain object — keep this pack-agnostic so non-NHS consent subjects
+  // (e.g. an AML Customer) are not mislabelled as 'patient' in the audit trail.
+  const auditOp = { type: 'update' as const, objectType: 'consent', objectId: subject };
 
   if (!callerCanRecord(actor.roles)) {
     await deps.auditWriter?.write({
