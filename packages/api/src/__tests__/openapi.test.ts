@@ -33,6 +33,14 @@ describe('generateOpenApiSpec', () => {
     expect(paths['/api/v1/actions/AdmitPatient']).toBeDefined();
     expect(paths['/api/v1/actions/DischargePatient']).toBeDefined();
     expect(paths['/api/v1/actions/TransferWard']).toBeDefined();
+
+    // Governance APIs (A1 relationships, A2 consent) — not ODL-derived, but
+    // mounted at runtime, so they MUST appear in the published contract.
+    const rel = paths['/api/v1/relationships'] as Record<string, unknown>;
+    expect(rel?.['post']).toBeDefined();
+    expect(rel?.['delete']).toBeDefined();
+    expect(paths['/api/v1/consent']).toBeDefined();
+    expect(((paths['/api/v1/consent'] as Record<string, unknown>)['post'])).toBeDefined();
   });
 
   it('includes component schemas for all object types and enums', async () => {

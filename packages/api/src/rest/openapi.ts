@@ -278,6 +278,94 @@ function actionPath(action: ActionType): Record<string, unknown> {
   };
 }
 
+/**
+ * Governance paths that are not derived from the ODL schema — the care-team
+ * relationship grant/revoke API (v0.2.0 A1) and the consent-record API (A2).
+ * Mounted unconditionally in server.ts; documented here so client generation and
+ * contract checks see the full REST surface.
+ */
+function governancePaths(): Record<string, unknown> {
+  const errorContent = { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } };
+  const relationshipBody = {
+    required: true,
+    content: {
+      'application/json': {
+        schema: {
+          type: 'object',
+          required: ['user', 'relation', 'objectType', 'objectId'],
+          properties: {
+            user: { type: 'string', description: 'Subject user id (bare or `user:<id>`).' },
+            relation: { type: 'string', description: 'A directly-grantable `[user]` relation from the merged FGA model.' },
+            objectType: { type: 'string', description: 'Object type (e.g. Patient, Ward).' },
+            objectId: { type: 'string' },
+          },
+        },
+      },
+    },
+  };
+  return {
+    '/api/v1/relationships': {
+      post: {
+        tags: ['Governance'],
+        summary: 'Grant a directly-assignable ReBAC relationship (care-team)',
+        operationId: 'grantRelationship',
+        requestBody: relationshipBody,
+        responses: {
+          '200': { description: 'Relationship granted' },
+          '400': { description: 'Invalid/non-grantable relation or missing field', content: errorContent },
+          '403': { description: 'Caller lacks a granter role', content: errorContent },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '429': { $ref: '#/components/responses/RateLimited' },
+        },
+      },
+      delete: {
+        tags: ['Governance'],
+        summary: 'Revoke a directly-assignable ReBAC relationship',
+        operationId: 'revokeRelationship',
+        requestBody: relationshipBody,
+        responses: {
+          '200': { description: 'Relationship revoked' },
+          '400': { description: 'Invalid/non-grantable relation or missing field', content: errorContent },
+          '403': { description: 'Caller lacks a granter role', content: errorContent },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '429': { $ref: '#/components/responses/RateLimited' },
+        },
+      },
+    },
+    '/api/v1/consent': {
+      post: {
+        tags: ['Governance'],
+        summary: 'Record a consent decision for a data subject',
+        operationId: 'recordConsent',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['subject'],
+                properties: {
+                  subject: { type: 'string', description: 'Consent subject id.' },
+                  purpose: { type: 'string', description: 'A DataPurpose from the deployment vocabulary (CONSENT_PURPOSES); default DEFAULT_CONSENT_PURPOSE.' },
+                  decision: { type: 'string', enum: ['GRANT', 'DENY'], default: 'GRANT' },
+                  evidence: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Consent recorded' },
+          '400': { description: 'Validation error (unknown purpose / invalid decision / missing subject)', content: errorContent },
+          '403': { description: 'Caller lacks a consent-recorder role', content: errorContent },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '429': { $ref: '#/components/responses/RateLimited' },
+        },
+      },
+    },
+  };
+}
+
 // ─── Public API ───
 
 /**
@@ -295,6 +383,8 @@ export function generateOpenApiSpec(schema: ParsedSchema, version = '1.0.0'): Re
   for (const action of schema.actionTypes) {
     paths = { ...paths, ...actionPath(action) };
   }
+  // Governance APIs (A1 relationships, A2 consent) — not ODL-derived.
+  paths = { ...paths, ...governancePaths() };
 
   // Component schemas
   const schemas: Record<string, unknown> = {};

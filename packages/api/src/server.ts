@@ -543,11 +543,20 @@ async function main(): Promise<void> {
   // and may set the purpose it applies to (CONSENT_EXEMPTION_PURPOSE, default
   // DIRECT_CARE). The NHS reference stack enables it (see docker-compose).
   const exemptionEnabled = process.env['CONSENT_DIRECT_CARE_EXEMPTION'] === 'true';
+  // FGA subject-type prefix for the exemption ReBAC check (bare subject id →
+  // `${type}:${id}`). Derived from the configured action consent-subject type so
+  // a non-NHS deployment (CONSENT_SUBJECT_TYPES=Customer) checks `customer:<id>`,
+  // not `patient:<id>`. First entry, snake-cased; unset → ConsentService default
+  // 'patient'. (Multiple subject types + exemption: the first is used.)
+  const exemptionSubjectType = consentSubjectTypes && consentSubjectTypes.length > 0
+    ? toSnakeCase(consentSubjectTypes[0]!)
+    : undefined;
   const consentService = new ConsentService(consentStore, authorizationService, {
     directCareExemptionEnabled: exemptionEnabled,
     ...(process.env['CONSENT_EXEMPTION_PURPOSE']
       ? { exemptionPurpose: process.env['CONSENT_EXEMPTION_PURPOSE'] }
       : {}),
+    ...(exemptionSubjectType ? { subjectType: exemptionSubjectType } : {}),
   });
   logger.info(`Consent: relationship-exemption ${exemptionEnabled ? 'enabled' : 'disabled'}`);
   if (storage instanceof PostgresStorageProvider) {

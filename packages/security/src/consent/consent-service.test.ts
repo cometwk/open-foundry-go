@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 
 import { DataPurpose } from "@openfoundry/spi";
 
@@ -228,6 +228,21 @@ describe("ConsentService", () => {
       // ...but NOT for DIRECT_CARE when that is not the configured exemption purpose.
       const denied = await custom.checkConsent("patient:1", DataPurpose.DIRECT_CARE, "user:agent-1");
       expect(denied.allowed).toBe(false);
+    });
+
+    it("formats the exemption FGA subject with the configured subjectType (non-NHS)", async () => {
+      // server.ts derives subjectType from CONSENT_SUBJECT_TYPES so a bare
+      // subject id is checked as `customer:<id>`, not `patient:<id>`.
+      const custom = new ConsentService(store, authz, {
+        directCareExemptionEnabled: true,
+        careRelation: "viewer",
+        subjectType: "customer",
+      });
+      const spy = vi.spyOn(authz, "check").mockResolvedValue(false);
+      await custom.checkConsent("cust-1", DataPurpose.DIRECT_CARE, "agent-1");
+      // 3rd arg (the FGA object/subject) uses the configured type prefix.
+      expect(spy).toHaveBeenCalledWith("user:agent-1", "viewer", "customer:cust-1");
+      spy.mockRestore();
     });
   });
 
