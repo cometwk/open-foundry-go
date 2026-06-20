@@ -48,7 +48,7 @@ describe('paginateWithConsent', () => {
   });
 
   it('uses at least the scan floor for small offsets', async () => {
-    const fetch = vi.fn(async (windowLimit: number) => ({ items: [], total: 0 }));
+    const fetch = vi.fn(async (_windowLimit: number) => ({ items: [], total: 0 }));
     await paginateWithConsent(0, 10, fetch, async (r) => r);
     expect(fetch.mock.calls[0]![0]).toBe(CONSENT_SCAN_FLOOR);
   });

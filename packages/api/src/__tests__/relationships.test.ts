@@ -11,7 +11,7 @@ import type { RestRoute } from '../rest/types.js';
 
 describe('buildGrantAllowlist', () => {
   it('includes only directly-assignable [user] relations', () => {
-    const model = {
+    const model: Parameters<typeof buildGrantAllowlist>[0] = {
       type_definitions: [
         {
           type: 'patient',
