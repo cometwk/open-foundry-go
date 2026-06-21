@@ -254,8 +254,10 @@ store at boot.
 **Governance is deployment policy, not NHS-fixed.** A non-NHS deployment sets its
 own consent vocabulary and grant roles rather than inheriting the NHS defaults:
 `CONSENT_PURPOSES` (open `DataPurpose` vocabulary; default = NHS preset),
-`DEFAULT_CONSENT_PURPOSE`, `CONSENT_SUBJECT_TYPES` (action consent-subject types;
-default `Patient`), `CONSENT_DIRECT_CARE_EXEMPTION` (default off),
+`DEFAULT_CONSENT_PURPOSE` (must be within `CONSENT_PURPOSES` when that is set —
+the gateway fails fast otherwise), `CONSENT_SUBJECT_TYPES` (action
+consent-subject types; default `Patient`; a single type when the exemption is
+enabled), `CONSENT_DIRECT_CARE_EXEMPTION` (default off),
 `CONSENT_EXEMPTION_PURPOSE`, `RELATIONSHIP_GRANTER_ROLES` /
 `CONSENT_RECORDER_ROLES` (default `admin`). See `deploy/.env.example` and
 `deploy/README.md`.

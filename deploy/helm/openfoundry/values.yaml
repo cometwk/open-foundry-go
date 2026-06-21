@@ -5,7 +5,7 @@
 image:
   registry: openfoundry
   pullPolicy: IfNotPresent
-  tag: "0.1"
+  tag: "0.2"
 
 imagePullSecrets: []
 nameOverride: ""

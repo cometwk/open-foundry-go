@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { applyConsentRecord, generateConsentRoutes } from '../consent/router.js';
+import { applyConsentRecord, generateConsentRoutes, assertConsentConfig } from '../consent/router.js';
 import type { ApiDependencies } from '../graphql/types.js';
 import { resolveDefaultConsentPurpose } from '../graphql/types.js';
 
@@ -139,5 +139,37 @@ describe('generateConsentRoutes', () => {
       { user: { id: 'u2', roles: ['receptionist'] }, requestContext: { tenantId: 'default', traceId: 't1' } } as never,
     );
     expect(denied.status).toBe(403);
+  });
+});
+
+describe('assertConsentConfig (boot fail-fast)', () => {
+  it('accepts the NHS default (no CONSENT_PURPOSES → standard preset)', () => {
+    expect(() => assertConsentConfig({
+      consentPurposes: undefined, defaultPurpose: 'DIRECT_CARE', exemptionEnabled: true, consentSubjectTypes: undefined,
+    })).not.toThrow();
+  });
+
+  it('accepts a coherent non-NHS config', () => {
+    expect(() => assertConsentConfig({
+      consentPurposes: ['KYC', 'AML_MONITORING'], defaultPurpose: 'KYC', exemptionEnabled: false, consentSubjectTypes: ['Customer'],
+    })).not.toThrow();
+  });
+
+  it('throws when DEFAULT_CONSENT_PURPOSE is outside the configured vocabulary', () => {
+    expect(() => assertConsentConfig({
+      consentPurposes: ['KYC', 'AML_MONITORING'], defaultPurpose: 'DIRECT_CARE', exemptionEnabled: false,
+    })).toThrow(/DEFAULT_CONSENT_PURPOSE.*not in.*CONSENT_PURPOSES/);
+  });
+
+  it('throws when the exemption is enabled with more than one consent-subject type', () => {
+    expect(() => assertConsentConfig({
+      defaultPurpose: 'DIRECT_CARE', exemptionEnabled: true, consentSubjectTypes: ['Patient', 'Customer'],
+    })).toThrow(/exemption.*single CONSENT_SUBJECT_TYPES/);
+  });
+
+  it('allows multiple subject types when the exemption is OFF', () => {
+    expect(() => assertConsentConfig({
+      defaultPurpose: 'DIRECT_CARE', exemptionEnabled: false, consentSubjectTypes: ['Patient', 'Customer'],
+    })).not.toThrow();
   });
 });

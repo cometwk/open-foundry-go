@@ -50,7 +50,7 @@ import { generateRestRoutes, generateOpenApiSpec } from './rest/index.js';
 import { createFhirRouter } from './fhir/index.js';
 import { createCdmRouter } from './cdm/index.js';
 import { generateRelationshipRoutes, buildGrantAllowlist } from './relationships/router.js';
-import { generateConsentRoutes } from './consent/router.js';
+import { generateConsentRoutes, assertConsentConfig } from './consent/router.js';
 import { InMemorySubscribableEventBus, SubscriptionManager } from './subscriptions/index.js';
 import type { SubscribableEventBus } from './subscriptions/index.js';
 import { RedpandaEventBus } from './events/index.js';
@@ -422,12 +422,16 @@ async function main(): Promise<void> {
   // CONSENT_SUBJECT_TYPES). Unset → ['Patient'] (back-compat); a non-NHS
   // deployment sets its own subject type(s), e.g. Customer.
   const consentSubjectTypes = parseRoles(process.env['CONSENT_SUBJECT_TYPES']);
-  if (consentPurposes && !consentPurposes.includes(DEFAULT_CONSENT_PURPOSE)) {
-    logger.warn(
-      { defaultConsentPurpose: DEFAULT_CONSENT_PURPOSE, consentPurposes },
-      'DEFAULT_CONSENT_PURPOSE is not in CONSENT_PURPOSES — read access checks use a purpose outside the recordable vocabulary',
-    );
-  }
+  const exemptionEnabled = process.env['CONSENT_DIRECT_CARE_EXEMPTION'] === 'true';
+
+  // Fail fast on impossible/ambiguous consent configuration rather than booting
+  // into a state operators cannot fix through the API.
+  assertConsentConfig({
+    consentPurposes,
+    defaultPurpose: DEFAULT_CONSENT_PURPOSE,
+    exemptionEnabled,
+    consentSubjectTypes,
+  });
 
   // Capability-gated facades. The FHIR (/fhir/*) and FDP/CDM (REST /api/v1/cdm/*
   // + the GraphQL cdm* queries) surfaces are NHS-shaped and only enabled when a
@@ -542,12 +546,12 @@ async function main(): Promise<void> {
   // Generic default OFF — a deployment opts in via CONSENT_DIRECT_CARE_EXEMPTION
   // and may set the purpose it applies to (CONSENT_EXEMPTION_PURPOSE, default
   // DIRECT_CARE). The NHS reference stack enables it (see docker-compose).
-  const exemptionEnabled = process.env['CONSENT_DIRECT_CARE_EXEMPTION'] === 'true';
+  // (exemptionEnabled + the impossible-config guards are resolved above.)
   // FGA subject-type prefix for the exemption ReBAC check (bare subject id →
   // `${type}:${id}`). Derived from the configured action consent-subject type so
   // a non-NHS deployment (CONSENT_SUBJECT_TYPES=Customer) checks `customer:<id>`,
-  // not `patient:<id>`. First entry, snake-cased; unset → ConsentService default
-  // 'patient'. (Multiple subject types + exemption: the first is used.)
+  // not `patient:<id>`. Single entry (validated above); snake-cased; unset →
+  // ConsentService default 'patient'.
   const exemptionSubjectType = consentSubjectTypes && consentSubjectTypes.length > 0
     ? toSnakeCase(consentSubjectTypes[0]!)
     : undefined;

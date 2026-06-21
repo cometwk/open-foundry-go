@@ -28,6 +28,40 @@ import { createRestErrorResponse } from '../rest/errors.js';
  */
 export const DEFAULT_CONSENT_RECORDER_ROLES = ['admin'] as const;
 
+/**
+ * Fail-fast validation of deployment consent configuration. Throws on states
+ * that would boot but leave consent-gated reads/actions permanently broken in a
+ * way operators cannot fix through the API. Called at server boot.
+ */
+export function assertConsentConfig(opts: {
+  /** Recordable purpose vocabulary (env CONSENT_PURPOSES); undefined → standard preset. */
+  consentPurposes?: readonly string[];
+  /** Default purpose used for read/action consent checks. */
+  defaultPurpose: string;
+  /** Whether the relationship exemption is enabled. */
+  exemptionEnabled: boolean;
+  /** Action consent-subject types (env CONSENT_SUBJECT_TYPES). */
+  consentSubjectTypes?: readonly string[];
+}): void {
+  // The default purpose enforced on reads/actions must be recordable, else those
+  // checks demand a purpose no one can grant (router rejects out-of-vocab writes).
+  if (opts.consentPurposes && !opts.consentPurposes.includes(opts.defaultPurpose)) {
+    throw new Error(
+      `Invalid consent config: DEFAULT_CONSENT_PURPOSE='${opts.defaultPurpose}' is not in ` +
+      `CONSENT_PURPOSES=[${opts.consentPurposes.join(', ')}]. Set DEFAULT_CONSENT_PURPOSE to one of them.`,
+    );
+  }
+  // The exemption resolves a single FGA subject-type prefix for bare ids; it
+  // cannot disambiguate >1 consent-subject type.
+  if (opts.exemptionEnabled && opts.consentSubjectTypes && opts.consentSubjectTypes.length > 1) {
+    throw new Error(
+      `Invalid consent config: the relationship exemption (CONSENT_DIRECT_CARE_EXEMPTION=true) ` +
+      `supports a single CONSENT_SUBJECT_TYPES entry, got [${opts.consentSubjectTypes.join(', ')}]. ` +
+      `Use one subject type, or disable the exemption.`,
+    );
+  }
+}
+
 export interface ConsentChangeResult {
   ok: boolean;
   code?: string;
