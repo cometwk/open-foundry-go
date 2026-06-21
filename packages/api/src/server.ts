@@ -47,6 +47,7 @@ import type { OpenFgaClientInterface } from '@openfoundry/security';
 import type { StorageProvider, RequestContext } from '@openfoundry/spi';
 import { createGraphQLServer, buildResolverContext } from './graphql/index.js';
 import { generateRestRoutes, generateOpenApiSpec } from './rest/index.js';
+import { readPlatformVersion } from './version.js';
 import { createFhirRouter } from './fhir/index.js';
 import { createCdmRouter } from './cdm/index.js';
 import { generateRelationshipRoutes, buildGrantAllowlist } from './relationships/router.js';
@@ -964,7 +965,9 @@ async function main(): Promise<void> {
   }
 
   // ── OpenAPI spec at /api/v1/openapi.json ──
-  const openApiSpec = generateOpenApiSpec(schema);
+  // Stamp the served contract with the real platform version (root package.json)
+  // so it matches the released spec artifact, not the generator's default.
+  const openApiSpec = generateOpenApiSpec(schema, readPlatformVersion());
   app.get('/api/v1/openapi.json', (_req, res) => {
     res.json(openApiSpec);
   });
