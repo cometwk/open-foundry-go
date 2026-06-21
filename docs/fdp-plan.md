@@ -48,7 +48,7 @@ License:                   Apache 2.0
 | --- | --- |
 | 20 packages across core platform, domain packs, tests, tools | README |
 | ~26,000 lines TypeScript, ~1,900 lines Go (CEL sidecar) | README |
-| 1,883 unit tests + 110 Postgres integration tests *(both locally verified 2026-05-25 — see "Locally verified posture" below)* | README |
+| Unit tests + Postgres integration tests *(locally verified 2026-05-25 — see "Locally verified posture" below)* | README |
 | ODL compiler generating GraphQL / REST / OpenFGA / TypeScript SDK | README |
 | OIDC + OpenFGA ReBAC + consent + audit + field-level redaction | README |
 | Postgres + Apache AGE storage SPI; in-memory SPI for tests | README |
@@ -71,10 +71,9 @@ Verification commands:
 
 Local results (verified 2026-05-25):
   Build:                     PASS — 15/15 turbo tasks, 0 errors
-  Unit tests pass:           1,883 passing (PG integration excluded)
-  SPI conformance pass:      287/287 (tests/spi-conformance, 10 categories)
-  Postgres integration:      PASS — 238/238 (incl. all 110 PG integration tests)
-                             against apache/age:release_PG17_1.6.0 with the
+  Unit tests:                PASS (PG integration excluded)
+  SPI conformance:           PASS (tests/spi-conformance, 10 categories)
+  Postgres integration:      PASS — against apache/age:release_PG17_1.6.0 with the
                              documented init (CREATE EXTENSION age +
                              create_graph('openfoundry')) and PG_TEST_URL set.
                              The earlier 28 ad-hoc failures were (1) a missing AGE
@@ -82,7 +81,7 @@ Local results (verified 2026-05-25):
                              ODL link 'id' column — both fixed; not product bugs.
   Docker-stack integration:  PASS — full compose stack (14 services) comes up
                              healthy via `docker compose up --wait`; the whole
-                             integration suite passes 47/47 against the live
+                             integration suite passes against the live
                              stack (apache/age PG17), idempotent across fresh
                              reruns. Run with the test override:
                              `docker compose -f deploy/docker-compose.yaml
@@ -237,7 +236,7 @@ Clinicians never "admit" real patients inside Open Foundry in Stage 1 unless the
 - Provenance-preserving projection: `packages/api/src/cdm/mappers.ts` — every record carries a `_provenance` envelope (source type/version/timestamp + lossy fields).
 - Read API at `/api/v1/cdm/*`: public `metadata` (profile + compatibility matrix + gap register), authenticated per-resource list/by-id projections, and Encounter-by-patient (via `AdmittedTo`). Reuses the FHIR/GraphQL auth + redaction + consent pipeline.
 - Human-readable canonical mapping document: `docs/cdm-mapping-profile.md`.
-- Tests: `packages/api/src/__tests__/cdm.test.ts` (31 tests — profile completeness, projection, enum remaps, provenance, gap register, GraphQL CDM resolvers incl. Encounter, NDJSON/CSV export, truncation signalling, and Staff/structured-name projection).
+- Tests: `packages/api/src/__tests__/cdm.test.ts` — profile completeness, projection, enum remaps, provenance, gap register, GraphQL CDM resolvers incl. Encounter, NDJSON/CSV export, truncation signalling, and Staff/structured-name projection.
 
 The GraphQL CDM view is implemented (`cdmMetadata` / `cdmRecord` / `cdmRecords` /
 `cdmEncounters` queries, reusing the same handlers as the REST router;

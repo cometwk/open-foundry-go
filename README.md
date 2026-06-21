@@ -205,9 +205,9 @@ The monorepo contains 20 packages across four workspace roots:
 
 | Package | Purpose |
 |---------|---------|
-| `@openfoundry/spi-conformance` | Reusable SPI conformance suite (287 tests, 10 categories) |
+| `@openfoundry/spi-conformance` | Reusable SPI conformance suite (10 categories) |
 | `@openfoundry/pilot-scenarios` | NHS pilot scenario tests |
-| `@openfoundry/integration-tests` | Full Docker Compose stack integration tests |
+| `@openfoundry/integration-tests` | Full Docker Compose stack integration — governed action pipeline over REST/GraphQL/FHIR, plus env-gated production-mode security, capability-gating, and consent-vocabulary E2E specs |
 
 ### Tools (`tools/`)
 
@@ -287,8 +287,8 @@ All persistence goes through a pluggable SPI. The platform ships two implementat
 
 | Provider | Use Case | Conformance |
 |----------|----------|-------------|
-| PostgreSQL 17 + Apache AGE | Production | 110 integration tests |
-| In-memory | Tests and development | 287 conformance tests (10 categories) |
+| PostgreSQL 17 + Apache AGE | Production | Live integration suite + SPI conformance |
+| In-memory | Tests and development | SPI conformance suite (10 categories) |
 
 ### PostgreSQL Capabilities
 
@@ -306,13 +306,22 @@ All persistence goes through a pluggable SPI. The platform ships two implementat
 
 ## Test Coverage
 
-1,883 unit tests and 110 Postgres integration tests across all packages:
+Tests run at every layer:
 
-| Category | Count | Notes |
-|----------|-------|-------|
-| Unit tests | 1,883 | Always run |
-| Postgres integration tests | 109 | Run when `PG_TEST_URL` is set |
-| SPI conformance suite | 287 | Included in unit count; 10 categories |
+| Layer | Coverage | When it runs |
+|-------|----------|--------------|
+| Unit tests | Per-package behaviour across all packages | Always |
+| SPI conformance suite | Storage-provider contract (10 categories), shared by the in-memory and Postgres providers | Always (in-memory); with `PG_TEST_URL` (Postgres) |
+| Postgres integration | Live PostgreSQL + Apache AGE provider — DDL, graph traversal, multi-tenancy | When `PG_TEST_URL` is set |
+| Docker-stack integration | Full Compose stack — governed action pipeline, REST/GraphQL/FHIR, subscriptions | Against a running stack |
+| Enforcement E2E | Production-mode security (real OIDC + OpenFGA), capability gating, and consent-vocabulary validation | Env-gated (`SECURITY_E2E` / `CAPABILITY_E2E` / `CONSENT_VOCAB_E2E`); a dedicated CI job |
+
+The enforcement E2E specs boot the stack in non-default modes (production mode, a
+distinct pack set, or a custom consent vocabulary) on the shared ports, so they
+self-manage the Docker lifecycle and are gated behind env flags rather than run
+in the standard suite. CI exercises them in a dedicated `enforcement-e2e` job so
+real authentication, authorization, capability gating, and consent-vocabulary
+enforcement are verified on every push and pull request.
 
 ---
 
@@ -372,7 +381,7 @@ A human engineer took over direction -- reviewing the codebase, revising the spe
 - **Feature additions** -- Aggregation queries, full-text search, object sets, connector plugin architecture, distributed rate limiting, persistent event bus, and OTEL instrumentation.
 - **Security hardening** -- Multiple review rounds (including cross-model Codex reviews) identified and fixed 200+ issues across auth pipelines, SQL injection, field-level redaction, system-field mapping, error message sanitization, CORS fail-closed, proxy-aware rate limiting, advisory lock safety, and schema migration integrity.
 - **Production hardening** -- Structured logging, query complexity gates, idempotency caching, connection timeouts, graceful shutdown, non-root containers, Helm PDBs, and network policies.
-- **Postgres integration** -- Idempotent DDL generation (AGE graph/labels), link table schema alignment, traversal behavior parity with the memory provider, and 110 integration tests against a live PostgreSQL+AGE instance.
+- **Postgres integration** -- Idempotent DDL generation (AGE graph/labels), link table schema alignment, traversal behavior parity with the memory provider, and an integration suite against a live PostgreSQL+AGE instance.
 
 ### By the Numbers
 
@@ -385,7 +394,6 @@ A human engineer took over direction -- reviewing the codebase, revising the spe
 | Deployment config | ~2,200 lines |
 | Specification + docs | ~4,200 lines |
 | Packages | 20 |
-| Unit + integration tests | 2,040 (1,883 unit + 110 Postgres integration + 47 Docker-stack integration) |
 
 ---
 

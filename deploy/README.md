@@ -107,6 +107,30 @@ silently diverge from the persisted schema. Recovery options:
 - **Bump the schema version** in your domain pack (preferred for real migrations).
 - **Wipe the volume** for throwaway/dev data: `docker compose down -v`.
 
+### Automated production-mode enforcement test
+
+`deploy/docker-compose.prod-test.yaml` is an override that runs the api-gateway
+in `NODE_ENV=production` with real OIDC + OpenFGA wired (it encodes the
+issuer/JWKS host split and the `OPENFGA_STORE_ID` requirement above). The
+integration suite uses it to exercise enforcement end-to-end without the
+allow-all stubs:
+
+- `tests/integration/src/security-enforcement.test.ts` (`SECURITY_E2E=1`) — boots
+  the prod stack, creates the OpenFGA store, mints real Keycloak tokens, and
+  asserts the full picture: unauthenticated/invalid tokens are rejected (401);
+  an authenticated clinician performs a governed action; a created patient is
+  **not** visible without a `viewer` tuple (filtered list + 403 direct read);
+  and after an admin grants `ward.assigned` through the governed relationships
+  API, the same read flips **403 → 200**.
+- `tests/integration/src/capability-gating.test.ts` (`CAPABILITY_E2E=1`) and
+  `tests/integration/src/open-consent-vocab.test.ts` (`CONSENT_VOCAB_E2E=1`) —
+  boot the stack with a non-default pack set / consent vocabulary and assert the
+  corresponding gating.
+
+These specs are destructive (they own the Docker lifecycle and reboot the stack
+in a non-default mode on the shared ports), so they are env-gated and run in a
+dedicated `enforcement-e2e` CI job rather than the standard integration suite.
+
 ## Identity Provider (OIDC) Integration
 
 Production auth requires OIDC access tokens that satisfy
