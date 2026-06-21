@@ -398,6 +398,38 @@ rollback:
   onSideEffectFailure: ROLLBACK_ALL
 `;
 
+// AdmitPatient variant that both updates the patient AND creates a link, under
+// ROLLBACK_ALL. Exercises compensation of a CREATED link (must be removed via
+// deleteLink, not mis-routed to deleteObject).
+const ADMIT_PATIENT_ROLLBACK_LINK_YAML = `
+action: AdmitPatient
+version: 1
+reversible: false
+
+effects:
+  - type: updateObject
+    target: "patient"
+    set:
+      status: "ACTIVE"
+
+  - type: createLink
+    linkType: "AdmittedTo"
+    from: "patient"
+    to: "ward"
+    properties:
+      admissionDate: "now"
+      reason: "params.reason"
+
+sideEffects:
+  - name: emitAdmissionEvent
+    type: event
+    config:
+      type: "nhs.acute.patient.admitted"
+
+rollback:
+  onSideEffectFailure: ROLLBACK_ALL
+`;
+
 // Minimal action exercising the recordConsent effect with an opt-out CEL
 // condition (consent-on-register is default-on unless the caller opts out).
 const RECORD_CONSENT_YAML = `
@@ -1427,6 +1459,44 @@ effects:
       // The committed status change was reverted by the compensating transaction.
       const after = await storage.getObject(REQ_CTX, 'Patient', patient._id);
       expect(after?.['status']).toBe('WAITING');
+    });
+
+    it('removes a created link during compensation (deleteLink, not deleteObject)', async () => {
+      // Regression: the compensation loop discriminated links from objects via
+      // beforeStates.has('link:<type>:<id>'), which is only populated for DELETED
+      // links — so a CREATED link was mis-routed through the object branch
+      // (deleteObject) and left dangling. It must be removed via deleteLink.
+      const failingSideEffectHandler: SideEffectHandler = {
+        async execute() {
+          return { success: false, error: 'downstream broker unavailable' };
+        },
+      };
+      const rollbackExecutor = new ActionExecutor({
+        storage,
+        security: createAllowAllSecurity(),
+        cel: createMockCelEvaluator(),
+        auditWriter,
+        sideEffectHandler: failingSideEffectHandler,
+      });
+
+      const { manifest } = parseActionManifest(ADMIT_PATIENT_ROLLBACK_LINK_YAML);
+      const result = await rollbackExecutor.execute(
+        manifest!,
+        { patient: patient._id, ward: ward._id, consultant: consultant._id, bed: null, reason: 'Test' },
+        ACTOR,
+        ACTION_CTX,
+        NHS_SCHEMA,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.errors?.[0]?.code).toBe('SIDE_EFFECT_FAILURE');
+
+      // Object effect reverted...
+      const after = await storage.getObject(REQ_CTX, 'Patient', patient._id);
+      expect(after?.['status']).toBe('WAITING');
+      // ...and the created AdmittedTo link was removed (not left dangling).
+      const admittedLinks = await storage.getLinks(REQ_CTX, patient._id, 'AdmittedTo', 'outbound');
+      expect(admittedLinks.items).toHaveLength(0);
     });
 
     it('does NOT compensate under the default LOG_AND_CONTINUE policy', async () => {

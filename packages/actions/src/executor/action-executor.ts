@@ -289,8 +289,12 @@ export class ActionExecutor {
               const compensatingTxn = await this.config.storage.beginTransaction(reqCtx);
               try {
                 for (const affected of affectedObjects) {
-                  // Link entries use the `link:<type>:<id>` key prefix in beforeStates
-                  const isLink = beforeStates.has(`link:${affected.type}:${affected.id}`);
+                  // Discriminate links from objects via the schema, not the
+                  // beforeStates key: a `link:<type>:<id>` snapshot is only
+                  // written for DELETED links (executeDeleteLink), so keying on
+                  // it would mis-route a CREATED link's compensation through the
+                  // object branch (deleteObject) instead of deleteLink.
+                  const isLink = schema.linkTypes.some((lt) => lt.name === affected.type);
 
                   if (isLink) {
                     if (affected.changeType === 'created') {
