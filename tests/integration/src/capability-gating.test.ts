@@ -85,18 +85,27 @@ describeMaybe('capability gating — core+aml stack (no fhir/cdm)', () => {
     expect(list.status).toBe(404);
   });
 
-  it('omits cdmMetadata from the GraphQL schema (resolver/SDL gate)', async () => {
+  it('exposes NO cdm* fields on the GraphQL schema (full SDL/resolver gate)', async () => {
+    // Introspect every Query field rather than probing a single name — guards
+    // against a partial leak where one cdm* field (cdmMetadata / cdmRecord /
+    // cdmEncounters) remained exposed while another was gated.
     const res = await fetch(CONFIG.graphqlUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ query: '{ cdmMetadata }' }),
+      body: JSON.stringify({ query: '{ __schema { queryType { fields { name } } } }' }),
     });
-    // The gateway is up and serving GraphQL (not a transport error)...
     expect(res.status).toBeLessThan(500);
-    const body = (await res.json()) as { errors?: Array<{ message: string }> };
-    // ...but cdmMetadata is not a field on the schema for a non-cdm pack set.
-    expect(body.errors).toBeDefined();
-    expect(JSON.stringify(body.errors)).toMatch(/cdmMetadata/);
+    const body = (await res.json()) as {
+      data?: { __schema?: { queryType?: { fields?: { name: string }[] } } };
+      errors?: unknown;
+    };
+    expect(body.errors).toBeUndefined();
+    const fieldNames = (body.data?.__schema?.queryType?.fields ?? []).map((f) => f.name);
+    // Sanity: introspection returned a real, populated schema.
+    expect(fieldNames.length).toBeGreaterThan(0);
+    // No CDM-projection field is present for a pack set without the cdm capability.
+    const cdmFields = fieldNames.filter((n) => /^cdm/i.test(n));
+    expect(cdmFields).toEqual([]);
   });
 
   it('still serves a valid GraphQL schema (introspection succeeds)', async () => {
