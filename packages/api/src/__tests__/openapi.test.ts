@@ -14,6 +14,8 @@ describe('generateOpenApiSpec', () => {
 
     expect(spec['openapi']).toBe('3.0.3');
     expect((spec['info'] as Record<string, unknown>)['title']).toBe('Open Foundry API');
+    // Default version when none supplied.
+    expect((spec['info'] as Record<string, unknown>)['version']).toBe('1.0.0');
 
     const paths = spec['paths'] as Record<string, unknown>;
     // 5 object types → paths for each
@@ -41,6 +43,14 @@ describe('generateOpenApiSpec', () => {
     expect(rel?.['delete']).toBeDefined();
     expect(paths['/api/v1/consent']).toBeDefined();
     expect(((paths['/api/v1/consent'] as Record<string, unknown>)['post'])).toBeDefined();
+  });
+
+  it('stamps the supplied platform version into info.version (served-spec contract)', async () => {
+    // server.ts passes readPlatformVersion() so the served /openapi.json reports
+    // the real release version, not the generator default. Guards commit 3c7e602.
+    const { parsed } = await loadDomainPacks(DOMAIN_PACKS_DIR, ['core', 'nhs-acute']);
+    const spec = generateOpenApiSpec(parsed, '0.2.0');
+    expect((spec['info'] as Record<string, unknown>)['version']).toBe('0.2.0');
   });
 
   it('includes component schemas for all object types and enums', async () => {

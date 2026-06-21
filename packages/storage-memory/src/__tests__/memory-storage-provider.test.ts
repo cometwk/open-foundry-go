@@ -166,6 +166,24 @@ describe('MemoryStorageProvider', () => {
         provider.updateObject(tenantA, 'Patient', obj._id, { name: 'Frank2' }),
       ).rejects.toThrow('deleted');
     });
+
+    it('bumps version + updatedAt even for an empty-payload update (parity invariant)', async () => {
+      const created = await provider.createObject(tenantA, 'Patient', { name: 'Gita' });
+      const updated = await provider.updateObject(tenantA, 'Patient', created._id, {});
+      expect(updated._version).toBe(2);
+      expect(updated.name).toBe('Gita');
+      // matches PostgresObjectStore.update which always bumps updated_at (rc.2 fix).
+    });
+
+    it('optimistic concurrency: stale expectedVersion is rejected with VERSION_CONFLICT', async () => {
+      const created = await provider.createObject(tenantA, 'Patient', { name: 'Hugo', age: 1 });
+      // succeeds at the current version (1) → now version 2
+      await provider.updateObject(tenantA, 'Patient', created._id, { age: 2 }, 1);
+      // a second writer holding the stale version 1 must be rejected
+      await expect(
+        provider.updateObject(tenantA, 'Patient', created._id, { age: 3 }, 1),
+      ).rejects.toThrow(/version 2, expected 1|VERSION_CONFLICT/);
+    });
   });
 
   // ─── Soft-delete semantics ───
@@ -261,6 +279,28 @@ describe('MemoryStorageProvider', () => {
         value: 'li',
       });
       expect(page.items).toHaveLength(2); // Alice, Charlie
+    });
+
+    it('gte filter (boundary inclusive)', async () => {
+      const page = await provider.queryObjects(tenantA, 'Patient', {
+        field: 'age', operator: 'gte', value: 30,
+      });
+      expect(page.items.map(p => p.name).sort()).toEqual(['Alice', 'Charlie']); // 30 incl, 40
+    });
+
+    it('lte filter (boundary inclusive)', async () => {
+      const page = await provider.queryObjects(tenantA, 'Patient', {
+        field: 'age', operator: 'lte', value: 30,
+      });
+      expect(page.items.map(p => p.name).sort()).toEqual(['Alice', 'Bob']); // 30 incl, 25
+    });
+
+    it('startsWith filter', async () => {
+      const page = await provider.queryObjects(tenantA, 'Patient', {
+        field: 'name', operator: 'startsWith', value: 'A',
+      });
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]!.name).toBe('Alice');
     });
 
     it('AND logical filter', async () => {

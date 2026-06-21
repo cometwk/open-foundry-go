@@ -429,6 +429,31 @@ describe("AuthorizationService", () => {
       expect(result.data.clinicalNotes).toBe("History of cardiac issues");
     });
 
+    it("redacts for a role NOT present in fieldsByRelation — exact key match, no fuzzy/prefix", () => {
+      // Regression guard: field-permission relation keys are matched against the
+      // caller's platform roles EXACTLY. A pack keyed `nurse` while the runtime
+      // role was `nurse_in_charge` silently nulled all sensitive fields for
+      // nurses (the bug fixed in nhs-acute field-permissions.yaml). This pins
+      // that getVisibleFields does an exact lookup: `nurse_in_charge` does NOT
+      // match the `nurse` key, so only alwaysVisible (`id`) survives.
+      const result = authz.redactFields("nic-1", ["nurse_in_charge"], "patient", samplePatient);
+
+      expect(result._redactedFields).toEqual(
+        expect.arrayContaining(["nhsNumber", "name", "dateOfBirth", "clinicalNotes", "medications", "allergies"]),
+      );
+      expect(result.data.name).toBeNull();
+      expect(result.data.clinicalNotes).toBeNull();
+      // alwaysVisible primary key still survives.
+      expect(result.data.id).toBe("patient-abc-123");
+      expect(result._redactedFields).not.toContain("id");
+    });
+
+    it("getVisibleFields returns only alwaysVisible for an unmatched role", () => {
+      const visible = authz.getVisibleFields("nic-1", ["nurse_in_charge"], "patient");
+      expect(visible).toBeDefined();
+      expect([...visible!]).toEqual(["id"]);
+    });
+
     it("unknown object type returns data unredacted", () => {
       const ward = { id: "ward-1", name: "Cardiology", capacity: 30 };
       const result = authz.redactFields("alice", ["nurse"], "ward", ward);

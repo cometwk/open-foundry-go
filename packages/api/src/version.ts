@@ -11,9 +11,9 @@ import { readFileSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export function readPlatformVersion(fallback = '1.0.0'): string {
+export function readPlatformVersion(fallback = '1.0.0', startDir?: string): string {
   try {
-    let dir = dirname(fileURLToPath(import.meta.url));
+    let dir = startDir ?? dirname(fileURLToPath(import.meta.url));
     for (let i = 0; i < 10; i++) {
       if (existsSync(resolve(dir, 'pnpm-workspace.yaml'))) {
         const pkg = JSON.parse(readFileSync(resolve(dir, 'package.json'), 'utf-8')) as { version?: string };
