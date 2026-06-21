@@ -116,15 +116,7 @@ describe.skipIf(!dockerAvailable)('WebSocket Subscriptions', () => {
     expect(acked).toBe(true);
   });
 
-  // KNOWN GAP (explicit skip, not a silent pass): verified that an `admitPatient`
-  // action commits successfully but NO `patientsChanged` event is delivered over
-  // the graphql-ws socket within 25s in the Docker compose stack (Redpanda event
-  // bus). The init handshake works (test above), the subscription is accepted (no
-  // GraphQL error), and the mutation succeeds — but the action→event-bus→
-  // SubscriptionManager bridge does not surface the change. This was masked by
-  // the previous version of this test (assertions were guarded by `if (event)`).
-  // Re-enable once the event-bus↔subscription delivery path is fixed/verified.
-  it.skip('delivers a patientsChanged event when a patient is admitted', async () => {
+  it('delivers a patientsChanged event when a patient is admitted', async () => {
     // Register a fresh patient (self-contained; admit omits the optional bed).
     const reg = await graphql<{ registerPatient: { success: boolean; affectedObjects: { typeName: string; id: string }[] } }>(
       REGISTER_PATIENT,

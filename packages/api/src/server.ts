@@ -696,6 +696,16 @@ async function main(): Promise<void> {
     authenticate: async (connectionParams) => {
       const token = connectionParams?.['Authorization'] ?? connectionParams?.['authorization'];
       if (!token || typeof token !== 'string') {
+        // Dev mode is allow-all: HTTP requests without a bearer token get a
+        // synthetic dev user (extractUser). Mirror that for WebSocket
+        // subscriptions so the dev experience is consistent — otherwise
+        // subscriptions fail closed (the change-event filters require a user)
+        // even though every other surface is open. Production still requires a
+        // token (fail closed below).
+        if (isDev) {
+          const user = await extractUser({ headers: {} } as import('express').Request, authenticator, isDev);
+          return { authenticated: true, user };
+        }
         return { authenticated: false, error: 'Missing Authorization in connection params' };
       }
       try {

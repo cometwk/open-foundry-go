@@ -266,8 +266,16 @@ export class SubscriptionManager {
 export function createIdFilteredSubscription(
   pubsub: PubSub,
   topic: string,
-): { subscribe: (_parent: unknown, args: { id: string }, ctx: ResolverContext) => AsyncIterator<unknown> } {
+): {
+  subscribe: (_parent: unknown, args: { id: string }, ctx: ResolverContext) => AsyncIterator<unknown>;
+  resolve: (payload: unknown) => unknown;
+} {
   return {
+    // The payload is published keyed by `topic` (e.g. "patientChanged"); the
+    // subscription FIELD may differ (e.g. plural "patientsChanged"). Extract the
+    // change event by the topic key so graphql-js's default field resolver
+    // (which would look up the field name) doesn't return undefined.
+    resolve: (payload: unknown) => (payload as Record<string, unknown> | undefined)?.[topic],
     subscribe: (_parent: unknown, args: { id: string }, ctx: ResolverContext) => {
       const baseIterator = pubsub.asyncIterator(topic);
       const authzService = ctx?.deps?.authorizationService;
@@ -307,8 +315,14 @@ export function createIdFilteredSubscription(
 export function createFilteredSubscription(
   pubsub: PubSub,
   topic: string,
-): { subscribe: (_parent: unknown, args: { filter?: SubscriptionFilter }, ctx: ResolverContext) => AsyncIterator<unknown> } {
+): {
+  subscribe: (_parent: unknown, args: { filter?: SubscriptionFilter }, ctx: ResolverContext) => AsyncIterator<unknown>;
+  resolve: (payload: unknown) => unknown;
+} {
   return {
+    // See createIdFilteredSubscription: payload is keyed by `topic`, field name
+    // may differ (plural). Extract by topic key.
+    resolve: (payload: unknown) => (payload as Record<string, unknown> | undefined)?.[topic],
     subscribe: (_parent: unknown, args: { filter?: SubscriptionFilter }, ctx: ResolverContext) => {
       const baseIterator = pubsub.asyncIterator(topic);
       const authzService = ctx?.deps?.authorizationService;
@@ -368,8 +382,15 @@ function matchesFilter(event: ChangeEvent, filter: SubscriptionFilter): boolean 
 function filterAsyncIteratorAsync<T>(
   iterator: AsyncIterator<T>,
   predicate: (value: T) => Promise<boolean>,
-): AsyncIterator<T> {
-  return {
+): AsyncIterableIterator<T> {
+  const wrapped: AsyncIterableIterator<T> = {
+    // graphql-js `subscribe()` requires an AsyncIterable (it checks for
+    // Symbol.asyncIterator). Returning a bare AsyncIterator (next/return/throw
+    // only) makes every subscription fail with "Subscription field must return
+    // Async Iterable" (graphql-ws close code 4500). Make this self-iterable.
+    [Symbol.asyncIterator](): AsyncIterableIterator<T> {
+      return wrapped;
+    },
     next(): Promise<IteratorResult<T>> {
       return new Promise((resolve, reject) => {
         const getNext = (): void => {
@@ -402,5 +423,6 @@ function filterAsyncIteratorAsync<T>(
     throw: iterator.throw
       ? (err?: unknown) => iterator.throw!(err)
       : undefined,
-  } as AsyncIterator<T>;
+  } as AsyncIterableIterator<T>;
+  return wrapped;
 }

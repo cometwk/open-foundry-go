@@ -587,6 +587,41 @@ describe('ID-filtered subscriptions', () => {
   });
 });
 
+describe('subscription resolver shape (graphql-js execution contract)', () => {
+  let ctx: ResolverContext;
+  beforeEach(() => { ctx = createMockContext(createMockDeps(parseOdl(NHS_ACUTE_ODL))); });
+
+  // Regression: graphql-js `subscribe()` requires the source to be an
+  // AsyncIterable (Symbol.asyncIterator), not just an AsyncIterator. A bare
+  // iterator made EVERY subscription fail with graphql-ws close code 4500
+  // ("Subscription field must return Async Iterable").
+  it('subscribe() returns an AsyncIterable (has Symbol.asyncIterator → self)', () => {
+    const pubsub = new PubSub();
+    for (const sub of [
+      createIdFilteredSubscription(pubsub, 'patientChanged').subscribe(null, { id: 'p-1' }, ctx),
+      createFilteredSubscription(pubsub, 'patientChanged').subscribe(null, {}, ctx),
+    ]) {
+      const it = sub as AsyncIterableIterator<unknown>;
+      expect(typeof it[Symbol.asyncIterator]).toBe('function');
+      expect(it[Symbol.asyncIterator]()).toBe(it);
+    }
+  });
+
+  // Regression: events are published keyed by the TOPIC (e.g. "patientChanged"),
+  // but the subscription FIELD may differ (plural "patientsChanged"). Without an
+  // explicit resolve, graphql-js's default resolver looks up the field name and
+  // returns undefined — so `patientsChanged` delivered nothing.
+  it('resolve() extracts the change event by topic key, not field name', () => {
+    const evt = { changeType: 'UPDATED', object: { id: 'p-1', _type: 'Patient' } };
+    const idSub = createIdFilteredSubscription(new PubSub(), 'patientChanged');
+    const filterSub = createFilteredSubscription(new PubSub(), 'patientChanged');
+    expect(idSub.resolve({ patientChanged: evt })).toBe(evt);
+    // The plural foosChanged field receives the same topic-keyed payload.
+    expect(filterSub.resolve({ patientChanged: evt })).toBe(evt);
+    expect(filterSub.resolve({})).toBeUndefined();
+  });
+});
+
 describe('Subscription auth fail-closed', () => {
   it('denies events when authorizationService is absent (ID-filtered)', async () => {
     const pubsub = new PubSub();
