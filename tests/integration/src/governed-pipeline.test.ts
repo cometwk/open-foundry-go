@@ -12,6 +12,9 @@
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { dockerAvailable, ensureStackUp } from './setup.js';
 import { restGet, restPost, graphql, fhirGet, restRaw } from './client.js';
 
@@ -237,5 +240,20 @@ describeWithDocker('governed pipeline (live stack)', () => {
     expect(enc.errors).toBeUndefined();
     expect(enc.data?.cdmEncounters.resourceType).toBe('Encounter');
     expect(Array.isArray(enc.data?.cdmEncounters.records)).toBe(true);
+  });
+
+  it('serves /api/v1/openapi.json stamped with the real platform version + governance paths', async () => {
+    // Guards two regressions end-to-end: (1) the served spec used the generator
+    // default 1.0.0 instead of readPlatformVersion() (commit 3c7e602); (2) the
+    // A1/A2 governance routes were mounted but absent from the published spec.
+    const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+    const platformVersion = (JSON.parse(readFileSync(resolve(repoRoot, 'package.json'), 'utf-8')) as { version: string }).version;
+
+    const spec = await restGet<{ openapi: string; info: { version: string }; paths: Record<string, Record<string, unknown>> }>('/openapi.json');
+    expect(spec.openapi).toBe('3.0.3');
+    expect(spec.info.version).toBe(platformVersion); // not the generator default
+    expect(spec.paths['/api/v1/relationships']?.['post']).toBeDefined();
+    expect(spec.paths['/api/v1/relationships']?.['delete']).toBeDefined();
+    expect(spec.paths['/api/v1/consent']?.['post']).toBeDefined();
   });
 });
