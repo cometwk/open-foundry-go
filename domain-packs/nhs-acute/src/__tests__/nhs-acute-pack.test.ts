@@ -563,6 +563,14 @@ describe('NHS Acute Domain Pack — pack.yaml manifest', () => {
     }
   });
 
+  it('declares the fhir + cdm capabilities (gates the /fhir and /cdm mounts)', () => {
+    // Load-bearing: server.ts only mounts the FHIR facade and the FDP/CDM
+    // projection (REST + GraphQL) when a loaded pack declares these. A typo or
+    // deletion silently 404s the NHS endpoints — guard it.
+    const pack = parseYaml(readFileSync(resolve(PACK_ROOT, 'pack.yaml'), 'utf-8')) as Record<string, unknown>;
+    expect(pack['capabilities']).toEqual(expect.arrayContaining(['fhir', 'cdm']));
+  });
+
   it('references all action files', () => {
     const packYamlPath = resolve(PACK_ROOT, 'pack.yaml');
     const content = readFileSync(packYamlPath, 'utf-8');

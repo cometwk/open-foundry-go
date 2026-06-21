@@ -113,6 +113,13 @@ describe("metrics", () => {
       expect(metricData!.descriptor.name).toBe(
         "openfoundry.engine.operations",
       );
+      // Assert the recorded VALUES, not just the descriptor: one data point per
+      // attribute set, with the summed counter value.
+      const points = metricData!.dataPoints as Array<{ value: number; attributes: Record<string, unknown> }>;
+      const patient = points.find((p) => p.attributes["object.type"] === "Patient");
+      const ward = points.find((p) => p.attributes["object.type"] === "Ward");
+      expect(patient?.value).toBe(1);
+      expect(ward?.value).toBe(2);
     });
 
     it("records histogram values", async () => {
@@ -128,6 +135,10 @@ describe("metrics", () => {
 
       expect(metricData).toBeDefined();
       expect(metricData!.descriptor.unit).toBe("ms");
+      // Assert the aggregated histogram value: 2 records, sum 142.
+      const point = (metricData!.dataPoints as Array<{ value: { count: number; sum: number } }>)[0];
+      expect(point?.value.count).toBe(2);
+      expect(point?.value.sum).toBe(142);
     });
   });
 });

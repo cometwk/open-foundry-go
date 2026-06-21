@@ -1261,6 +1261,46 @@ effects:
       expect(record.operation.actionType).toBe('AdmitPatient');
       expect(record.actor.id).toBe('dr-smith');
     });
+
+    it('denies the action and audits when consent is not granted (consent stage)', async () => {
+      // Step 3 of the pipeline: when a consentManager is wired and the context
+      // carries a consent purpose+subject, a denied decision must abort the
+      // action (CONSENT_DENIED) BEFORE any effect runs, and leave a denied audit
+      // record. Previously untested — only the authorize-stage denial was.
+      const denyConsent = {
+        async checkConsent() { return { allowed: false }; },
+        async checkConsentBatch() { return new Map(); },
+        async recordConsent() { /* noop */ },
+        async revokeConsent() { return {}; },
+        async getConsentRecord() { return []; },
+      } as unknown as import('@openfoundry/spi').ConsentManager;
+      const consentExecutor = new ActionExecutor({
+        storage, security: createAllowAllSecurity(), cel: createMockCelEvaluator(),
+        auditWriter, sideEffectHandler, consentManager: denyConsent,
+      });
+      const ctxWithConsent: ActionContext = {
+        requestContext: REQ_CTX,
+        consentPurpose: 'DIRECT_CARE' as unknown as ActionContext['consentPurpose'],
+        consentSubjectId: patient._id,
+      };
+
+      const { manifest } = parseActionManifest(ADMIT_PATIENT_YAML);
+      const result = await consentExecutor.execute(
+        manifest!,
+        { patient: patient._id, ward: ward._id, consultant: consultant._id, bed: null, reason: 'Test' },
+        ACTOR, ctxWithConsent, NHS_SCHEMA,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.errors?.[0]?.code).toBe('CONSENT_DENIED');
+      // No effects ran: the patient was not admitted (still no current ward link).
+      expect(sideEffectHandler.calls).toHaveLength(0);
+      // Denied audit record with the consent-denial marker + subject id.
+      expect(auditWriter.records).toHaveLength(1);
+      expect(auditWriter.records[0]!.detail.result).toBe('denied');
+      expect(auditWriter.records[0]!.detail.consentDecision).toBe('denied');
+      expect(auditWriter.records[0]!.operation.objectId).toBe(patient._id);
+    });
   });
 
   // -------------------------------------------------------------------------

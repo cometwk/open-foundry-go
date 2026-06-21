@@ -549,6 +549,13 @@ describe('Supply Chain Domain Pack — pack.yaml manifest', () => {
     expect(pack['namespace']).toBe('supply.chain');
   });
 
+  it('does NOT declare NHS facade capabilities (no /fhir or /cdm exposure)', () => {
+    const pack = parseYaml(readFileSync(resolve(PACK_ROOT, 'pack.yaml'), 'utf-8')) as Record<string, unknown>;
+    const caps = (pack['capabilities'] as string[] | undefined) ?? [];
+    expect(caps).not.toContain('fhir');
+    expect(caps).not.toContain('cdm');
+  });
+
   it('declares correct dependency on openfoundry.core', () => {
     const packYamlPath = resolve(PACK_ROOT, 'pack.yaml');
     const content = readFileSync(packYamlPath, 'utf-8');
