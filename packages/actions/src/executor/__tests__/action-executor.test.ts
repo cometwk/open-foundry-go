@@ -374,6 +374,45 @@ rollback:
   onSideEffectFailure: LOG_AND_CONTINUE
 `;
 
+// AdmitPatient variant with a ROLLBACK_ALL compensation policy. A single
+// object-update effect keeps the compensation assertion unambiguous: when the
+// downstream side effect fails, the committed status change must be reverted.
+const ADMIT_PATIENT_ROLLBACK_YAML = `
+action: AdmitPatient
+version: 1
+reversible: false
+
+effects:
+  - type: updateObject
+    target: "patient"
+    set:
+      status: "ACTIVE"
+
+sideEffects:
+  - name: emitAdmissionEvent
+    type: event
+    config:
+      type: "nhs.acute.patient.admitted"
+
+rollback:
+  onSideEffectFailure: ROLLBACK_ALL
+`;
+
+// Minimal action exercising the recordConsent effect with an opt-out CEL
+// condition (consent-on-register is default-on unless the caller opts out).
+const RECORD_CONSENT_YAML = `
+action: RecordConsentProbe
+version: 1
+reversible: false
+
+effects:
+  - type: recordConsent
+    subject: "patient"
+    purpose: "DIRECT_CARE"
+    decision: "GRANT"
+    condition: "params.consent != false"
+`;
+
 // ---------------------------------------------------------------------------
 // Mock CEL Evaluator
 // ---------------------------------------------------------------------------
@@ -1342,6 +1381,161 @@ effects:
       expect(data['patientId']).not.toBe('patient.id');
       // Quoted literal passes through unwrapped.
       expect(data['status']).toBe('admitted');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // ROLLBACK_ALL compensation (CQ-24)
+  // -------------------------------------------------------------------------
+
+  describe('ROLLBACK_ALL compensation', () => {
+    it('reverts committed object effects when a side effect fails', async () => {
+      // The patient starts WAITING; the action commits status=ACTIVE, then the
+      // downstream side effect fails. With onSideEffectFailure: ROLLBACK_ALL the
+      // executor must run a compensating transaction that restores the prior
+      // status — otherwise the store is left in a half-applied state.
+      const failingSideEffectHandler: SideEffectHandler = {
+        async execute() {
+          return { success: false, error: 'downstream broker unavailable' };
+        },
+      };
+      const rollbackExecutor = new ActionExecutor({
+        storage,
+        security: createAllowAllSecurity(),
+        cel: createMockCelEvaluator(),
+        auditWriter,
+        sideEffectHandler: failingSideEffectHandler,
+      });
+
+      // Precondition: the fixture patient is WAITING.
+      const before = await storage.getObject(REQ_CTX, 'Patient', patient._id);
+      expect(before?.['status']).toBe('WAITING');
+
+      const { manifest } = parseActionManifest(ADMIT_PATIENT_ROLLBACK_YAML);
+      const result = await rollbackExecutor.execute(
+        manifest!,
+        { patient: patient._id, ward: ward._id, consultant: consultant._id, bed: null, reason: 'Test' },
+        ACTOR,
+        ACTION_CTX,
+        NHS_SCHEMA,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.errors?.[0]?.code).toBe('SIDE_EFFECT_FAILURE');
+      expect(result.errors?.[0]?.message).toContain('Compensating transaction');
+
+      // The committed status change was reverted by the compensating transaction.
+      const after = await storage.getObject(REQ_CTX, 'Patient', patient._id);
+      expect(after?.['status']).toBe('WAITING');
+    });
+
+    it('does NOT compensate under the default LOG_AND_CONTINUE policy', async () => {
+      // Contrast: the stock AdmitPatient manifest uses LOG_AND_CONTINUE, so a
+      // failed side effect must NOT roll back the committed admission — it logs
+      // and the action still reports failure-free effects.
+      const failingSideEffectHandler: SideEffectHandler = {
+        async execute() {
+          return { success: false, error: 'downstream broker unavailable' };
+        },
+      };
+      const logExecutor = new ActionExecutor({
+        storage,
+        security: createAllowAllSecurity(),
+        cel: createMockCelEvaluator(),
+        auditWriter,
+        sideEffectHandler: failingSideEffectHandler,
+      });
+
+      const { manifest } = parseActionManifest(ADMIT_PATIENT_YAML);
+      const result = await logExecutor.execute(
+        manifest!,
+        { patient: patient._id, ward: ward._id, consultant: consultant._id, bed: null, reason: 'Test' },
+        ACTOR,
+        ACTION_CTX,
+        NHS_SCHEMA,
+      );
+
+      // LOG_AND_CONTINUE: the action succeeds despite the side-effect failure,
+      // and the committed status change is retained (no compensation).
+      expect(result.success).toBe(true);
+      const after = await storage.getObject(REQ_CTX, 'Patient', patient._id);
+      expect(after?.['status']).toBe('ACTIVE');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // recordConsent effect — opt-out condition
+  // -------------------------------------------------------------------------
+
+  describe('recordConsent opt-out condition', () => {
+    function createRecordingConsentManager(): import('@openfoundry/spi').ConsentManager & {
+      calls: Array<{ subject: string; purpose: string; decision: string }>;
+    } {
+      const calls: Array<{ subject: string; purpose: string; decision: string }> = [];
+      return {
+        calls,
+        async checkConsent() { return { allowed: true }; },
+        async checkConsentBatch() { return new Map(); },
+        async recordConsent(subject: string, purpose: string, decision: string) {
+          calls.push({ subject, purpose, decision });
+        },
+        async revokeConsent() { return {}; },
+        async getConsentRecord() { return []; },
+      } as unknown as import('@openfoundry/spi').ConsentManager & {
+        calls: Array<{ subject: string; purpose: string; decision: string }>;
+      };
+    }
+
+    it('records consent for the subject when not opted out (default-on)', async () => {
+      const consentManager = createRecordingConsentManager();
+      const consentExecutor = new ActionExecutor({
+        storage,
+        security: createAllowAllSecurity(),
+        cel: createMockCelEvaluator(),
+        auditWriter,
+        consentManager,
+      });
+
+      const { manifest } = parseActionManifest(RECORD_CONSENT_YAML);
+      const result = await consentExecutor.execute(
+        manifest!,
+        { patient: patient._id }, // consent param omitted → default-on
+        ACTOR,
+        ACTION_CTX,
+        NHS_SCHEMA,
+      );
+
+      expect(result.success).toBe(true);
+      expect(consentManager.calls).toHaveLength(1);
+      expect(consentManager.calls[0]).toEqual({
+        subject: patient._id,
+        purpose: 'DIRECT_CARE',
+        decision: 'GRANT',
+      });
+    });
+
+    it('skips recording when the caller opts out (condition false)', async () => {
+      const consentManager = createRecordingConsentManager();
+      const consentExecutor = new ActionExecutor({
+        storage,
+        security: createAllowAllSecurity(),
+        cel: createMockCelEvaluator(),
+        auditWriter,
+        consentManager,
+      });
+
+      const { manifest } = parseActionManifest(RECORD_CONSENT_YAML);
+      const result = await consentExecutor.execute(
+        manifest!,
+        { patient: patient._id, consent: false }, // explicit opt-out
+        ACTOR,
+        ACTION_CTX,
+        NHS_SCHEMA,
+      );
+
+      expect(result.success).toBe(true);
+      // condition "params.consent != false" is false → recordConsent not called.
+      expect(consentManager.calls).toHaveLength(0);
     });
   });
 
