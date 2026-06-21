@@ -28,6 +28,11 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build
         run: pnpm run build
+      # Typecheck covers test files too (tsconfig.json), which `build`
+      # (tsconfig.build.json) excludes — so this catches type errors in tests
+      # that build + vitest (esbuild, no typecheck) would miss.
+      - name: Typecheck
+        run: pnpm run typecheck
       - name: Unit tests
         run: pnpm run test
 
