@@ -132,6 +132,53 @@ jobs:
           -f deploy/docker-compose.test.yaml
           down -v --remove-orphans
 
+  enforcement-e2e:
+    name: Enforcement E2E (prod security, capability gating, consent vocab)
+    runs-on: ubuntu-latest
+    # The high-value enforcement specs are env-gated + DESTRUCTIVE: each tears the
+    # stack down and boots it in a NON-default mode (NODE_ENV=production / a
+    # distinct DOMAIN_PACKS set / a custom consent vocabulary) on the shared
+    # ports. They cannot run inside the standard integration suite (which assumes
+    # the default dev all-packs stack) nor concurrently with each other. This
+    # dedicated job runs them one spec at a time so real OIDC/OpenFGA enforcement,
+    # capability gating, and consent-vocab validation are exercised on every
+    # push/PR — not only when a developer sets the opt-in env flag locally.
+    env:
+      POSTGRES_PASSWORD: postgres
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      # Compose reads deploy/.env (project dir) for the two intentionally-required
+      # vars; the specs spawn `docker compose` children that need the file on disk.
+      - name: Create deploy/.env for compose
+        run: |
+          printf 'POSTGRES_PASSWORD=postgres\nKEYCLOAK_ADMIN_PASSWORD=admin\n' > deploy/.env
+      # vitest runs the package directly (no turbo build step), so workspace deps
+      # must be built first for vite to resolve them.
+      - name: Build workspace
+        run: pnpm run build
+      - name: Build stack images
+        run: docker compose -f deploy/docker-compose.yaml build
+      # Each spec self-manages the Docker lifecycle (down -v -> up -> assert ->
+      # down -v). Run sequentially; the filename filter + env flag keep exactly
+      # one destructive spec active at a time.
+      - name: Prod-mode security-enforcement E2E
+        run: SECURITY_E2E=1 pnpm --filter @openfoundry/integration-tests exec vitest run security-enforcement
+      - name: Capability-gating negative E2E
+        run: CAPABILITY_E2E=1 pnpm --filter @openfoundry/integration-tests exec vitest run capability-gating
+      - name: Open-consent-vocabulary E2E
+        run: CONSENT_VOCAB_E2E=1 pnpm --filter @openfoundry/integration-tests exec vitest run open-consent-vocab
+      - name: Tear down stack
+        if: always()
+        run: docker compose -f deploy/docker-compose.yaml down -v --remove-orphans
+
   helm-lint:
     name: Helm lint
     runs-on: ubuntu-latest
