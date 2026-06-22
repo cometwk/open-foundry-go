@@ -178,8 +178,12 @@ describeMaybe('security enforcement (production mode)', () => {
 
     // 5. Discover a seeded ward id (objects are invisible over the API until a
     //    viewer tuple exists, so read it straight from Postgres to bootstrap).
+    //    The exec only needs to locate the running postgresql container (compose
+    //    resolves it by project name), so use the BASE file alone — including the
+    //    prod-test override here would re-interpolate its required OPENFGA_STORE_ID
+    //    var, which is not set for this call.
     seededWardId = psqlScalar(
-      FILES,
+      [BASE],
       "SELECT _id FROM public.ward WHERE _tenant_id = 'default' LIMIT 1",
     );
     if (!seededWardId) throw new Error('No seeded ward found to authorize a read against');
