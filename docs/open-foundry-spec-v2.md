@@ -2132,7 +2132,7 @@ For each ActionType, the compiler generates a mutation (as shown in Section 5.4)
 
 #### 8.1.3 FHIR Mapping for Mutations
 
-When the Healthcare Domain Pack is active and a FHIR `POST`, `PUT`, or `DELETE` request is received for a resource type that maps to an ObjectType, the FHIR API facade translates the request into the appropriate Action:
+When a loaded pack declares the `fhir` capability (Section 10.2) and a FHIR `POST`, `PUT`, or `DELETE` request is received for a resource type that maps to an ObjectType, the FHIR API facade translates the request into the appropriate Action:
 
 1. The facade identifies which ActionType corresponds to the FHIR operation and HTTP method (configured in the Domain Pack's FHIR mapping — see `fhir.mutations` in Section 10.2).
 2. It extracts the Action parameters from the FHIR resource payload (for POST/PUT) or the resource identifier (for DELETE).
@@ -2237,7 +2237,7 @@ Health endpoint contract:
 
 ### 8.3 FHIR R4 API
 
-When the Healthcare Domain Pack is active, ObjectTypes that map to FHIR Resources are additionally available via a FHIR R4-compliant API.
+When a loaded domain pack declares the `fhir` capability (Section 10.2), ObjectTypes that map to FHIR Resources are additionally available via a FHIR R4-compliant API. The facade is **capability-gated**: a deployment whose loaded packs do not declare `fhir` does not mount `/fhir/*` and those routes return `404`.
 
 ```
 GET    /fhir/Patient/{id}
@@ -2249,6 +2249,16 @@ GET    /fhir/Encounter?patient=Patient/123
 The FHIR API is generated from FHIR StructureDefinition profiles linked to ObjectTypes via the Domain Pack. It supports FHIR search parameters, `_include`, `_revinclude`, and pagination.
 
 All FHIR write operations (POST, PUT, DELETE) are routed through the Action pipeline as described in Section 8.1.3. There MUST be no direct write path from the FHIR API to the Ontology Engine. Every FHIR write method MUST have a corresponding ActionType mapping in the Domain Pack's `fhir.mutations` configuration (see Section 10.2); unmapped methods return `405 Method Not Allowed`.
+
+**FDP/CDM projection API.** A second read-only projection facade exposes ObjectTypes under a Common Data Model profile, gated by the `cdm` capability (Section 10.2). When a loaded pack declares `cdm`:
+
+```
+GET /api/v1/cdm/metadata               # public: profile, compatibility matrix, gap register
+GET /api/v1/cdm/{ResourceType}/{id}    # authenticated per-resource projection
+GET /api/v1/cdm/{ResourceType}/export  # dataset export (NDJSON | CSV)
+```
+
+The equivalent GraphQL queries (`cdmMetadata`, `cdmRecord`, `cdmRecords`, `cdmEncounters`) are generated alongside the REST mount and gated identically — the `cdm*` fields are omitted from the generated schema when no loaded pack declares the capability. Every projected record carries a `_provenance` envelope (source type/version/timestamp plus the list of lossy fields), and reads reuse the same authorization, field-level redaction, and consent pipeline as the native API. The reference profile and gap register are documented in `docs/cdm-mapping-profile.md`. As with FHIR, a deployment whose packs do not declare `cdm` returns `404` on `/api/v1/cdm/*`.
 
 ### 8.4 Client SDKs
 
@@ -2638,6 +2648,16 @@ namespace: nhs.acute
 dependencies:
   openfoundry.core: ">=1.0.0"
 
+# Platform capabilities this pack opts into. The FHIR (/fhir/*) and FDP/CDM
+# (/api/v1/cdm/*) projection facades — and their GraphQL equivalents — are
+# mounted ONLY when a loaded pack declares the corresponding capability. A
+# deployment whose loaded packs declare neither returns 404 on those routes and
+# omits the cdm* GraphQL fields, keeping non-healthcare deployments free of the
+# NHS-shaped surface.
+capabilities:
+  - fhir
+  - cdm
+
 provides:
   objectTypes: 14
   linkTypes: 12
@@ -2783,6 +2803,19 @@ Cross-layer conformance tests validate API contracts and app-builder behaviour:
 4. Search security guarantees (no leak via counts/snippets for inaccessible objects).
 5. Application Framework bindings: widget query typing, UI action trigger mapping, permission-aware rendering.
 6. Degraded mode behaviour matrix (auth outage, storage read-only, federation partial failure).
+
+### 11.5 Governance Enforcement Conformance
+
+A development deployment (`NODE_ENV != production`) runs **allow-all stubs** for fast local iteration: the OpenFGA client, CEL evaluator, and security layer all permit everything, and an absent `Authorization` header yields a synthetic admin user. Functional tests that run in this mode therefore **do not** exercise authentication, ReBAC authorization, field redaction, or consent enforcement — those layers are inert.
+
+Conformance therefore REQUIRES a set of enforcement tests that run against `NODE_ENV=production` with real OIDC (token validation) and a real OpenFGA model loaded into a store. These verify the guarantees dev mode bypasses:
+
+1. **Authentication** — requests with no token or an invalid token are rejected (`401`); a valid token is accepted.
+2. **Authorization filtering** — an authenticated principal sees only objects it has a `viewer` path to: list endpoints filter via `listObjects` and direct reads `check`, so an object the principal cannot view is absent from lists and returns `403` on direct read. A grant written through the governed relationships API flips a previously-denied read to allowed.
+3. **Capability gating** — a deployment whose loaded packs declare neither `fhir` nor `cdm` returns `404` on `/fhir/*` and `/api/v1/cdm/*` and omits the `cdm*` GraphQL fields.
+4. **Open consent vocabulary** — the recordable consent purposes are deployment-configured (Section 7.3); a purpose outside the configured vocabulary is rejected, and a request omitting a purpose falls back to the configured default.
+
+Because these boot the stack in non-default modes (production, a distinct pack set, or a custom consent vocabulary), they are environment-gated and run as a dedicated continuous-integration job, separate from the standard functional suite.
 
 ---
 
