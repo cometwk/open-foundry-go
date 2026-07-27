@@ -14,12 +14,21 @@ RUN go mod download
 # in the builder (which has the Go toolchain); only the resulting static
 # binaries are copied into the runtime image — never the toolchain itself
 # (copying /usr/local/go added ~400MB to the final image as a permanent layer).
-# `go install pkg@version` resolves that tool's OWN go.mod, so its transitive
-# deps (x/net, grpc) are pinned by the tag we pick — bump the tag to pick up
-# their security fixes; our go.mod cannot override them.
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o /cel-evaluator . \
-    && GOBIN=/usr/local/bin CGO_ENABLED=0 go install github.com/grpc-ecosystem/grpc-health-probe@v0.4.53
+RUN CGO_ENABLED=0 GOOS=linux go build -o /cel-evaluator .
+
+# grpc-health-probe is built from a throwaway module rather than
+# `go install pkg@version`, which would resolve the TOOL's own go.mod and bake
+# its pinned transitive deps (v0.4.53 still ships grpc 1.81.1 —
+# GHSA-hrxh-6v49-42gf) with no way for us to override them. Inside a module we
+# can require the patched grpc explicitly; MVS then selects it for the build.
+# Keep the grpc version here in step with the one in go.mod.
+RUN mkdir -p /tools && cd /tools \
+    && go mod init tools \
+    && GOFLAGS=-mod=mod go get github.com/grpc-ecosystem/grpc-health-probe@v0.4.53 \
+    && GOFLAGS=-mod=mod go get google.golang.org/grpc@v1.82.1 \
+    && CGO_ENABLED=0 GOOS=linux go build -o /usr/local/bin/grpc-health-probe \
+       github.com/grpc-ecosystem/grpc-health-probe
 
 # Runtime stage
 FROM alpine:3.20
