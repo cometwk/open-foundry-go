@@ -206,6 +206,11 @@ services:
       OTEL_SERVICE_NAME: api-gateway
       DOMAIN_PACKS: ${DOMAIN_PACKS:-}
       DOMAIN_PACKS_EXTRA_DIRS: ${DOMAIN_PACKS_EXTRA_DIRS:-}
+      # Tenant for domain-pack boot seeds. Unset → 'system', which is isolated
+      # from ordinary request tenants, so seeded reference data is NOT visible to
+      # API reads under another tenant. Set to the tenant your requests use
+      # (e.g. `default`) when seeds should be readable through the API.
+      SEED_TENANT: ${SEED_TENANT:-}
       # OIDC fallback tenant for tokens without a `tenant_id` claim (production
       # auth only — see docker-compose.prod-test.yaml). Opt-in; unset → fail-closed
       # (claimless tokens rejected). Single-tenant deployments set OIDC_DEFAULT_TENANT.

@@ -107,6 +107,31 @@ silently diverge from the persisted schema. Recovery options:
 - **Bump the schema version** in your domain pack (preferred for real migrations).
 - **Wipe the volume** for throwaway/dev data: `docker compose down -v`.
 
+### Boot seeds land in the `system` tenant unless you set `SEED_TENANT`
+
+Domain-pack boot seeds (`seed:` entries in `pack.yaml`) are written under the
+tenant in `SEED_TENANT`, which defaults to **`system`** — deliberately isolated
+from ordinary request tenants. Every object is created and persisted correctly,
+but because reads are tenant-scoped, an API query running under a different
+tenant returns `totalCount: 0`. The boot log says `Seed: created N object(s)`,
+so this reads as "the seed worked but the data vanished".
+
+Set it to the tenant your API requests actually use when the seeded reference
+data is meant to be readable through the API:
+
+```bash
+SEED_TENANT=default   # deploy/.env — the integration stack uses this
+```
+
+The gateway logs the tenant it seeded under, and warns when `SEED_TENANT` is
+unset, so check the boot log first if seeded data appears to be missing.
+
+> Looking for the seeded rows directly? Object data lives in the relational
+> table `public.<snake_case_type>` (a column per property). The Apache AGE label
+> table holds **id-only vertices** (`{id, tenant_id}`) used for graph traversal —
+> so inspecting the AGE properties map will always look empty, for seeded and
+> runtime-created objects alike.
+
 ### Automated production-mode enforcement test
 
 `deploy/docker-compose.prod-test.yaml` is an override that runs the api-gateway

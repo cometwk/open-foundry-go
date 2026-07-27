@@ -9,6 +9,7 @@
  *   NODE_ENV             — 'production' enables real service wiring
  *   DOMAIN_PACKS_DIR     — Path to domain-packs directory (auto-detected if omitted)
  *   DOMAIN_PACKS         — Comma-separated or JSON array of pack names to load
+ *   SEED_TENANT          — Tenant for domain-pack boot seeds (default: 'system', isolated from request tenants)
  *   OIDC_ISSUER          — OIDC provider issuer URL (matches Helm configmap)
  *   OIDC_CLIENT_ID       — OIDC client ID
  *   OIDC_JWKS_URI        — JWKS endpoint override for non-Keycloak issuers
@@ -203,8 +204,13 @@ async function main(): Promise<void> {
   // request tenants); set SEED_TENANT to the request tenant (e.g. 'default') when
   // seeded reference data must be readable through the API — otherwise seeds are
   // invisible to API reads in a different tenant.
+  //
+  // Treat blank as unset: compose/Helm pass through unset knobs as an empty
+  // string (`SEED_TENANT: ${SEED_TENANT:-}`), and `?? 'system'` would not catch
+  // that — seeds would land under a nameless tenant no request could ever read.
+  const seedTenant = process.env['SEED_TENANT']?.trim();
   const seedCtx: RequestContext = {
-    tenantId: process.env['SEED_TENANT'] ?? 'system',
+    tenantId: seedTenant || 'system',
     actorId: 'boot',
   };
 
@@ -349,7 +355,20 @@ async function main(): Promise<void> {
     }
 
     if (seededObjects > 0 || seededLinks > 0 || skippedObjects > 0) {
-      logger.info(`Seed: created ${seededObjects} object(s) + ${seededLinks} link(s), skipped ${skippedObjects} existing`);
+      // Always name the tenant: seeds written under the isolating 'system'
+      // default are invisible to API reads in another tenant, which otherwise
+      // looks like "the seed silently did nothing".
+      logger.info(
+        `Seed: created ${seededObjects} object(s) + ${seededLinks} link(s), ` +
+        `skipped ${skippedObjects} existing (tenant '${seedCtx.tenantId}')`,
+      );
+      if (!seedTenant) {
+        logger.warn(
+          `Seed: SEED_TENANT is unset, so seeds were written under the isolated 'system' tenant — ` +
+          `API reads in another tenant will NOT see them. Set SEED_TENANT to the request tenant ` +
+          `(e.g. 'default') if this reference data should be readable through the API.`,
+        );
+      }
     }
   }
 

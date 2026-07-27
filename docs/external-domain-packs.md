@@ -211,8 +211,21 @@ map so links still wire up correctly. Duplicate links (same from/to) are silentl
 skipped.
 
 **Execution:** Seeds run through `ObjectManager` and `LinkManager` — full validation,
-event emission, and audit trail apply. The boot context uses `tenantId: 'system'`,
-`actorId: 'boot'`.
+event emission, and audit trail apply. The boot context uses `actorId: 'boot'` and
+`tenantId: $SEED_TENANT`, which defaults to `'system'`.
+
+> **Seeds are invisible to API reads unless `SEED_TENANT` matches your request
+> tenant.** `system` is deliberately isolated from ordinary request tenants, so
+> with the default the objects are created and stored correctly but a query under
+> another tenant returns `totalCount: 0`. Set `SEED_TENANT` to the tenant your
+> requests use (e.g. `default`) when seeded reference data should be readable
+> through the API. The gateway logs the seed tenant at boot and warns when
+> `SEED_TENANT` is unset.
+>
+> Inspecting the database directly? Object data lives in the relational table
+> `public.<snake_case_type>` (one column per property). The Apache AGE label table
+> holds **id-only vertices** (`{id, tenant_id}`) for graph traversal, so its
+> properties map looks empty for *every* object — seeded or runtime-created alike.
 
 Add seeds to `pack.yaml`:
 
@@ -250,6 +263,7 @@ store at boot.
 | `DOMAIN_PACKS` | Comma-separated pack names to activate. Omit to load all discovered packs. `core` is always included. | `core,nhs-acute,my-pack` |
 | `DOMAIN_PACKS_EXTRA_DIRS` | Path-separated directories to scan for external packs. Colon-separated on Linux, semicolon on Windows. Each entry is either a parent directory (subdirectories scanned) or a direct pack directory (containing `pack.yaml`). | `/external-packs:/opt/packs` |
 | `DOMAIN_PACKS_HOST_DIR` | Docker Compose only — host path mounted at `/external-packs` in the container. | `../../my-pack` |
+| `SEED_TENANT` | Tenant that `seed:` bootstrap data is written under. Default `system`, which is isolated from request tenants — seeds are stored but **not** readable by API queries in another tenant. Set to your request tenant to make seeded reference data visible. | `default` |
 
 **Governance is deployment policy, not NHS-fixed.** A non-NHS deployment sets its
 own consent vocabulary and grant roles rather than inheriting the NHS defaults:
@@ -469,6 +483,8 @@ warnings but do not prevent startup (to support gradual rollout).
 | Connector type warning | `connector` field doesn't match a registered plugin | Use `jdbc` or `rest`; custom plugins require code changes |
 | Dependency warning | Required pack not loaded or version too low | Load the dependency pack and check its version |
 | "pack.yaml: missing required 'name' field" | Malformed manifest | Ensure `name`, `version`, and `namespace` are present |
+| Boot log says `Seed: created N object(s)` but API queries return `totalCount: 0` | Seeds were written under the default `system` tenant, which is isolated from request tenants | Set `SEED_TENANT` to the tenant your API requests use (e.g. `default`) and re-seed |
+| Seeded objects look empty in the database | Inspecting the Apache AGE label table, whose vertices are id-only by design | Read the relational table `public.<snake_case_type>` — one column per property |
 
 ## Known Limitations
 
