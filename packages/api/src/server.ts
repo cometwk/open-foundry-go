@@ -428,6 +428,13 @@ async function main(): Promise<void> {
   // ward.assigned) for the /api/v1/relationships grant API (Epic A1).
   const grantAllowlist = buildGrantAllowlist(fgaModelJson);
 
+  // Fail fast when the merged model lacks a relation the runtime will check.
+  // A pack's permissions/*.fga REPLACES the generated type block, so an override
+  // that omits e.g. `viewer` silently removes it — every read then hits an
+  // OpenFGA 400 and surfaced as a retryable 500 (issue #3). Catch it at boot,
+  // naming the type and relation, instead of at request time.
+  assertFgaModelCoverage(fgaModelJson, schema, isDev);
+
   // Deployment policy: which platform roles may grant relationships / record
   // consent. Generic default is `admin` only; an NHS deployment broadens these
   // via env (e.g. RELATIONSHIP_GRANTER_ROLES=admin,nurse_in_charge) rather than
@@ -1202,6 +1209,90 @@ function buildLinkTupleMap(
  * Extracts verb from PascalCase name, finds first object-typed param.
  * Uses snake_case for FGA object types (matching OpenFGA codegen convention).
  */
+/**
+ * Verify the merged OpenFGA model actually declares every relation the runtime
+ * will check, and fail fast (in production) when it does not.
+ *
+ * Two contracts a domain pack must satisfy, neither previously enforced:
+ *  - the read path checks `viewer` on every ObjectType (single read via `check`,
+ *    list via `listObjects`);
+ *  - each mapped action checks `can_<verb>` on its target type.
+ *
+ * A pack's `permissions/*.fga` override REPLACES the whole generated type block,
+ * so omitting a relation silently deletes it. OpenFGA then answers those checks
+ * with a 400 validation error, which reached callers as a retryable 500 on every
+ * read while writes kept working — the exact shape reported in issue #3.
+ *
+ * Dev mode warns instead of throwing: it runs an allow-all stub with no model
+ * pushed, so a model gap cannot actually break requests there.
+ */
+function assertFgaModelCoverage(
+  model: FgaAuthorizationModel,
+  schema: import('@openfoundry/odl').ParsedSchema,
+  isDev: boolean,
+): void {
+  const relationsByType = new Map<string, Set<string>>();
+  for (const td of model.type_definitions) {
+    relationsByType.set(td.type, new Set(Object.keys(td.relations ?? {})));
+  }
+
+  const guidance =
+    'A domain pack permissions/*.fga override REPLACES the generated type block, ' +
+    'so it must re-declare every relation the type needs.';
+
+  // Read-path coverage is fatal: without `viewer`, EVERY read of that type fails
+  // (a total outage for the type), which is the failure reported in issue #3.
+  const fatal: string[] = [];
+  for (const obj of schema.objectTypes) {
+    const fgaType = toSnakeCase(obj.name);
+    const relations = relationsByType.get(fgaType);
+    if (!relations) {
+      fatal.push(`type '${fgaType}' (ObjectType ${obj.name}) is absent from the model`);
+      continue;
+    }
+    if (!relations.has('viewer')) {
+      fatal.push(`type '${fgaType}' is missing relation 'viewer' (required by every read)`);
+    }
+  }
+
+  // Action-relation coverage warns rather than blocking boot: the blast radius is
+  // a single action rather than the whole read surface, and several bundled packs
+  // currently declare a differently-named relation than deriveActionAuthzMappings
+  // checks (e.g. aml `case` declares can_file_report, the runtime checks can_file).
+  // Those need per-pack semantic fixes; surface them loudly rather than making
+  // existing deployments unbootable.
+  const warnings: string[] = [];
+  for (const [actionName, mapping] of deriveActionAuthzMappings(schema)) {
+    const relations = relationsByType.get(mapping.objectType);
+    if (relations && !relations.has(mapping.relation)) {
+      warnings.push(
+        `type '${mapping.objectType}' is missing relation '${mapping.relation}' ` +
+        `(checked when executing action ${actionName}) — that action will be denied`,
+      );
+    }
+  }
+
+  if (warnings.length > 0) {
+    logger.warn(
+      `Authorization model: action relations are missing, so these actions are denied:\n` +
+      `${warnings.map(w => `  - ${w}`).join('\n')}\n${guidance}`,
+    );
+  }
+
+  if (fatal.length === 0) return;
+
+  const detail = fatal.map(p => `  - ${p}`).join('\n');
+  if (isDev) {
+    logger.warn(
+      `Authorization model coverage gaps (allow-all stub in dev, but these WILL break production):\n${detail}\n${guidance}`,
+    );
+    return;
+  }
+  throw new Error(
+    `FATAL: the OpenFGA model is missing relations the runtime checks:\n${detail}\n${guidance}`,
+  );
+}
+
 function deriveActionAuthzMappings(
   schema: import('@openfoundry/odl').ParsedSchema,
 ): Map<string, ActionAuthzMapping> {

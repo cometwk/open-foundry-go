@@ -6,13 +6,44 @@
  * field-level redaction, and permission batching.
  */
 
-import { getTracer, withSpan } from "@openfoundry/observability";
+import { getTracer, withSpan, createLogger } from "@openfoundry/observability";
 
 import type {
   FieldPermissionConfig,
   RedactionResult,
 } from "./types.js";
 import { AuthorizationError } from "./types.js";
+
+const authzLogger = createLogger("authorization-service");
+
+/**
+ * True when OpenFGA rejected the request because the relation is not defined on
+ * the type in the loaded authorization model (HTTP 400 validation_error, e.g.
+ * `relation 'enzyme#viewer' not found`).
+ *
+ * This means the deployed model is missing a relation the runtime needs — a
+ * configuration defect, most often a domain pack whose `permissions/*.fga`
+ * override omitted a relation. It is permanent, so it must not be reported as a
+ * retryable server error.
+ */
+function isUndefinedRelationError(error: unknown): boolean {
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  return message.includes("not found") && message.includes("relation");
+}
+
+/** Warn once per relation+type so a model gap is visible without flooding logs. */
+const reportedUndefinedRelations = new Set<string>();
+function logUndefinedRelation(relation: string, target: string, error: unknown): void {
+  const key = `${relation}@${target.split(":")[0]}`;
+  if (reportedUndefinedRelations.has(key)) return;
+  reportedUndefinedRelations.add(key);
+  authzLogger.error(
+    { relation, target, err: error instanceof Error ? error.message : String(error) },
+    `Authorization model is missing relation '${relation}' for '${target.split(":")[0]}' — ` +
+      `denying access. Declare it in the domain pack's permissions/*.fga (a pack override ` +
+      `REPLACES the generated type block, so it must re-declare every relation the type needs).`,
+  );
+}
 
 const tracer = getTracer("security", "authz");
 
@@ -106,6 +137,14 @@ export class AuthorizationService {
         });
         return result.allowed === true;
       } catch (error: unknown) {
+        // A relation the model does not define is a deployment/model defect, not
+        // a transient failure: OpenFGA answers with a 400 validation error, which
+        // would otherwise surface as a RETRYABLE 500 on every read. Fail closed
+        // (deny) so a model gap degrades to "no access" rather than an outage.
+        if (isUndefinedRelationError(error)) {
+          logUndefinedRelation(relation, resource, error);
+          return false;
+        }
         throw this.wrapError("CHECK_FAILED", error);
       }
     });
@@ -132,6 +171,12 @@ export class AuthorizationService {
         });
         return result.objects ?? [];
       } catch (error: unknown) {
+        // Same model-gap handling as check(): an undefined relation yields an
+        // empty authorized set (deny-all) instead of a retryable 500.
+        if (isUndefinedRelationError(error)) {
+          logUndefinedRelation(relation, type, error);
+          return [];
+        }
         throw this.wrapError("LIST_OBJECTS_FAILED", error);
       }
     });
