@@ -251,8 +251,49 @@ type widget
 
 Permission files are merged into the base OpenFGA model generated from the ODL schema.
 Merging is type-level, last-wins — if the base model already defines a `widget` type,
-the pack's definition replaces it entirely. The merged model is POSTed to the OpenFGA
+the pack's definition **replaces it entirely**. The merged model is POSTed to the OpenFGA
 store at boot.
+
+#### What every type must declare
+
+Because the override replaces the whole type block, it must re-declare every
+relation the runtime checks — the generated `viewer`/`editor` are *not* merged back in:
+
+| Relation | Required on | Checked by |
+|----------|-------------|------------|
+| `viewer` | **every ObjectType** | every read — `check` for a single object, `listObjects` for lists |
+| `can_<verb>` | each ActionType's target type | the action pipeline before the action runs |
+
+Omitting `viewer` does not restrict access — it **breaks reads entirely**. OpenFGA
+rejects a check against an undefined relation with a `400 validation_error`, which
+previously surfaced as a retryable `500` on every read while writes kept working.
+
+This is now enforced rather than discovered at runtime:
+
+- **Missing `viewer` is fatal in production** — the gateway refuses to boot and names
+  the offending type. (Development only warns: it runs an allow-all stub with no model
+  pushed, so the gap cannot break requests there.)
+- **A missing `can_<verb>` logs a warning at boot** naming the action, which is denied
+  until the relation exists.
+- At runtime, an undefined relation is treated as a **deny** rather than an error, so a
+  model gap degrades to no-access instead of an outage.
+
+#### Naming the action permission relation
+
+The `can_<verb>` name is derived from the ActionType name by stripping words that match
+ObjectType names — a heuristic whose output depends on which types exist. Adding an
+unrelated ObjectType can therefore rename an existing relation (`TransferWard` became
+`can_transfer_ward` once a `Transfer` ObjectType was introduced).
+
+Declare it explicitly whenever the derivation is ambiguous, and the schema becomes the
+single source of truth for both the generated model and the runtime check:
+
+```graphql
+type TransferWard @actionType(permission: "can_transfer") {
+  patient: Patient! @param
+  toWard: Ward! @param
+}
+```
 
 ## Configuration
 
@@ -485,6 +526,8 @@ warnings but do not prevent startup (to support gradual rollout).
 | "pack.yaml: missing required 'name' field" | Malformed manifest | Ensure `name`, `version`, and `namespace` are present |
 | Boot log says `Seed: created N object(s)` but API queries return `totalCount: 0` | Seeds were written under the default `system` tenant, which is isolated from request tenants | Set `SEED_TENANT` to the tenant your API requests use (e.g. `default`) and re-seed |
 | Seeded objects look empty in the database | Inspecting the Apache AGE label table, whose vertices are id-only by design | Read the relational table `public.<snake_case_type>` — one column per property |
+| Reads fail while writes succeed (`CHECK_FAILED` / `relation ... not found`) | The pack's `.fga` override replaced the generated type block without re-declaring `viewer` | Declare `viewer` on the type; production boot now refuses to start and names it |
+| An action is always denied in production | The model declares a different `can_<verb>` than the runtime checks | Check the boot warning naming the action, then declare the name explicitly via `@actionType(permission: "...")` |
 
 ## Known Limitations
 
@@ -499,11 +542,19 @@ config is well-formed and uses a known plugin type, but no data ingestion occurs
 ### Permission overrides replace entire types
 
 `mergeOpenFGAOverrides` operates at type-level granularity. If a pack's `.fga` file
-defines a type that already exists in the auto-generated model (e.g. `type user`),
-the pack's definition **replaces the entire type**, including all relations generated
-from the ODL schema. To avoid losing auto-generated relations, override files should
-only define types that are new to the pack — not types that the ODL compiler already
-generates.
+defines a type that already exists in the auto-generated model, the pack's definition
+**replaces the entire type**, including all relations generated from the ODL schema.
+
+Overriding a generated type is the normal case (it is how a pack attaches its own
+roles), so the rule is not "avoid it" — it is that the override must re-declare every
+relation the runtime checks, chiefly `viewer` and each action's `can_<verb>`. See
+[What every type must declare](#what-every-type-must-declare).
+
+This is no longer silent: a missing `viewer` stops production boot with the offending
+type named, a missing `can_<verb>` warns at boot, and an undefined relation is treated
+as a deny at runtime rather than erroring. Relation-level merging was considered and
+rejected — inheriting generated relations into a hand-written authorization model would
+silently grant access paths the pack author never wrote.
 
 ### Semver constraints
 
