@@ -119,6 +119,14 @@ export interface LinkTypeDirective {
 
 export interface ActionTypeDirective {
   kind: 'actionType';
+  /**
+   * Explicit OpenFGA permission relation checked before this action runs
+   * (e.g. `can_transfer`). Optional: when omitted the name is derived from the
+   * action name. Declare it when the derivation is ambiguous — the fallback
+   * strips words matching ObjectType names, so introducing an unrelated
+   * ObjectType can otherwise rename an existing relation.
+   */
+  permission?: string;
 }
 
 export interface FunctionDirective {

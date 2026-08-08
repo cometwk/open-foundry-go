@@ -37,6 +37,7 @@ type alert
     define bsa_officer: [user]
     define viewer: compliance_analyst or compliance_officer or assigned_to or bsa_officer
     define can_investigate: compliance_analyst or compliance_officer
+    define can_assign: compliance_analyst or compliance_officer
     define can_escalate: compliance_officer
 
 type case

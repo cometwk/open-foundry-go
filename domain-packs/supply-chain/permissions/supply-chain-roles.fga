@@ -13,6 +13,7 @@ type supplier
   relations
     define viewer: [user]
     define editor: [user]
+    define can_create: editor
 
 type product
   relations

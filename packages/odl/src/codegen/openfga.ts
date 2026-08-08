@@ -79,6 +79,19 @@ function getActionTargetType(action: ActionType): string | undefined {
  * e.g., "TransferWard" → verb is "Transfer" → "can_transfer"
  * e.g., "DischargePatient" → verb is "Discharge" → "can_discharge"
  */
+export function actionPermissionRelation(
+  action: { name: string; directives: readonly { kind: string; permission?: string }[] },
+  objectTypeNames: Set<string>,
+): string {
+  // An explicitly declared name is authoritative — the derivation below is a
+  // convenience, and its output depends on which ObjectTypes happen to exist.
+  const declared = action.directives.find(
+    (d): d is { kind: string; permission?: string } => d.kind === 'actionType',
+  )?.permission;
+  if (declared) return declared;
+  return actionToPermissionName(action.name, '', objectTypeNames);
+}
+
 function actionToPermissionName(
   actionName: string,
   _targetTypeName: string,
@@ -204,7 +217,7 @@ function generateTypeRelations(
   // Generate action-based permission relations
   const actions = actionsByTarget.get(obj.name) ?? [];
   for (const action of actions) {
-    const permName = actionToPermissionName(action.name, obj.name, objectTypeNames);
+    const permName = actionPermissionRelation(action, objectTypeNames);
 
     // Determine who can perform this action:
     // - Look for a "clinician" or similar role relation already defined

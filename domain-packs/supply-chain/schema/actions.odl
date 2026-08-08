@@ -5,7 +5,7 @@
 
 extend schema @namespace(name: "supply.chain", version: "0.1.0")
 
-type CreateOrder @actionType {
+type CreateOrder @actionType(permission: "can_create") {
   supplier: Supplier! @param
   product: Product! @param
   orderNumber: String! @param
@@ -16,7 +16,7 @@ type CreateOrder @actionType {
   notes: String @param
 }
 
-type ShipOrder @actionType {
+type ShipOrder @actionType(permission: "can_ship") {
   order: PurchaseOrder! @param
   origin: Facility! @param
   destination: Facility! @param
@@ -35,7 +35,7 @@ type ReceiveShipment @actionType {
   stockLevel: StockLevel! @param
 }
 
-type CancelOrder @actionType {
+type CancelOrder @actionType(permission: "can_cancel") {
   order: PurchaseOrder! @param
   reason: String @param
 }

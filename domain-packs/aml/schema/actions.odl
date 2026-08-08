@@ -22,7 +22,7 @@ type OpenCase @actionType {
   summary: String @param
 }
 
-type AssignAlertToCase @actionType {
+type AssignAlertToCase @actionType(permission: "can_assign") {
   alert: Alert! @param
   investigationCase: Case! @param
 }
@@ -40,7 +40,7 @@ type FileReport @actionType {
   reportingEntity: String! @param
 }
 
-type SubmitReport @actionType {
+type SubmitReport @actionType(permission: "can_submit") {
   sar: SuspiciousActivityReport! @param
   investigationCase: Case! @param
 }

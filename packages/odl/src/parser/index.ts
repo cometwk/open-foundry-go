@@ -346,9 +346,11 @@ function extractTypeDirectives(directives: readonly DirectiveNode[] | undefined)
           cardinality: (getEnumArg(d, 'cardinality') ?? 'MANY_TO_MANY') as Cardinality,
         });
         break;
-      case 'actionType':
-        result.push({ kind: 'actionType' });
+      case 'actionType': {
+        const permission = getStringArg(d, 'permission');
+        result.push(permission ? { kind: 'actionType', permission } : { kind: 'actionType' });
         break;
+      }
       case 'function':
         result.push({
           kind: 'function',

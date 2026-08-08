@@ -19,7 +19,7 @@ type DischargePatient @actionType {
   notes: String @param
 }
 
-type TransferWard @actionType {
+type TransferWard @actionType(permission: "can_transfer") {
   patient: Patient! @param
   toWard: Ward! @param
   toBed: Bed @param

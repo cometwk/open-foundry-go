@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { generateOpenFGASchema, mergeOpenFGAOverrides } from '@openfoundry/odl';
+import { generateOpenFGASchema, mergeOpenFGAOverrides, actionPermissionRelation } from '@openfoundry/odl';
 import { fgaDslToJson } from '../server.js';
 import type { FgaTypeDef } from '../server.js';
 import { loadDomainPacks } from '../schema-loader.js';
@@ -122,5 +122,42 @@ describe('merged FGA model is OpenFGA-valid (production push guard)', () => {
       Object.keys(t.relations ?? {}).filter(r => FGA_RESERVED.includes(r)).map(r => `${t.type}#${r}`),
     );
     expect(offenders).toEqual([]);
+  });
+});
+
+describe('action permission relations are declared by the merged model', () => {
+  // Regression: the runtime derived can_<firstWord> while the ODL generator
+  // stripped words matching ObjectType names, so adding a `Transfer` ObjectType
+  // silently renamed TransferWard's relation and the action was denied in
+  // production. Both sides now use actionPermissionRelation(); this pins that
+  // every bundled pack's model actually declares what the runtime will check.
+  it.each([
+    ['nhs-acute', ['core', 'nhs-acute']],
+    ['aml', ['core', 'aml']],
+    ['supply-chain', ['core', 'supply-chain']],
+  ])('%s: every action relation exists on its target type', async (_name, packs) => {
+    const { parsed } = await loadDomainPacks(DOMAIN_PACKS_DIR, packs as string[]);
+    const { permissionOverrides } = await loadDomainPacks(DOMAIN_PACKS_DIR, packs as string[]);
+    const dsl = permissionOverrides.length > 0
+      ? mergeOpenFGAOverrides(generateOpenFGASchema(parsed), permissionOverrides)
+      : generateOpenFGASchema(parsed);
+    const types = fgaDslToJson(dsl).type_definitions as FgaTypeDef[];
+    const relationsByType = new Map(types.map(t => [t.type, new Set(Object.keys(t.relations ?? {}))]));
+
+    const objectTypeNames = new Set(parsed.objectTypes.map(o => o.name));
+    const objectTypeSet = new Set(parsed.objectTypes.map(o => o.name));
+    const missing: string[] = [];
+    for (const action of parsed.actionTypes) {
+      const target = action.fields
+        .filter(f => f.directives.some(d => d.kind === 'param'))
+        .find(f => objectTypeSet.has(f.type.name));
+      if (!target) continue;
+      const fgaType = target.type.name.replace(/([a-z\d])([A-Z])/g, '$1_$2').toLowerCase();
+      const relation = actionPermissionRelation(action, objectTypeNames);
+      if (!relationsByType.get(fgaType)?.has(relation)) {
+        missing.push(`${fgaType}#${relation} (${action.name})`);
+      }
+    }
+    expect(missing).toEqual([]);
   });
 });

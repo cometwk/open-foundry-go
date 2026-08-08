@@ -69,7 +69,7 @@ import {
 } from './config.js';
 import type { ActionAuthzMapping } from './config.js';
 import { loadDomainPacks } from './schema-loader.js';
-import { generateOpenFGASchema, mergeOpenFGAOverrides, InMemorySchemaRegistry } from '@openfoundry/odl';
+import { generateOpenFGASchema, mergeOpenFGAOverrides, actionPermissionRelation, InMemorySchemaRegistry } from '@openfoundry/odl';
 import type { SchemaRegistry } from '@openfoundry/odl';
 import { recordSchemaVersion } from './schema-registry-boot.js';
 import { SlidingWindowRateLimiter, RedisRateLimiter } from './governance/index.js';
@@ -1299,12 +1299,14 @@ function deriveActionAuthzMappings(
   const mappings = new Map<string, ActionAuthzMapping>();
   const objectTypeNames = new Set(schema.objectTypes.map(o => o.name));
 
+  // Relation names come from @openfoundry/odl so the runtime checks exactly what
+  // the generated model declares. Deriving them independently here is what let
+  // the two drift (the generator strips words matching ObjectType names, so
+  // adding a `Transfer` ObjectType silently renamed TransferWard's relation from
+  // can_transfer to can_transfer_ward while this checked can_transfer).
+  const objectTypeNamesForPerm = new Set(schema.objectTypes.map(o => o.name));
   for (const action of schema.actionTypes) {
-    // Extract verb: "AdmitPatient" → "admit", "DischargePatient" → "discharge", "TransferWard" → "transfer"
-    const verbMatch = action.name.match(/^([A-Z][a-z]+)/);
-    if (!verbMatch) continue;
-    const verb = verbMatch[1]!.toLowerCase();
-    const relation = `can_${verb}`;
+    const relation = actionPermissionRelation(action, objectTypeNamesForPerm);
 
     // Find first @param field that references an ObjectType (the authorization target)
     const paramFields = action.fields.filter(f =>

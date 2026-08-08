@@ -13,6 +13,7 @@ export { diff, classify, reverseDiff } from './diff/index.js';
 export { InMemorySchemaRegistry } from './registry/index.js';
 export {
   generateOpenFGASchema,
+  actionPermissionRelation,
   generateOpenFGAModel,
   renderOpenFGADSL,
   mergeOpenFGAOverrides,
