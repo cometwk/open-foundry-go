@@ -285,10 +285,10 @@ func TestEngine_DeleteObject_MissingId_TypedNotFoundBeforeWrite(t *testing.T) {
 
 // TestEngine_DeleteObject_SoftMode_Succeeds is the Phase 3 flip of the
 // Phase 2 "bubbles ErrUnimplemented" contract: soft delete now stamps
-// _deletedAt via the SPI memory provider (U2) instead of rejecting. The
-// read-path mask (GetObject surfaces ErrObjectNotFound for soft-deleted)
-// lands in U3 with a dedicated assertion; this U2 test verifies the Engine
-// verb no longer rejects soft mode, leaving the masking contract for U3.
+// _deletedAt via the SPI memory provider (U2) instead of rejecting, and
+// the U3 read-path mask hides the soft-deleted object as ErrObjectNotFound
+// when read through Engine.GetObject. Together U2+U3 complete AE2's
+// Engine-level soft-delete visibility contract.
 func TestEngine_DeleteObject_SoftMode_Succeeds(t *testing.T) {
 	e := newEngine(t)
 	ctx := tenantCtx("tnt")
@@ -297,9 +297,12 @@ func TestEngine_DeleteObject_SoftMode_Succeeds(t *testing.T) {
 	if err := e.DeleteObject(ctx, "Supplier", id, "soft"); err != nil {
 		t.Fatalf("DeleteObject(soft) err = %v, want nil (U2 soft delete implemented)", err)
 	}
-	// U3 will assert GetObject-after-soft-delete surfaces ErrObjectNotFound
-	// (the read-path mask). For U2, the Engine verb forwarding to the SPI
-	// is the only behavior under test; do not over-assert here.
+	// U3 read-path mask: Engine.GetObject surfaces the SPI's typed
+	// not-found, identical to a hard-deleted or missing object. Callers
+	// cannot distinguish "soft-deleted" from "never was" (R3 design).
+	if _, err := e.GetObject(ctx, "Supplier", id); !errors.Is(err, spi.ErrObjectNotFound) {
+		t.Errorf("Engine.GetObject after soft delete err = %v, want ErrObjectNotFound (U3 mask)", err)
+	}
 }
 
 // recordingProvider is a thin decorator over a StorageProvider that

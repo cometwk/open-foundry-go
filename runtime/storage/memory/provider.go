@@ -198,13 +198,16 @@ func (p *Provider) CreateObject(ctx spi.RequestContext, typ string, properties m
 	return out, nil
 }
 
-// GetObject reads by (type, id). Cross-tenant reads hide as
-// ErrObjectNotFound so the caller cannot probe another tenant's ids.
+// GetObject reads by (type, id). Cross-tenant reads and soft-deleted
+// objects both hide as ErrObjectNotFound so the caller cannot probe
+// another tenant's ids or distinguish "deleted" from "never was".
+// QueryObjects (U4) honors options.IncludeDeleted to read soft-deleted
+// entries; this single-point read path always masks. Covers R3, AE2.
 func (p *Provider) GetObject(ctx spi.RequestContext, typ, id string) (spi.OntologyObject, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	obj, ok := p.objects[objectKey(typ, id)]
-	if !ok || obj["_tenantId"] != ctx.TenantID {
+	if !ok || obj["_tenantId"] != ctx.TenantID || obj["_deletedAt"] != nil {
 		return nil, fmt.Errorf("%w: %s/%s", spi.ErrObjectNotFound, typ, id)
 	}
 	return cloneObject(obj)
@@ -475,11 +478,16 @@ func (p *Provider) linkTypeDefinitionUnlocked(typ string) (fromType, toType stri
 
 // GetLink reads a link by (type, id). Cross-tenant reads are masked as
 // ErrLinkNotFound so the caller cannot probe another tenant's links.
+// Phase 3 does not soft-delete links (TS memory uses hard delete for
+// links; R3 explicitly defers link soft delete), but the _deletedAt
+// guard is symmetric with GetObject for safety and so that any future
+// link soft-delete path becomes a one-line wiring change rather than
+// a new mask surface.
 func (p *Provider) GetLink(ctx spi.RequestContext, typ, id string) (spi.OntologyLink, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	link, ok := p.links[linkKey(typ, id)]
-	if !ok || link["_tenantId"] != ctx.TenantID {
+	if !ok || link["_tenantId"] != ctx.TenantID || link["_deletedAt"] != nil {
 		return nil, fmt.Errorf("%w: %s/%s", spi.ErrLinkNotFound, typ, id)
 	}
 	return cloneLink(link)
