@@ -38,8 +38,21 @@ func TestCreateObject_ThenGet_RoundTrips(t *testing.T) {
 	if obj["_updatedAt"] == nil {
 		t.Errorf("CreateObject omitted _updatedAt")
 	}
-	if obj["_version"] != nil {
-		t.Errorf("CreateObject must not store _version in Phase 2, got %v", obj["_version"])
+	// Phase 3 (U1): CreateObject stamps authoritative _version:1. The
+// returned object is a JSON clone (cloneObject), so int survives as
+// float64 — accept either, matching the qty float64(3) convention and
+// engine.checkScalarType's float64-with-integer-magnitude handling.
+	switch v := obj["_version"].(type) {
+	case int:
+		if v != 1 {
+			t.Errorf("CreateObject _version = %d, want 1 (U1)", v)
+		}
+	case float64:
+		if v != 1 {
+			t.Errorf("CreateObject _version = %v, want 1 (U1)", v)
+		}
+	default:
+		t.Errorf("CreateObject _version has unexpected type %T = %v, want 1 (U1)", obj["_version"], obj["_version"])
 	}
 
 	got, err := p.GetObject(a, "Supplier", obj["_id"].(string))

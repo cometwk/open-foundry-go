@@ -124,6 +124,21 @@ func TestGetLink_RoundTripsAndStampsIds(t *testing.T) {
 	if got["_toId"] != pt["_id"] {
 		t.Errorf("GetLink _toId = %v, want %v", got["_toId"], pt["_id"])
 	}
+	// Phase 3 (U1): CreateLink stamps authoritative _version:1. JSON-clone
+	// round-trip decodes ints as float64 (matches the qty float64(3)
+	// convention); accept either representation.
+	switch v := got["_version"].(type) {
+	case int:
+		if v != 1 {
+			t.Errorf("GetLink _version = %d, want 1 (U1)", v)
+		}
+	case float64:
+		if v != 1 {
+			t.Errorf("GetLink _version = %v, want 1 (U1)", v)
+		}
+	default:
+		t.Errorf("GetLink _version has unexpected type %T = %v, want 1 (U1)", got["_version"], got["_version"])
+	}
 }
 
 func TestGetLink_Missing_ReturnsLinkNotFound(t *testing.T) {

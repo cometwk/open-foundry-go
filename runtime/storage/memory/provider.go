@@ -22,14 +22,20 @@ type Provider struct {
 	current int
 	objects map[string]spi.OntologyObject // type:id -> OntologyObject
 	links   map[string]spi.OntologyLink   // type:id -> OntologyLink
+	// versionHistory holds per-(type:id) snapshots of an object across
+	// create/update/soft-delete, oldest first. Read by GetObjectAtVersion
+	// and GetObjectAtTime (Phase 3 U2) and maintained by transaction journal
+	// rollback (U7). Links never push history (mirrors TS memory).
+	versionHistory map[string][]spi.OntologyObject
 }
 
 // New creates an empty memory provider.
 func New() *Provider {
 	return &Provider{
-		schemas: map[int]spi.OntologySchema{},
-		objects: map[string]spi.OntologyObject{},
-		links:   map[string]spi.OntologyLink{},
+		schemas:        map[int]spi.OntologySchema{},
+		objects:        map[string]spi.OntologyObject{},
+		links:          map[string]spi.OntologyLink{},
+		versionHistory: map[string][]spi.OntologyObject{},
 	}
 }
 
@@ -119,6 +125,36 @@ func systemTimestamps() (now any) {
 	return time.Now().UTC().Format(time.RFC3339Nano)
 }
 
+// cloneVersionSnapshot deep-copies an object for versionHistory storage.
+// It is the same JSON round-trip as cloneObject, named distinctly so the
+// reader sees the path-snapshots and the caller-facing return clones as
+// separate responsibilities (history snapshots are never returned unstripped
+// to callers; temporal reads re-clone them). Both functions honor the KTD-5
+// JSON-clone convention so numbers survive as float64 — callers comparing
+// _version must coerce (see objectVersionInt below, added in U2).
+func cloneVersionSnapshot(o spi.OntologyObject) (spi.OntologyObject, error) {
+	return cloneObject(o)
+}
+
+// pushVersionHistoryUnlocked appends a snapshot to the (type:id) history
+// slice. Caller MUST hold p.mu. Oldest-first ordering, matching the TS
+// memory provider's _versionHistory push order.
+func (p *Provider) pushVersionHistoryUnlocked(key string, snap spi.OntologyObject) {
+	p.versionHistory[key] = append(p.versionHistory[key], snap)
+}
+
+// popVersionHistoryUnlocked removes the most recent snapshot, used by
+// transaction rollback (U7) to undo a pushed update. Caller MUST hold p.mu.
+// Safe on empty history (rollback of a create also deletes the object, so
+// the matching pop is a no-op when history was never pushed for that key).
+func (p *Provider) popVersionHistoryUnlocked(key string) {
+	s := p.versionHistory[key]
+	if len(s) == 0 {
+		return
+	}
+	p.versionHistory[key] = s[:len(s)-1]
+}
+
 // CreateObject mints a UUIDv7 _id, stamps system fields, and stores by type:id.
 // Engine does per-type validation; the memory provider does not reimplement it.
 func (p *Provider) CreateObject(ctx spi.RequestContext, typ string, properties map[string]any) (spi.OntologyObject, error) {
@@ -131,6 +167,7 @@ func (p *Provider) CreateObject(ctx spi.RequestContext, typ string, properties m
 		"_tenantId":  ctx.TenantID,
 		"_createdAt": ts,
 		"_updatedAt": ts,
+		"_version":   1,
 	}
 	for k, v := range properties {
 		if isSystemField(k) {
@@ -138,7 +175,16 @@ func (p *Provider) CreateObject(ctx spi.RequestContext, typ string, properties m
 		}
 		obj[k] = v
 	}
-	p.objects[objectKey(typ, obj["_id"].(string))] = obj
+	key := objectKey(typ, obj["_id"].(string))
+	p.objects[key] = obj
+	// Phase 3 (U1): stamp authoritative _version:1 on create and push the
+	// initial snapshot into versionHistory. Update/soft-delete (U2) advance
+	// _version and push further snapshots; links deliberately skip history.
+	snap, err := cloneVersionSnapshot(obj)
+	if err != nil {
+		return nil, err
+	}
+	p.pushVersionHistoryUnlocked(key, snap)
 	out, err := cloneObject(obj)
 	if err != nil {
 		return nil, err
@@ -275,6 +321,7 @@ func (p *Provider) CreateLink(ctx spi.RequestContext, typ, fromID, toID string, 
 		"_toType":    toType,
 		"_createdAt": ts,
 		"_updatedAt": ts,
+		"_version":   1,
 	}
 	for k, v := range properties {
 		if k == "_engineLinkId" || isLinkSystemField(k) {

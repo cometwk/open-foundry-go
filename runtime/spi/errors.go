@@ -27,4 +27,18 @@ var (
 
 	// ErrInvalidLinkType signals an Engine-level link type rejection.
 	ErrInvalidLinkType = errors.New("openfoundry: invalid link type")
+
+	// ErrVersionConflict signals an UpdateObject/UpdateLink call whose
+	// expectedVersion does not match the stored object's current _version.
+	// Mirrors the TS VERSION_CONFLICT category. Phase 3 introduces version
+	// bookkeeping in the memory provider (R1); a nil expectedVersion skips
+	// the check and accepts any version.
+	ErrVersionConflict = errors.New("openfoundry: version conflict")
+
+	// ErrCardinalityViolation signals a CreateLink that would exceed the
+	// LinkTypeDefinition.Cardinality bound (counted over active, same-tenant,
+	// same-type links). Mirrors the TS CARDINALITY_VIOLATION category already
+	// listed in the package comment above. Phase 3 enforces this atomically
+	// under the memory provider's mutex (R4).
+	ErrCardinalityViolation = errors.New("openfoundry: cardinality violation")
 )
