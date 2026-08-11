@@ -3,6 +3,8 @@ package memory
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -81,15 +83,16 @@ func (p *Provider) HealthCheck() (spi.HealthStatus, error) {
 // Capabilities returns the Phase 3 capability surface. Phase 2 flipped
 // all flags false; Phase 3 enables them progressively (R9):
 //   - U2: SupportsTemporalQueries (GetObjectAtVersion/GetObjectAtTime)
+//   - U4: SupportsFullTextSearch (SearchObjects implemented)
 //
-// Remaining flags stay false until their units (U4 search, U5 bulk, U6
-// graph traversal, U7 transactions) land; they will flip in those units.
+// Remaining flags stay false until their units (U5 bulk, U6 graph
+// traversal, U7 transactions) land; they will flip in those units.
 // SupportsGeoQueries remains false for all of Phase 3.
 func (p *Provider) Capabilities() spi.StorageCapabilities {
 	return spi.StorageCapabilities{
 		SupportsTransactions:    false,
 		SupportsTemporalQueries: true,
-		SupportsFullTextSearch:  false,
+		SupportsFullTextSearch:  true,
 		SupportsGeoQueries:      false,
 		SupportsGraphTraversal:  false,
 		SupportsBulkMutations:   false,
@@ -517,4 +520,736 @@ func isSystemField(k string) bool {
 	default:
 		return false
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 U4: filter evaluator + QueryObjects + AggregateObjects + SearchObjects
+//
+// Mirrors the intent (not the AST) of the TS memory provider at
+// packages/storage-memory/src/memory-storage-provider.ts:70-119 (filter
+// evaluator), :545-581 (queryObjects), :583-707 (aggregateObjects),
+// :709-787 (searchObjects). The FilterExpression is a single self-
+// referential struct in Go (spi/ontology.go:121-128) — there are no
+// separate FieldPredicate/LogicalPredicate types. The evaluator dispatches
+// by filled field: leaf if Field+Operator are non-empty, logical if
+// And/Or/Not are populated. KTD-5 (JSON-clone convention) + KTD-8.
+// ---------------------------------------------------------------------------
+
+// evaluateFilter returns true if obj matches the single-struct
+// FilterExpression under KTD-8 dispatch: a leaf predicate has Field and
+// Operator populated; a logical predicate has And/Or/Not populated. An
+// empty FilterExpression (no Field, no Operator, no logical children) and
+// a nil filter both match everything, mirroring TS `evaluateFilter`
+// returning true at its outer default (`return true`).
+func evaluateFilter(obj map[string]any, f *spi.FilterExpression) bool {
+	if f == nil {
+		return true
+	}
+	// Leaf predicate: Field and Operator both non-empty.
+	if f.Field != "" && f.Operator != "" {
+		return evaluateFieldPredicate(obj, f)
+	}
+	// Logical predicate: one of And/Or/Not.
+	if len(f.And) > 0 {
+		for i := range f.And {
+			if !evaluateFilter(obj, &f.And[i]) {
+				return false
+			}
+		}
+		return true
+	}
+	if len(f.Or) > 0 {
+		for i := range f.Or {
+			if evaluateFilter(obj, &f.Or[i]) {
+				return true
+			}
+		}
+		return false
+	}
+	if f.Not != nil {
+		return !evaluateFilter(obj, f.Not)
+	}
+	// Empty filter matches everything (matches TS default).
+	return true
+}
+
+// evaluateFieldPredicate evaluates one leaf operator. The TS semantics
+// (memory-storage-provider.ts:80-105) are mirrored literally:
+//   - eq/neq: value equality (no coercion)
+//   - gt/gte/lt/lte: numeric-only, both sides must be numbers
+//   - in: pred.Value must be a slice/array containing val
+//   - contains/startsWith: string-only, both sides must be strings
+//   - exists: pred.Value truthy → must be present-non-null; falsy → must
+//     be nil/absent
+//   - unknown operator: false
+// The TS `===` semantics pair naturally with JSON-clone types —
+// float64 vs float64, string vs string, bool vs bool.
+func evaluateFieldPredicate(obj map[string]any, f *spi.FilterExpression) bool {
+	val, _ := obj[f.Field]
+	switch f.Operator {
+	case "eq":
+		return val == f.Value
+	case "neq":
+		return val != f.Value
+	case "gt", "gte", "lt", "lte":
+		a, okA := asFloat(val)
+		b, okB := asFloat(f.Value)
+		if !okA || !okB {
+			return false
+		}
+		switch f.Operator {
+		case "gt":
+			return a > b
+		case "gte":
+			return a >= b
+		case "lt":
+			return a < b
+		case "lte":
+			return a <= b
+		}
+	case "in":
+		slice, ok := toAnySlice(f.Value)
+		if !ok {
+			return false
+		}
+		for _, item := range slice {
+			if item == val {
+				return true
+			}
+		}
+		return false
+	case "contains":
+		s, ok1 := val.(string)
+		sub, ok2 := f.Value.(string)
+		if !ok1 || !ok2 {
+			return false
+		}
+		return strings.Contains(s, sub)
+	case "startsWith":
+		s, ok1 := val.(string)
+		pre, ok2 := f.Value.(string)
+		if !ok1 || !ok2 {
+			return false
+		}
+		return strings.HasPrefix(s, pre)
+	case "exists":
+		truthy, _ := f.Value.(bool)
+		if truthy {
+			return val != nil
+		}
+		return val == nil
+	}
+	return false
+}
+
+// asFloat coerces numeric JSON-clone values to float64. mirroring the TS
+// `typeof val === 'number'` gate: int / float64 / int64 all qualify; the
+// TS provider stores numbers as float64 via JSON clone, and so do we.
+// Non-numbers return ok=false so the caller (a comparison operator)
+// evaluates to false, matching TS.
+func asFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	}
+	return 0, false
+}
+
+// toAnySlice returns the any-element slice for the `in` operator's value.
+// JSON-decoded `in` predicates carry []any (Go's encoding/json produces
+// []interface{} for arbitrary JSON arrays), which is the wire shape SPI
+// consumers send. A nil or non-slice value returns ok=false so the
+// evaluator treats it as no-match, mirroring TS Array.isArray gate.
+func toAnySlice(v any) ([]any, bool) {
+	if v == nil {
+		return nil, false
+	}
+	s, ok := v.([]any)
+	return s, ok
+}
+
+// QueryObjects reads objects for the caller's tenant and type, applying
+// the FilterExpression, OrderBy (multi-key), pagination, and an
+// IncludeDeleted default of false. AsOfVersion/AsOfTime are best-effort:
+// when populated, the history is the source of snapshots and the live
+// map is NOT consulted; otherwise the live objects are scanned. Mirrors
+// TS queryObjects (memory-storage-provider.ts:545-581). Covers R5(query),
+// AE4.
+func (p *Provider) QueryObjects(ctx spi.RequestContext, typ string, filter spi.FilterExpression, options *spi.QueryOptions) (spi.ObjectPage, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Snapshot source: AsOf*-populated queries read history only
+	limit, offset, orderBy, includeDeleted := 100, 0, []spi.OrderBy{}, false
+	if options != nil {
+		if options.Limit > 0 {
+			limit = options.Limit
+		}
+		offset = options.Offset
+		orderBy = options.OrderBy
+		includeDeleted = options.IncludeDeleted
+	}
+
+	var candidates []map[string]any
+	asOf := options != nil && (options.AsOfVersion != nil || options.AsOfTime != nil)
+	if asOf {
+		candidates = p.historySnapshotUnlocked(ctx, typ, options)
+		// AsOf snapshots carry _deletedAt; for AsOf the includeDeleted
+		// semantics are: when false, drop soft-deleted snapshots. Mirror
+		// TS note (AsOf variants ignore includeDeleted locally but the
+		// plan's best-effort keeps the same default).
+	} else {
+		for key, obj := range p.objects {
+			if obj["_tenantId"] != ctx.TenantID || obj["_type"] != typ {
+				continue
+			}
+			if !includeDeleted && obj["_deletedAt"] != nil {
+				continue
+			}
+			_ = key
+			candidates = append(candidates, obj)
+		}
+	}
+
+	// Filter
+	matched := make([]map[string]any, 0, len(candidates))
+	for _, obj := range candidates {
+		if evaluateFilter(obj, &filter) {
+			matched = append(matched, obj)
+		}
+	}
+	totalCount := len(matched)
+
+	// Sort: reverse-iterate OrderBy so multi-key is leftmost-first
+	// (mirrors TS `[...orderBy].reverse()`). Comparator: nil sorts last.
+	if len(orderBy) > 0 {
+		for i := len(orderBy) - 1; i >= 0; i-- {
+			s := orderBy[i]
+			desc := strings.EqualFold(s.Direction, "desc")
+			cmp := s.Field
+			_ = cmp
+			sortSliceStable(matched, sortKey{field: s.Field, desc: desc})
+		}
+	}
+
+	// Pagination — enforce MAX_QUERY_LIMIT to prevent unbounded scans.
+	const maxQueryLimit = 1000
+	if limit > maxQueryLimit {
+		limit = maxQueryLimit
+	}
+	if offset > len(matched) {
+		offset = len(matched)
+	}
+	end := offset + limit
+	if end > len(matched) {
+		end = len(matched)
+	}
+	sliced := matched[offset:end]
+
+	items := make([]spi.OntologyObject, 0, len(sliced))
+	for _, obj := range sliced {
+		c, err := cloneObject(obj)
+		if err != nil {
+			return spi.ObjectPage{}, err
+		}
+		items = append(items, c)
+	}
+	return spi.ObjectPage{
+		Items:       items,
+		TotalCount:  totalCount,
+		HasNextPage: offset+limit < totalCount,
+	}, nil
+}
+
+// sortSliceStable runs sort.SliceStable with the given sortKey. Nil values
+// always sort after non-nil regardless of asc/desc, matching the TS
+// comparator at memory-storage-provider.ts:562-563.
+func sortSliceStable(items []map[string]any, key sortKey) {
+	sort.SliceStable(items, func(i, j int) bool {
+		a, b := items[i][key.field], items[j][key.field]
+		if a == b {
+			return false
+		}
+		if a == nil {
+			return false
+		}
+		if b == nil {
+			return true
+		}
+		cmp := compareLess(a, b)
+		if key.desc {
+			return !cmp
+		}
+		return cmp
+	})
+}
+
+type sortKey struct {
+	field string
+	desc  bool
+}
+
+// compareLess returns true if a < b for the JSON-clone types the memory
+// provider stores: numbers (coerced to float64), strings (lexicographic),
+// bools (false < true). Mixed-type comparisons return false (the caller's
+// equality check has already handled the a == b case). This is the Go
+// translation of the TS `aVal < bVal ? -1 : 1` block; Go's `==` on
+// mixed any types is type-aware (different types are unequal).
+func compareLess(a, b any) bool {
+	if af, ok := asFloat(a); ok {
+		if bf, ok := asFloat(b); ok {
+			return af < bf
+		}
+	}
+	if as, ok1 := a.(string); ok1 {
+		if bs, ok2 := b.(string); ok2 {
+			return as < bs
+		}
+	}
+	if ab, ok1 := a.(bool); ok1 {
+		if bb, ok2 := b.(bool); ok2 {
+			return !ab && bb
+		}
+	}
+	return false
+}
+
+// historySnapshotUnlocked returns the AsOf-history snapshots for (typ,*)
+// in the caller's tenant. AsOfVersion selects the snapshot at exactly that
+// version for every object; AsOfTime selects the newest at-or-before the
+// given time. The live map is NOT consulted — these reads see the world
+// as it was at the supplied marker. Caller MUST hold p.mu.
+func (p *Provider) historySnapshotUnlocked(ctx spi.RequestContext, typ string, options *spi.QueryOptions) []map[string]any {
+	var out []map[string]any
+	for key, hist := range p.versionHistory {
+		_ = key
+		// nearest-by-version / newest-by-time per object
+		var picked map[string]any
+		typMatch := false
+		if options.AsOfVersion != nil {
+			for _, snap := range hist {
+				if snap["_tenantId"] != ctx.TenantID {
+					continue
+				}
+				if snap["_type"] != typ {
+					continue
+				}
+				typMatch = true
+				if objectVersionInt(snap) == *options.AsOfVersion {
+					picked = snap
+					break
+				}
+			}
+		} else if options.AsOfTime != nil {
+			var newestTs time.Time
+			found := false
+			for _, snap := range hist {
+				if snap["_tenantId"] != ctx.TenantID {
+					continue
+				}
+				if snap["_type"] != typ {
+					continue
+				}
+				typMatch = true
+				tsStr, ok := snap["_updatedAt"].(string)
+				if !ok {
+					continue
+				}
+				ts, err := time.Parse(time.RFC3339Nano, tsStr)
+				if err != nil || ts.After(*options.AsOfTime) {
+					continue
+				}
+				if !found || ts.After(newestTs) {
+					picked = snap
+					newestTs = ts
+					found = true
+				}
+			}
+		}
+		if picked != nil {
+			out = append(out, picked)
+		} else if typMatch {
+			// AsOf history may legitimately exclude an object whose
+			// snapshot at that marker does not exist — mirror TS note
+			// "no snapshot matches" by omitting (intentionally empty).
+		}
+	}
+	return out
+}
+
+// AggregateObjects runs groupBy aggregations over non-soft-deleted,
+// tenant-scoped, type-matched objects. count/sum/avg/min/max. The TS
+// provider always excludes _deletedAt (no includeDeleted opport) —
+// mirrored. The function list is validated up-front so an invalid
+// function throws even when zero rows match (mirrors TS
+// memory-storage-provider.ts:589-594). Covers R5(aggregate), AE5.
+func (p *Provider) AggregateObjects(ctx spi.RequestContext, typ string, query spi.AggregateQuery) (spi.AggregateResult, error) {
+	if len(query.Fields) == 0 {
+		return spi.AggregateResult{}, fmt.Errorf("aggregate query must specify at least one field")
+	}
+	// Validate aggregate functions up-front (before grouping) so invalid
+	// fns throw even with zero rows — mirrors TS ALLOWED_FNS gate.
+	allowedFns := map[string]bool{"count": true, "sum": true, "avg": true, "min": true, "max": true}
+	for _, aggField := range query.Fields {
+		if !allowedFns[strings.ToLower(aggField.Fn)] {
+			return spi.AggregateResult{}, fmt.Errorf("invalid aggregate function: %s", aggField.Fn)
+		}
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// 1. Collect matching objects (tenant-scoped, type-matched, non-deleted).
+	var items []map[string]any
+	for _, obj := range p.objects {
+		if obj["_tenantId"] != ctx.TenantID || obj["_type"] != typ {
+			continue
+		}
+		if obj["_deletedAt"] != nil {
+			continue
+		}
+		if query.Filter != nil && !evaluateFilter(obj, query.Filter) {
+			continue
+		}
+		items = append(items, obj)
+	}
+
+	// 2. Group by groupBy fields. JSON-serialised group key, mirroring TS.
+	groupMap := map[string][]map[string]any{}
+	groupKeyMap := map[string]map[string]any{}
+	groupOrder := []string{}
+	for _, obj := range items {
+		keys := map[string]any{}
+		for _, field := range query.GroupBy {
+			v, ok := obj[field]
+			if !ok {
+				keys[field] = nil
+			} else {
+				keys[field] = v
+			}
+		}
+		gk := groupKeyJSON(keys)
+		if _, exists := groupMap[gk]; !exists {
+			groupMap[gk] = []map[string]any{}
+			groupKeyMap[gk] = keys
+			groupOrder = append(groupOrder, gk)
+		}
+		groupMap[gk] = append(groupMap[gk], obj)
+	}
+
+	// No groupBy with zero matches → single empty group, matching TS.
+	if len(groupOrder) == 0 {
+		gk := "{}"
+		groupMap[gk] = []map[string]any{}
+		groupKeyMap[gk] = map[string]any{}
+		groupOrder = append(groupOrder, gk)
+	}
+
+	// 3. Compute aggregates per group.
+	groups := make([]spi.AggregateGroup, 0, len(groupOrder))
+	for _, gk := range groupOrder {
+		groupItems := groupMap[gk]
+		keys := groupKeyMap[gk]
+		values := map[string]any{}
+		for _, aggField := range query.Fields {
+			fnLower := strings.ToLower(aggField.Fn)
+			alias := aggField.Alias
+			if alias == "" {
+				alias = aggField.Fn + "_" + aggField.Field
+			}
+			if fnLower == "count" {
+				if aggField.Field == "*" {
+					values[alias] = len(groupItems)
+				} else {
+					count := 0
+					for _, item := range groupItems {
+						v, ok := item[aggField.Field]
+						if ok && v != nil {
+							count++
+						}
+					}
+					values[alias] = count
+				}
+				continue
+			}
+			// sum, avg, min, max — only on numeric (non-nil) values.
+			var nums []float64
+			for _, item := range groupItems {
+				v, ok := item[aggField.Field]
+				if !ok || v == nil {
+					continue
+				}
+				if fv, ok := asFloat(v); ok {
+					nums = append(nums, fv)
+				}
+			}
+			if len(nums) == 0 {
+				values[alias] = nil
+				continue
+			}
+			switch fnLower {
+			case "sum":
+				s := 0.0
+				for _, v := range nums {
+					s += v
+				}
+				values[alias] = s
+			case "avg":
+				s := 0.0
+				for _, v := range nums {
+					s += v
+				}
+				values[alias] = s / float64(len(nums))
+			case "min":
+				m := nums[0]
+				for _, v := range nums[1:] {
+					if v < m {
+						m = v
+					}
+				}
+				values[alias] = m
+			case "max":
+				m := nums[0]
+				for _, v := range nums[1:] {
+					if v > m {
+						m = v
+					}
+				}
+				values[alias] = m
+			}
+		}
+		groups = append(groups, spi.AggregateGroup{Keys: keys, Values: values})
+	}
+
+	// 4. Apply ordering (group keys or aggregate values).
+	if len(query.OrderBy) > 0 {
+		for i := len(query.OrderBy) - 1; i >= 0; i-- {
+			s := query.OrderBy[i]
+			desc := strings.EqualFold(s.Direction, "desc")
+			sortGroupStable(groups, sortKey{field: s.Field, desc: desc})
+		}
+	}
+	totalGroups := len(groups)
+
+	// 5. Apply limit/offset.
+	offset := query.Offset
+	if offset > len(groups) {
+		offset = len(groups)
+	}
+	limit := query.Limit
+	if limit <= 0 {
+		limit = len(groups)
+	}
+	end := offset + limit
+	if end > len(groups) {
+		end = len(groups)
+	}
+	groups = groups[offset:end]
+
+	return spi.AggregateResult{Groups: groups, TotalGroups: totalGroups}, nil
+}
+
+// sortGroupStable sorts AggregateGroup entries by either group key or
+// aggregate value at the given field, with nil always sorting last.
+func sortGroupStable(groups []spi.AggregateGroup, key sortKey) {
+	sort.SliceStable(groups, func(i, j int) bool {
+		av, aok := groups[i].Keys[key.field]
+		if !aok {
+			av = groups[i].Values[key.field]
+		}
+		bv, bok := groups[j].Keys[key.field]
+		if !bok {
+			bv = groups[j].Values[key.field]
+		}
+		if av == bv {
+			return false
+		}
+		if av == nil {
+			return false
+		}
+		if bv == nil {
+			return true
+		}
+		cmp := compareLess(av, bv)
+		if key.desc {
+			return !cmp
+		}
+		return cmp
+	})
+}
+
+// groupKeyJSON is a stable JSON encoding of a group-key map. It sorts
+// the keys before encoding so two structurally identical maps produce
+// the same string regardless of map iteration order.
+func groupKeyJSON(m map[string]any) string {
+	ks := make([]string, 0, len(m))
+	for k := range m {
+		ks = append(ks, k)
+	}
+	sort.Strings(ks)
+	var sb strings.Builder
+	sb.WriteByte('{')
+	for i, k := range ks {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		sb.WriteByte('"')
+		sb.WriteString(k)
+		sb.WriteString("\":")
+		b, _ := json.Marshal(m[k])
+		sb.Write(b)
+	}
+	sb.WriteByte('}')
+	return sb.String()
+}
+
+// SearchObjects tokenises the query (lowercased whitespace split), scores
+// each tenant-scoped type-matched non-soft-deleted candidate by counting
+// token occurrences across the default (non-_, string-valued) fields or
+// the user-supplied Fields, and ranks by score descending. Highlights
+// push the entire field value (mirrors TS). Blank/whitespace-only query
+// returns an empty result. Always excludes soft-deleted (no includeDeleted
+// opport — TS has none). Covers R5(search), AE5.
+func (p *Provider) SearchObjects(ctx spi.RequestContext, typ string, query spi.SearchQuery) (spi.SearchResult, error) {
+	// Blank / whitespace-only query → empty (mirrors TS line 711-713).
+	if strings.TrimSpace(query.Query) == "" {
+		return spi.SearchResult{Hits: []spi.SearchHit{}, TotalCount: 0, HasNextPage: false}, nil
+	}
+	queryLower := strings.ToLower(query.Query)
+	terms := strings.Fields(strings.TrimSpace(queryLower))
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Candidate set: tenant + type + non-soft-deleted.
+	var candidates []map[string]any
+	for _, obj := range p.objects {
+		if obj["_tenantId"] != ctx.TenantID || obj["_type"] != typ {
+			continue
+		}
+		if obj["_deletedAt"] != nil {
+			continue
+		}
+		candidates = append(candidates, obj)
+	}
+
+	type scored struct {
+		hit        spi.SearchHit
+		idx        int // preserve insertion order for tie-stable sort
+	}
+	scoredHits := make([]scored, 0, len(candidates))
+	for i, obj := range candidates {
+		// Default fields = non-_, string-valued. User-supplied fields
+		// override (even if they are _-prefixed — only the user can ask
+		// for system fields explicitly).
+		var searchFields []string
+		if len(query.Fields) > 0 {
+			searchFields = query.Fields
+		} else {
+			for k, v := range obj {
+				if strings.HasPrefix(k, "_") {
+					continue
+				}
+				if _, ok := v.(string); ok {
+					searchFields = append(searchFields, k)
+				}
+			}
+		}
+
+		score := 0
+		highlights := map[string][]string{}
+		for _, field := range searchFields {
+			val, ok := obj[field]
+			if !ok {
+				continue
+			}
+			s, ok := val.(string)
+			if !ok {
+				continue
+			}
+			valLower := strings.ToLower(s)
+			for _, term := range terms {
+				idx := 0
+				count := 0
+				for {
+					pos := strings.Index(valLower[idx:], term)
+					if pos < 0 {
+						break
+					}
+					count++
+					idx += pos + len(term)
+					if idx > len(valLower) {
+						break
+					}
+				}
+				if count > 0 {
+					score += count
+					if _, exists := highlights[field]; !exists {
+						highlights[field] = []string{}
+					}
+					// TS pushes the entire field value, not a snippet.
+					highlights[field] = append(highlights[field], s)
+				}
+			}
+		}
+
+		if score == 0 {
+			continue
+		}
+		if query.Filter != nil && !evaluateFilter(obj, query.Filter) {
+			continue
+		}
+
+		objClone, err := cloneObject(obj)
+		if err != nil {
+			return spi.SearchResult{}, err
+		}
+		var hlOut map[string][]string
+		if len(highlights) > 0 {
+			hlOut = highlights
+		}
+		scoredHits = append(scoredHits, scored{
+			hit: spi.SearchHit{Object: objClone, Score: float64(score), Highlights: hlOut},
+			idx: i,
+		})
+	}
+
+	// Sort by score descending; ties keep pre-scored order (stable).
+	sort.SliceStable(scoredHits, func(i, j int) bool {
+		if scoredHits[i].hit.Score != scoredHits[j].hit.Score {
+			return scoredHits[i].hit.Score > scoredHits[j].hit.Score
+		}
+		return scoredHits[i].idx < scoredHits[j].idx
+	})
+
+	totalCount := len(scoredHits)
+	offset := query.Offset
+	if offset > totalCount {
+		offset = totalCount
+	}
+	limit := query.Limit
+	if limit <= 0 {
+		limit = totalCount
+	}
+	end := offset + limit
+	if end > totalCount {
+		end = totalCount
+	}
+	hits := make([]spi.SearchHit, 0, end-offset)
+	for i := offset; i < end; i++ {
+		hits = append(hits, scoredHits[i].hit)
+	}
+	return spi.SearchResult{
+		Hits:        hits,
+		TotalCount:  totalCount,
+		HasNextPage: offset+limit < totalCount,
+	}, nil
 }

@@ -348,18 +348,9 @@ func TestUnimplementedFloor_RemaingObjectSPI(t *testing.T) {
 		name string
 		fn   func() error
 	}{
-		{"QueryObjects", func() error {
-			_, err := p.QueryObjects(a, "Supplier", spi.FilterExpression{}, nil)
-			return err
-		}},
-		{"AggregateObjects", func() error {
-			_, err := p.AggregateObjects(a, "Supplier", spi.AggregateQuery{})
-			return err
-		}},
-		{"SearchObjects", func() error {
-			_, err := p.SearchObjects(a, "Supplier", spi.SearchQuery{})
-			return err
-		}},
+		// Phase 3 (U4): QueryObjects/AggregateObjects/SearchObjects
+		// implemented — removed from the ErrUnimplemented floor. Positive
+		// coverage lives in provider_query_test.go.
 		{"BulkMutate", func() error {
 			_, err := p.BulkMutate(a, spi.BulkMutationRequest{})
 			return err

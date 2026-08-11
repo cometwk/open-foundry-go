@@ -183,18 +183,9 @@ func TestConformance_ErrUnimplementedFloor(t *testing.T) {
 		name string
 		fn   func() error
 	}{
-		{"QueryObjects", func() error {
-			_, err := p.QueryObjects(ctx, "Supplier", spi.FilterExpression{}, nil)
-			return err
-		}},
-		{"AggregateObjects", func() error {
-			_, err := p.AggregateObjects(ctx, "Supplier", spi.AggregateQuery{})
-			return err
-		}},
-		{"SearchObjects", func() error {
-			_, err := p.SearchObjects(ctx, "Supplier", spi.SearchQuery{})
-			return err
-		}},
+		// Phase 3 (U4): QueryObjects/AggregateObjects/SearchObjects
+		// implemented — removed from the ErrUnimplemented floor. Positive
+		// coverage lives in runtime/storage/memory/provider_query_test.go.
 		{"BulkMutate", func() error {
 			_, err := p.BulkMutate(ctx, spi.BulkMutationRequest{})
 			return err
