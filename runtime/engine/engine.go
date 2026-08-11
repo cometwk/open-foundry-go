@@ -17,6 +17,7 @@ package engine
 import (
 	"fmt"
 
+	"github.com/openfoundry/runtime/internal/uuidv7"
 	"github.com/openfoundry/runtime/ir"
 	"github.com/openfoundry/runtime/spi"
 )
@@ -277,4 +278,69 @@ func isSystemField(k string) bool {
 		return true
 	}
 	return false
+}
+
+// CreateLink validates the link type exists in the held TBox, asserts
+// both endpoints are present objects via storage.GetObject (returning
+// a typed not-found before any write per AE6), mints a UUIDv7 link id,
+// and delegates to storage.CreateLink with _engineLinkId merged in.
+// Cardinality enforcement is deliberately skipped (Phase 3, with
+// GetLinks); the Engine never calls GetLinks here. Properties are
+// copied before mutation so the caller's map is not side-effected.
+func (e *Engine) CreateLink(ctx spi.RequestContext, typ, fromID, toID string, properties map[string]any) (spi.OntologyLink, error) {
+	linkDef := e.ontology.LinkByName(typ)
+	if linkDef == nil {
+		return nil, fmt.Errorf("%w: %s", spi.ErrInvalidLinkType, typ)
+	}
+	if _, err := e.storage.GetObject(ctx, linkDef.From, fromID); err != nil {
+		// Missing or cross-tenant endpoint both surface as
+		// ErrObjectNotFound from the SPI; bubble unchanged so the
+		// caller sees a typed not-found before any link write (AE6
+		// from side; same shape applies to the to side below).
+		return nil, err
+	}
+	if _, err := e.storage.GetObject(ctx, linkDef.To, toID); err != nil {
+		return nil, err
+	}
+	linkID := uuidv7.New()
+	// Copy so we never mutate the caller's map; same shape as the TS
+	// spread ...properties, { _engineLinkId }.
+	props := make(map[string]any, len(properties)+1)
+	for k, v := range properties {
+		props[k] = v
+	}
+	props["_engineLinkId"] = linkID
+	link, err := e.storage.CreateLink(ctx, typ, fromID, toID, props)
+	if err != nil {
+		return nil, err
+	}
+	// TODO(Phase 3): emitLinkCreated via event bus.
+	return link, nil
+}
+
+// GetLink is a pass-through read. The memory provider returns
+// spi.ErrLinkNotFound for both missing and cross-tenant links; the
+// Engine surfaces that as a typed not-found, matching TS LinkManager
+// .getLink's null-on-absent contract.
+func (e *Engine) GetLink(ctx spi.RequestContext, typ, linkID string) (spi.OntologyLink, error) {
+	link, err := e.storage.GetLink(ctx, typ, linkID)
+	if err != nil {
+		return nil, err
+	}
+	return link, nil
+}
+
+// DeleteLink reads the existing link first (returning a typed not-found
+// before any write per AE7), then issues a hard delete via SPI. Memory
+// removes the link from its map; subsequent GetLink returns not-found
+// (verified by the caller, not re-asserted here).
+func (e *Engine) DeleteLink(ctx spi.RequestContext, typ, linkID string) error {
+	if _, err := e.storage.GetLink(ctx, typ, linkID); err != nil {
+		return err
+	}
+	if err := e.storage.DeleteLink(ctx, typ, linkID); err != nil {
+		return err
+	}
+	// TODO(Phase 3): emitLinkDeleted via event bus.
+	return nil
 }

@@ -295,15 +295,18 @@ func TestEngine_DeleteObject_SoftMode_BubblesUnimplemented(t *testing.T) {
 }
 
 // recordingProvider is a thin decorator over a StorageProvider that
-// counts Create/Update/Delete calls so tests can prove the Engine
-// rejects before touching storage. It embeds the underlying memory
-// provider so all other SPI methods pass through unchanged.
+// counts Create/Update/Delete Object (and Create/Delete Link) calls so
+// tests can prove the Engine rejects before touching storage. It
+// embeds the underlying memory provider so all other SPI methods pass
+// through unchanged.
 type recordingProvider struct {
 	spi.UnimplementedStorageProvider
-	inner       spi.StorageProvider
-	createCalls int
-	updateCalls int
-	deleteCalls int
+	inner           spi.StorageProvider
+	createCalls     int
+	updateCalls     int
+	deleteCalls     int
+	createLinkCalls int
+	deleteLinkCalls int
 }
 
 func (r *recordingProvider) ApplySchema(ctx spi.RequestContext, s spi.OntologySchema) (spi.MigrationResult, error) {
@@ -326,6 +329,17 @@ func (r *recordingProvider) UpdateObject(ctx spi.RequestContext, typ, id string,
 func (r *recordingProvider) DeleteObject(ctx spi.RequestContext, typ, id, mode string) error {
 	r.deleteCalls++
 	return r.inner.DeleteObject(ctx, typ, id, mode)
+}
+func (r *recordingProvider) CreateLink(ctx spi.RequestContext, typ, fromID, toID string, p map[string]any) (spi.OntologyLink, error) {
+	r.createLinkCalls++
+	return r.inner.CreateLink(ctx, typ, fromID, toID, p)
+}
+func (r *recordingProvider) GetLink(ctx spi.RequestContext, typ, linkID string) (spi.OntologyLink, error) {
+	return r.inner.GetLink(ctx, typ, linkID)
+}
+func (r *recordingProvider) DeleteLink(ctx spi.RequestContext, typ, linkID string) error {
+	r.deleteLinkCalls++
+	return r.inner.DeleteLink(ctx, typ, linkID)
 }
 
 // Compile-time assertion: Engine's verbs operate against the
