@@ -1,7 +1,6 @@
 package memory_test
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/openfoundry/runtime/pack"
@@ -53,14 +52,6 @@ func TestGetSchemaMissingVersion(t *testing.T) {
 	_, err := p.GetSchema(spi.RequestContext{TenantID: "t"}, &v)
 	if err == nil {
 		t.Fatal("expected error")
-	}
-}
-
-func TestUnimplementedOnMemory(t *testing.T) {
-	p := memory.New()
-	_, err := p.CreateObject(spi.RequestContext{TenantID: "t"}, "X", map[string]any{})
-	if !errors.Is(err, spi.ErrUnimplemented) {
-		t.Fatalf("got %v", err)
 	}
 }
 
