@@ -1,10 +1,10 @@
 // Package e2e holds the supply-chain Gold Path integration: load the
 // real domain pack, project to a storage schema, apply it through the
-// memory provider, then walk the six implemented verbs end-to-end
+// memory provider, then walk the Phase 3 verb surface end-to-end
 // against the actual ontology types (Supplier, Product, and the
-// SuppliesProduct link). This is the Phase 2 acceptance for F7 / R16 /
-// AE9 — the single test that proves the Phase 1 → Phase 2 pipeline is
-// wired correctly and the seven implemented SPI methods return zero
+// SuppliesProduct link). This is the Phase 3 acceptance for F8 / R11 /
+// AE11 — the single test that proves the Phase 1 → Phase 3 pipeline is
+// wired correctly and the implemented SPI methods return zero
 // ErrUnimplemented hits.
 //
 // The Gold Path does NOT copy domain-packs into runtime/. It loads
@@ -23,11 +23,11 @@ import (
 	"github.com/openfoundry/runtime/storage/memory"
 )
 
-// TestGoldPath_SupplyChain_F7 is the Phase 2 acceptance test. It walks
+// TestGoldPath_SupplyChain_F8 is the Phase 3 acceptance test. It walks
 // the full pipeline: pack load → IR → OntologySchema projection →
-// memory.ApplySchema → six Engine verbs exercised on real
-// supply-chain types. Covers AE9 / F7 / R16.
-func TestGoldPath_SupplyChain_F7(t *testing.T) {
+// memory.ApplySchema → Engine verbs plus query/traverse/transaction/
+// soft-delete on real supply-chain types. Covers AE11 / F8 / R11.
+func TestGoldPath_SupplyChain_F8(t *testing.T) {
 	// (1) pack.Load → IR. Loaded from the repo-rooted pack dir, not a
 	// copy under runtime/.
 	dir, err := pack.SupplyChainDir()
@@ -66,7 +66,7 @@ func TestGoldPath_SupplyChain_F7(t *testing.T) {
 		t.Fatalf("engine.New err = %v, want nil", err)
 	}
 
-	// (4) Engine.CreateObject("Supplier", {name:"Acme"}).
+	// (4) Engine.CreateObject("Supplier", …).
 	supplier, err := e.CreateObject(ctx, "Supplier", map[string]any{
 		"name":    "Acme",
 		"code":    "ACME-001",
@@ -78,10 +78,7 @@ func TestGoldPath_SupplyChain_F7(t *testing.T) {
 	}
 	supplierID := supplier["_id"].(string)
 
-	// (5) Engine.CreateObject("Product", {sku:"P1"}). The Product
-	// object type carries several NonNull fields (sku, name, category,
-	// unitOfMeasure, reorderPoint, reorderQuantity); supply all of
-	// them so the Engine validator passes.
+	// (5) Engine.CreateObject("Product", …).
 	product, err := e.CreateObject(ctx, "Product", map[string]any{
 		"sku":             "P1",
 		"name":            "Widget",
@@ -95,6 +92,17 @@ func TestGoldPath_SupplyChain_F7(t *testing.T) {
 	}
 	productID := product["_id"].(string)
 
+	// F8: QueryObjects after create — Supplier filter by name.
+	qpage, err := p.QueryObjects(ctx, "Supplier", spi.FilterExpression{
+		Field: "name", Operator: "eq", Value: "Acme",
+	}, &spi.QueryOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("QueryObjects after create err = %v, want nil (F8)", err)
+	}
+	if qpage.TotalCount < 1 {
+		t.Fatalf("QueryObjects TotalCount = %d, want >=1 (F8)", qpage.TotalCount)
+	}
+
 	// (6) Engine.CreateLink("SuppliesProduct", s.id, p.id, {}).
 	link, err := e.CreateLink(ctx, "SuppliesProduct", supplierID, productID, nil)
 	if err != nil {
@@ -103,6 +111,46 @@ func TestGoldPath_SupplyChain_F7(t *testing.T) {
 	linkID := link["_id"].(string)
 	if link["_type"] != "SuppliesProduct" {
 		t.Errorf("CreateLink _type = %v, want SuppliesProduct", link["_type"])
+	}
+
+	// F8: GetLinks + Traverse after link.
+	glinks, err := p.GetLinks(ctx, supplierID, "SuppliesProduct", "outbound", nil)
+	if err != nil {
+		t.Fatalf("GetLinks err = %v, want nil (F8)", err)
+	}
+	if glinks.TotalCount != 1 {
+		t.Fatalf("GetLinks TotalCount = %d, want 1 (F8)", glinks.TotalCount)
+	}
+	trav, err := p.Traverse(ctx, supplierID, spi.TraversalPath{
+		Steps: []spi.TraversalStep{{LinkType: "SuppliesProduct", Direction: "outbound"}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Traverse err = %v, want nil (F8)", err)
+	}
+	if trav.TotalCount != 1 {
+		t.Fatalf("Traverse TotalCount = %d, want 1 (F8)", trav.TotalCount)
+	}
+
+	// F8: BeginTransaction + rollback once.
+	tx, err := p.BeginTransaction(ctx)
+	if err != nil {
+		t.Fatalf("BeginTransaction err = %v, want nil (F8)", err)
+	}
+	tmp, err := tx.CreateObject("Supplier", map[string]any{
+		"name":    "Temp",
+		"code":    "TMP-001",
+		"tier":    "APPROVED",
+		"country": "US",
+	})
+	if err != nil {
+		t.Fatalf("tx.CreateObject err = %v (F8)", err)
+	}
+	tmpID := tmp["_id"].(string)
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("tx.Rollback err = %v (F8)", err)
+	}
+	if _, err := e.GetObject(ctx, "Supplier", tmpID); !errors.Is(err, spi.ErrObjectNotFound) {
+		t.Fatalf("GetObject after tx rollback err = %v, want ErrObjectNotFound (F8)", err)
 	}
 
 	// (7) Engine.GetObject("Supplier", s.id) returns s.
@@ -122,12 +170,18 @@ func TestGoldPath_SupplyChain_F7(t *testing.T) {
 	if updatedSupplier["name"] != "Acme Corp" {
 		t.Errorf("UpdateObject name = %v, want Acme Corp", updatedSupplier["name"])
 	}
-	// Merge preserves unpatched fields.
 	if updatedSupplier["code"] != "ACME-001" {
 		t.Errorf("UpdateObject dropped code = %v, want ACME-001 (merge)", updatedSupplier["code"])
 	}
 
-	// (9) Engine.GetLink("SuppliesProduct", l.id) returns l.
+	// (9) Engine.UpdateLink + GetLink round-trip (Phase 3 verb).
+	updatedLink, err := e.UpdateLink(ctx, "SuppliesProduct", linkID, map[string]any{"preferredSupplier": true}, nil)
+	if err != nil {
+		t.Fatalf("UpdateLink err = %v, want nil (F8)", err)
+	}
+	if updatedLink["preferredSupplier"] != true {
+		t.Errorf("UpdateLink preferredSupplier = %v, want true", updatedLink["preferredSupplier"])
+	}
 	gotLink, err := e.GetLink(ctx, "SuppliesProduct", linkID)
 	if err != nil {
 		t.Fatalf("GetLink err = %v, want nil", err)
@@ -146,25 +200,33 @@ func TestGoldPath_SupplyChain_F7(t *testing.T) {
 		t.Fatalf("GetLink after delete err = %v, want ErrLinkNotFound", err)
 	}
 
-	// (12) Engine.DeleteObject hard on Supplier and Product.
-	if err := e.DeleteObject(ctx, "Supplier", supplierID, "hard"); err != nil {
-		t.Fatalf("DeleteObject(Supplier) err = %v, want nil", err)
+	// F8: soft-delete Supplier then QueryObjects(includeDeleted:true).
+	if err := e.DeleteObject(ctx, "Supplier", supplierID, "soft"); err != nil {
+		t.Fatalf("DeleteObject(Supplier soft) err = %v, want nil (F8)", err)
 	}
+	if _, err := e.GetObject(ctx, "Supplier", supplierID); !errors.Is(err, spi.ErrObjectNotFound) {
+		t.Fatalf("GetObject after soft delete err = %v, want ErrObjectNotFound (F8)", err)
+	}
+	incl, err := p.QueryObjects(ctx, "Supplier", spi.FilterExpression{}, &spi.QueryOptions{IncludeDeleted: true})
+	if err != nil {
+		t.Fatalf("QueryObjects(includeDeleted) err = %v (F8)", err)
+	}
+	softSeen := false
+	for _, item := range incl.Items {
+		if item["_id"] == supplierID {
+			softSeen = true
+		}
+	}
+	if !softSeen {
+		t.Fatal("QueryObjects(includeDeleted:true) missing soft-deleted Supplier (F8)")
+	}
+
+	// (12) Hard delete Product (Supplier already soft-deleted).
 	if err := e.DeleteObject(ctx, "Product", productID, "hard"); err != nil {
 		t.Fatalf("DeleteObject(Product) err = %v, want nil", err)
 	}
 
-	// (13) Engine.GetObject("Supplier", s.id) → not-found.
-	if _, err := e.GetObject(ctx, "Supplier", supplierID); !errors.Is(err, spi.ErrObjectNotFound) {
-		t.Fatalf("GetObject after hard delete err = %v, want ErrObjectNotFound", err)
-	}
-
-	// Outcome assertion: the pipeline ran end-to-end without error and
-	// every implemented SPI method returned its real behaviour, not
-	// ErrUnimplemented. The seven implemented methods exercised here
-	// (CreateObject, GetObject, UpdateObject, DeleteObject, CreateLink,
-	// GetLink, DeleteLink) all returned non-ErrUnimplemented outcomes
-	// — proven by the absence of ErrUnimplemented checks above and the
-	// explicit err == nil / typed-Err assertions throughout. This test
-	// would fail loudly if any of them hit the unimplemented floor.
+	// Outcome: pipeline ran end-to-end with zero ErrUnimplemented hits
+	// across the Phase 3 verb surface (query/traverse/tx/soft-delete/
+	// UpdateLink included). Covers AE11 / F8 / R11.
 }

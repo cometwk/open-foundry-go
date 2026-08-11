@@ -2,16 +2,14 @@
 // for the runtime. It mirrors the intent — not the AST — of the
 // TypeScript SPI conformance suite at
 // tests/spi-conformance/src/categories/{crud,links}.ts: it walks the
-// six Phase 2 verbs (Create/Get/Update/Delete Object and Create/Delete
-// Link), asserts the ErrUnimplemented floor for the SPI methods later
-// phases leave unimplemented, and drives a single integration
-// end-to-end through the supply-chain domain pack (the Gold Path).
+// object/link verbs, asserts Phase 3 positive round-trips for the
+// former ErrUnimplemented floor methods, and (via e2e) drives the
+// supply-chain Gold Path.
 //
-// This is intentionally NOT a port of the TS suite. Phase 3 (U2) lifts
-// _version bookkeeping, soft-delete writes, and temporal reads off the
-// floor; cardinality, query, traversal, transactions, and event
-// emission remain deferred and stay floored here until their units
-// land. The package never asserts TS parity.
+// This is intentionally NOT a port of the TS suite. Phase 3 lifts the
+// full SPI surface off the ErrUnimplemented floor (U2–U7); event
+// emission remains deferred to Phase 4. The package never asserts
+// TS parity.
 package conformance_test
 
 import (
