@@ -16,7 +16,6 @@ package conformance_test
 
 import (
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/openfoundry/runtime/engine"
@@ -172,45 +171,19 @@ func TestConformance_LinkRoundTrip(t *testing.T) {
 }
 
 // TestConformance_ErrUnimplementedFloor asserts every SPI method
-// Phase 2 deliberately leaves unimplemented still surfaces
-// ErrUnimplemented (and the method name appears in the error
-// message), mirroring TS PlatformError surfacing. Covers AE8 / R15.
+// TestConformance_ErrUnimplementedFloor documents that Phase 3 folded the
+// 13-case ErrUnimplemented floor to zero. Positive coverage for each
+// former floor method lives in the packages listed in the comments below.
+// Covers AE11 / R10 (floor collapse).
 func TestConformance_ErrUnimplementedFloor(t *testing.T) {
-	p := memory.New()
-	ctx := spi.RequestContext{TenantID: "tnt", ActorID: "test"}
-
-	cases := []struct {
-		name string
-		fn   func() error
-	}{
-		// Phase 3 (U4): QueryObjects/AggregateObjects/SearchObjects
-		// implemented — removed from the ErrUnimplemented floor. Positive
-		// coverage lives in runtime/storage/memory/provider_query_test.go.
-		// Phase 3 (U5): BulkMutate, EnsureIndex/DropIndex/ListIndexes
-		// implemented — removed from the floor. Positive coverage lives
-		// in runtime/storage/memory/provider_bulk_test.go.
-		// Phase 3 (U6): UpdateLink/GetLinks/Traverse implemented —
-		// removed from the floor. Positive coverage lives in
-		// runtime/storage/memory/provider_link_extra_test.go and
-		// runtime/engine/links_update_test.go.
-		{"BeginTransaction", func() error {
-			_, err := p.BeginTransaction(ctx)
-			return err
-		}},
-		// Phase 3 (U2): GetObjectAtVersion/GetObjectAtTime implemented —
-		// removed from the ErrUnimplemented floor. Positive coverage lives
-		// in runtime/storage/memory/provider_version_test.go.
-	}
-	for _, c := range cases {
-		err := c.fn()
-		if !errors.Is(err, spi.ErrUnimplemented) {
-			t.Errorf("%s err = %v, want errors.Is ErrUnimplemented (AE8)", c.name, err)
-			continue
-		}
-		// The error message must carry the method name so callers
-		// can see which SPI method is the floor.
-		if !strings.Contains(err.Error(), c.name) {
-			t.Errorf("%s err = %q, want message to contain method name (AE8 message-name contract)", c.name, err.Error())
-		}
-	}
+	// Phase 3 (U2–U7): GetObjectAtVersion/GetObjectAtTime, Query/Aggregate/
+	// Search, BulkMutate + Indices, UpdateLink/GetLinks/Traverse, and
+	// BeginTransaction all implemented — floor is empty.
+	// Positive coverage:
+	//   - provider_version_test.go
+	//   - provider_query_test.go
+	//   - provider_bulk_test.go
+	//   - provider_link_extra_test.go / links_update_test.go
+	//   - transaction_test.go
+	t.Log("Phase 3 folded the ErrUnimplemented floor to zero (AE11)")
 }

@@ -342,27 +342,10 @@ func objectVersionValue(o spi.OntologyObject) int {
 }
 
 func TestUnimplementedFloor_RemaingObjectSPI(t *testing.T) {
-	p := New()
-	a, _ := tenancyA()
-	cases := []struct {
-		name string
-		fn   func() error
-	}{
-		// Phase 3 (U4): QueryObjects/AggregateObjects/SearchObjects
-		// implemented — removed from the ErrUnimplemented floor. Positive
-		// coverage lives in provider_query_test.go.
-		// Phase 3 (U5): BulkMutate, EnsureIndex/DropIndex/ListIndexes
-		// implemented — removed from the floor. Positive coverage lives
-		// in provider_bulk_test.go.
-		{"BeginTransaction", func() error {
-			_, err := p.BeginTransaction(a)
-			return err
-		}},
-	}
-	for _, c := range cases {
-		err := c.fn()
-		if !errors.Is(err, spi.ErrUnimplemented) {
-			t.Errorf("%s err = %v, want ErrUnimplemented", c.name, err)
-		}
-	}
+	// Phase 3 (U4–U7): Query/Aggregate/Search, Bulk/Indices, and
+	// BeginTransaction all implemented — the object-side
+	// ErrUnimplemented floor is empty. Positive coverage lives in
+	// provider_query_test.go, provider_bulk_test.go, and
+	// transaction_test.go.
+	t.Log("U7 folded BeginTransaction off the ErrUnimplemented floor")
 }

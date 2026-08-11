@@ -117,13 +117,12 @@ func (p *Provider) HealthCheck() (spi.HealthStatus, error) {
 //   - U4: SupportsFullTextSearch (SearchObjects implemented)
 //   - U5: SupportsBulkMutations (BulkMutate implemented)
 //   - U6: SupportsGraphTraversal + MaxTraversalDepth=10 (GetLinks/Traverse)
+//   - U7: SupportsTransactions (BeginTransaction / memoryTransaction)
 //
-// Remaining flags stay false until their units (U7 transactions) land;
-// they will flip in those units. SupportsGeoQueries remains false for
-// all of Phase 3.
+// SupportsGeoQueries remains false for all of Phase 3.
 func (p *Provider) Capabilities() spi.StorageCapabilities {
 	return spi.StorageCapabilities{
-		SupportsTransactions:    false,
+		SupportsTransactions:    true,
 		SupportsTemporalQueries: true,
 		SupportsFullTextSearch:  true,
 		SupportsGeoQueries:      false,
