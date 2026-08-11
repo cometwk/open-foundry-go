@@ -186,10 +186,9 @@ func TestConformance_ErrUnimplementedFloor(t *testing.T) {
 		// Phase 3 (U4): QueryObjects/AggregateObjects/SearchObjects
 		// implemented — removed from the ErrUnimplemented floor. Positive
 		// coverage lives in runtime/storage/memory/provider_query_test.go.
-		{"BulkMutate", func() error {
-			_, err := p.BulkMutate(ctx, spi.BulkMutationRequest{})
-			return err
-		}},
+		// Phase 3 (U5): BulkMutate, EnsureIndex/DropIndex/ListIndexes
+		// implemented — removed from the floor. Positive coverage lives
+		// in runtime/storage/memory/provider_bulk_test.go.
 		{"UpdateLink", func() error {
 			_, err := p.UpdateLink(ctx, "Supplies", "x", map[string]any{}, nil)
 			return err
@@ -209,16 +208,6 @@ func TestConformance_ErrUnimplementedFloor(t *testing.T) {
 		// Phase 3 (U2): GetObjectAtVersion/GetObjectAtTime implemented —
 		// removed from the ErrUnimplemented floor. Positive coverage lives
 		// in runtime/storage/memory/provider_version_test.go.
-		{"EnsureIndex", func() error {
-			return p.EnsureIndex(ctx, "Supplier", spi.IndexDefinition{})
-		}},
-		{"DropIndex", func() error {
-			return p.DropIndex(ctx, "Supplier", "name")
-		}},
-		{"ListIndexes", func() error {
-			_, err := p.ListIndexes(ctx, "Supplier")
-			return err
-		}},
 	}
 	for _, c := range cases {
 		err := c.fn()

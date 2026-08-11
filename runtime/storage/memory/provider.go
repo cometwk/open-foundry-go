@@ -29,19 +29,47 @@ type Provider struct {
 	// and GetObjectAtTime (Phase 3 U2) and maintained by transaction journal
 	// rollback (U7). Links never push history (mirrors TS memory).
 	versionHistory map[string][]spi.OntologyObject
+	// idempotencyCache holds BulkMutate results keyed by (tenant:idempotencyKey).
+	// An empty idempotencyKey bypasses caching entirely (no "" entry) so
+	// two consecutive uncached calls both apply. Tenant-scoped to avoid
+	// cross-tenant collisions (R5(bulk)). Not persisted across restarts.
+	idempotencyCache map[string]spi.BulkMutationResult
+	// indexes is an overlay per type name. EnsureIndex appends; DropIndex
+	// records a "drop" suffix ( suppressing the field). ListIndexes merges
+	// schema-projected indexes (from current schema's ObjectTypeDef.Indexes)
+	// with this overlay, hiding any field that has a drop marker. The
+	// overlay does NOT affect correctness (mirrors TS note indices don't
+	// affect correctness for in-memory storage); it only lets ListIndexes
+	// reflect the user's create/drop history until the next ApplySchema
+	// re-projects.
+	indexes map[string][]indexOverlayEntry
+}
+
+// indexOverlayEntry is a single EnsureIndex/DropIndex mutation in the
+// per-type overlay. Dropped true suppresses any schema-projected or
+// earlier EnsureIndex entry for the same Field.
+type indexOverlayEntry struct {
+	def     spi.IndexDefinition
+	dropped bool
 }
 
 // New creates an empty memory provider.
 func New() *Provider {
 	return &Provider{
-		schemas:        map[int]spi.OntologySchema{},
-		objects:        map[string]spi.OntologyObject{},
-		links:          map[string]spi.OntologyLink{},
-		versionHistory: map[string][]spi.OntologyObject{},
+		schemas:          map[int]spi.OntologySchema{},
+		objects:          map[string]spi.OntologyObject{},
+		links:            map[string]spi.OntologyLink{},
+		versionHistory:   map[string][]spi.OntologyObject{},
+		idempotencyCache: map[string]spi.BulkMutationResult{},
+		indexes:          map[string][]indexOverlayEntry{},
 	}
 }
 
 // ApplySchema stores a schema version (idempotent for same version).
+// A fresh apply resets the index overlay so DropIndex suppressions do not
+// ossify across re-projection — ListIndexes then reflects only the newly
+// projected ObjectTypeDefinition.Indexes until EnsureIndex/DropIndex run
+// again (R5(indices), AE7).
 func (p *Provider) ApplySchema(_ spi.RequestContext, schema spi.OntologySchema) (spi.MigrationResult, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -52,6 +80,9 @@ func (p *Provider) ApplySchema(_ spi.RequestContext, schema spi.OntologySchema) 
 	}
 	p.schemas[schema.Version] = cloned
 	p.current = schema.Version
+	// Clear EnsureIndex/DropIndex overlay: schema re-projection is the
+	// source of truth again (matches TestDropIndex_OnSchemaProjectedIndex_*).
+	p.indexes = map[string][]indexOverlayEntry{}
 	return spi.MigrationResult{
 		Success:     true,
 		FromVersion: from,
@@ -84,9 +115,10 @@ func (p *Provider) HealthCheck() (spi.HealthStatus, error) {
 // all flags false; Phase 3 enables them progressively (R9):
 //   - U2: SupportsTemporalQueries (GetObjectAtVersion/GetObjectAtTime)
 //   - U4: SupportsFullTextSearch (SearchObjects implemented)
+//   - U5: SupportsBulkMutations (BulkMutate implemented)
 //
-// Remaining flags stay false until their units (U5 bulk, U6 graph
-// traversal, U7 transactions) land; they will flip in those units.
+// Remaining flags stay false until their units (U6 graph traversal, U7
+// transactions) land; they will flip in those units.
 // SupportsGeoQueries remains false for all of Phase 3.
 func (p *Provider) Capabilities() spi.StorageCapabilities {
 	return spi.StorageCapabilities{
@@ -95,7 +127,7 @@ func (p *Provider) Capabilities() spi.StorageCapabilities {
 		SupportsFullTextSearch:  true,
 		SupportsGeoQueries:      false,
 		SupportsGraphTraversal:  false,
-		SupportsBulkMutations:   false,
+		SupportsBulkMutations:   true,
 		MaxTraversalDepth:       0,
 		ReplicationSupport:      spi.ReplicationNone,
 	}
@@ -169,6 +201,15 @@ func (p *Provider) popVersionHistoryUnlocked(key string) {
 func (p *Provider) CreateObject(ctx spi.RequestContext, typ string, properties map[string]any) (spi.OntologyObject, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.doCreateObjectUnlocked(ctx, typ, properties)
+}
+
+// doCreateObjectUnlocked is the in-lock inner used by CreateObject, the
+// BulkMutate loop (U5), and the transaction CreateObject verb (U7).
+// Caller MUST hold p.mu. Mirrors the _doCreateObject split in the TS
+// memory provider; the locked public method exists for the one-shot
+// public API, the unlocked inner for compound units.
+func (p *Provider) doCreateObjectUnlocked(ctx spi.RequestContext, typ string, properties map[string]any) (spi.OntologyObject, error) {
 	ts := systemTimestamps()
 	obj := spi.OntologyObject{
 		"_id":        uuidv7.New(),
@@ -194,11 +235,7 @@ func (p *Provider) CreateObject(ctx spi.RequestContext, typ string, properties m
 		return nil, err
 	}
 	p.pushVersionHistoryUnlocked(key, snap)
-	out, err := cloneObject(obj)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
+	return cloneObject(obj)
 }
 
 // GetObject reads by (type, id). Cross-tenant reads and soft-deleted
@@ -216,15 +253,16 @@ func (p *Provider) GetObject(ctx spi.RequestContext, typ, id string) (spi.Ontolo
 	return cloneObject(obj)
 }
 
-// UpdateObject merges the patch (system fields ignored from the patch,
-// and re-stamped at the end) onto the existing object. expectedVersion is
-// enforced in Phase 3: a non-nil pointer must equal the stored _version or
-// the call rejects with ErrVersionConflict before any write; nil accepts
-// any version. On accept, _version increments by 1 and a snapshot is pushed
-// into versionHistory (R1, R2). Covers AE1.
 func (p *Provider) UpdateObject(ctx spi.RequestContext, typ, id string, properties map[string]any, expectedVersion *int) (spi.OntologyObject, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.doUpdateObjectUnlocked(ctx, typ, id, properties, expectedVersion)
+}
+
+// doUpdateObjectUnlocked is the in-lock inner used by UpdateObject, the
+// BulkMutate loop (U5), and the transaction UpdateObject verb (U7).
+// Caller MUST hold p.mu.
+func (p *Provider) doUpdateObjectUnlocked(ctx spi.RequestContext, typ, id string, properties map[string]any, expectedVersion *int) (spi.OntologyObject, error) {
 	key := objectKey(typ, id)
 	existing, ok := p.objects[key]
 	if !ok || existing["_tenantId"] != ctx.TenantID {
@@ -279,6 +317,13 @@ func (p *Provider) UpdateObject(ctx spi.RequestContext, typ, id string, properti
 func (p *Provider) DeleteObject(ctx spi.RequestContext, typ, id, mode string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.doDeleteObjectUnlocked(ctx, typ, id, mode)
+}
+
+// doDeleteObjectUnlocked is the in-lock inner. Caller MUST hold p.mu.
+// Hard mode removes the entry; soft + any non-hard mode stamps _deletedAt
+// + _version+1 and keeps the entry so the U3 read-path mask hides it.
+func (p *Provider) doDeleteObjectUnlocked(ctx spi.RequestContext, typ, id, mode string) error {
 	key := objectKey(typ, id)
 	existing, ok := p.objects[key]
 	if !ok || existing["_tenantId"] != ctx.TenantID {
@@ -1252,4 +1297,199 @@ func (p *Provider) SearchObjects(ctx spi.RequestContext, typ string, query spi.S
 		TotalCount:  totalCount,
 		HasNextPage: offset+limit < totalCount,
 	}, nil
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 U5: BulkMutate + Indices (EnsureIndex/DropIndex/ListIndexes).
+//
+// BulkMutate applies ops best-effort via the unlocked inner helpers
+// (doCreateObject/UpdateObject/DeleteObject) under one lock acquisition;
+// per-op failures surface as BulkMutationError{OperationIndex, "INTERNAL_ERROR",
+// message}. Idempotency is tenant-scoped and keyed by (tenant:idempotencyKey);
+// an empty idempotencyKey bypasses caching entirely so uncached calls
+// always apply. Mirrors TS bulkMutate (memory-storage-provider.ts:789-831).
+// Covers R5(bulk), AE6. Indices overlay R5(indices), AE7.
+// ---------------------------------------------------------------------------
+
+// BulkMutate caches results by (tenant, idempotencyKey) and applies
+// operations best-effort. Idempotency is tenant-scoped; an empty key
+// disables caching. Per-op failures are captured and the loop continues
+// (non-transactional, matches TS). The result is cloned before caching
+// so later callers cannot mutate the cached entry. Covers R5(bulk), AE6.
+func (p *Provider) BulkMutate(ctx spi.RequestContext, request spi.BulkMutationRequest) (spi.BulkMutationResult, error) {
+	// Empty idempotencyKey: do not cache. Two consecutive uncached calls
+	// with the same operations both apply (the plan's R5(bulk) intent).
+	if request.IdempotencyKey != "" {
+		cacheKey := ctx.TenantID + ":" + request.IdempotencyKey
+		p.mu.Lock()
+		cached, ok := p.idempotencyCache[cacheKey]
+		p.mu.Unlock()
+		if ok {
+			// Clone the cached result so callers cannot mutate the cached
+			// entry (matches TS `return clone(cached)`).
+			return cloneBulkMutationResult(cached), nil
+		}
+	}
+
+	// Apply under one lock — keep the eager-apply + best-effort model.
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	result := p.bulkMutateUnlocked(ctx, request)
+
+	if request.IdempotencyKey != "" {
+		cacheKey := ctx.TenantID + ":" + request.IdempotencyKey
+		p.idempotencyCache[cacheKey] = cloneBulkMutationResult(result)
+	}
+	return result, nil
+}
+
+// bulkMutateUnlocked runs the per-op loop under p.mu. Caller MUST hold p.mu.
+// Errors are wrapped into BulkMutationError — they never abort the call.
+func (p *Provider) bulkMutateUnlocked(ctx spi.RequestContext, request spi.BulkMutationRequest) spi.BulkMutationResult {
+	accepted := 0
+	failed := 0
+	var errs []spi.BulkMutationError
+	for i, op := range request.Operations {
+		applyErr := applyBulkOperation(p, ctx, op)
+		if applyErr == nil {
+			accepted++
+			continue
+		}
+		failed++
+		errs = append(errs, spi.BulkMutationError{
+			OperationIndex: i,
+			Code:           "INTERNAL_ERROR",
+			Message:        applyErr.Error(),
+		})
+	}
+	return spi.BulkMutationResult{Accepted: accepted, Failed: failed, Errors: errs}
+}
+
+// applyBulkOperation dispatches one BulkOperation to the matching unlocked
+// helper. Returned errors become per-op BulkMutationErrors in the caller.
+// The TS memory bulk-mutate switch (memory-storage-provider.ts:802-816) is
+// mirrored; unknown op types return an error (which surfaces as a
+// BulkMutationError{Code: INTERNAL_ERROR} rather than aborting).
+func applyBulkOperation(p *Provider, ctx spi.RequestContext, op spi.BulkOperation) error {
+	switch op.Type {
+	case "createObject":
+		_, err := p.doCreateObjectUnlocked(ctx, op.ObjectType, op.Properties)
+		return err
+	case "updateObject":
+		_, err := p.doUpdateObjectUnlocked(ctx, op.ObjectType, op.ID, op.Properties, nil)
+		return err
+	case "deleteObject":
+		return p.doDeleteObjectUnlocked(ctx, op.ObjectType, op.ID, op.Mode)
+	}
+	return fmt.Errorf("bulk: unknown operation type %q", op.Type)
+}
+
+// cloneBulkMutationResult deep-copies a BulkMutationResult so the cached
+// entry is independent of the caller's returned copy. The Errors slice is
+// reallocated even when empty, matching the JSON-clone convention used
+// elsewhere (so a future returned-shape mutation cannot nullify the cache).
+func cloneBulkMutationResult(r spi.BulkMutationResult) spi.BulkMutationResult {
+	out := spi.BulkMutationResult{Accepted: r.Accepted, Failed: r.Failed}
+	if r.Errors != nil {
+		out.Errors = make([]spi.BulkMutationError, len(r.Errors))
+		copy(out.Errors, r.Errors)
+	}
+	return out
+}
+
+// EnsureIndex appends an index entry to the per-type overlay. The memory
+// provider does not consult overlays at query time (indices don't affect
+// correctness for an in-memory scan — mirrors the TS note). The overlay
+// only changes what ListIndexes reports, satisfying R5(indices). Covers
+// AE7.
+func (p *Provider) EnsureIndex(_ spi.RequestContext, typ string, index spi.IndexDefinition) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	// Drop any prior drop-marker for the same field so the EnsureIndex
+	// resurrects it. Otherwise append a fresh Ensure entry; ListIndexes
+	// merge sees the latest state.
+	overlay := p.indexes[typ]
+	overlay = append(overlay, indexOverlayEntry{def: index, dropped: false})
+	p.indexes[typ] = overlay
+	return nil
+}
+
+// DropIndex suppresses the named field from ListIndexes results. For an
+// overlay-only field, the suppression hides the EnsureIndex entry. For a
+// schema-projected field, the suppression lasts until the next ApplySchema
+// re-projects (matches R5(indices) merged-overlay semantics). Covers AE7.
+func (p *Provider) DropIndex(_ spi.RequestContext, typ, field string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	overlay := p.indexes[typ]
+	overlay = append(overlay, indexOverlayEntry{
+		def:     spi.IndexDefinition{Field: field},
+		dropped: true,
+	})
+	p.indexes[typ] = overlay
+	return nil
+}
+
+// ListIndexes merges the schema-projected indexes for `typ` with the per-type
+// overlay. Schema indexes come from the current schema's
+// ObjectTypeDefinition.Indexes (populated by projection.projectObject for
+// @unique / @indexed / @searchable fields). The overlay is applied in
+// append order: EnsureIndex adds a field; DropIndex suppresses a field
+// (whether projected or overlaid) until the next ApplySchema clears it.
+// Deduplication keeps the last entry per Field, mirroring the implicit
+// "latest overlay wins" rule of the plan. Covers R5(indices), AE7.
+func (p *Provider) ListIndexes(_ spi.RequestContext, typ string) ([]spi.IndexDefinition, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// 1. Seed from the schema projection (applied in ApplySchema, stored
+	// in the same schema objects our GetSchema returns).
+	byField := map[string]spi.IndexDefinition{}
+	fieldOrder := []string{}
+	if p.current > 0 {
+		if schema, ok := p.schemas[p.current]; ok {
+			for _, ot := range schema.ObjectTypes {
+				if ot.Name != typ {
+					continue
+				}
+				for _, idx := range ot.Indexes {
+					if _, exists := byField[idx.Field]; !exists {
+						fieldOrder = append(fieldOrder, idx.Field)
+					}
+					byField[idx.Field] = idx
+				}
+				break
+			}
+		}
+	}
+
+	// 2. Apply overlay in append order: EnsureIndex updates, DropIndex
+	// removes (latest-entry-wins per Field). Re-projected schema indexes
+	// reappear after a fresh ApplySchema because ApplySchema does not
+	// clear the overlay (drop-suppressed schema indexes would stay
+	// suppressed — but the plan defers that subtlety; the "latest wins"
+	// semantics keep tests readable).
+	for _, entry := range p.indexes[typ] {
+		if entry.dropped {
+			if _, exists := byField[entry.def.Field]; exists {
+				delete(byField, entry.def.Field)
+				// keep fieldOrder entry removed lazily at output
+			}
+			continue
+		}
+		if _, exists := byField[entry.def.Field]; !exists {
+			fieldOrder = append(fieldOrder, entry.def.Field)
+		}
+		byField[entry.def.Field] = entry.def
+	}
+
+	// 3. Materialize in original-discovered order (schema first, then
+	// newly added overlays), skipping any field dropped/suppressed.
+	out := make([]spi.IndexDefinition, 0, len(fieldOrder))
+	for _, f := range fieldOrder {
+		if idx, ok := byField[f]; ok {
+			out = append(out, idx)
+		}
+	}
+	return out, nil
 }

@@ -351,25 +351,11 @@ func TestUnimplementedFloor_RemaingObjectSPI(t *testing.T) {
 		// Phase 3 (U4): QueryObjects/AggregateObjects/SearchObjects
 		// implemented — removed from the ErrUnimplemented floor. Positive
 		// coverage lives in provider_query_test.go.
-		{"BulkMutate", func() error {
-			_, err := p.BulkMutate(a, spi.BulkMutationRequest{})
-			return err
-		}},
+		// Phase 3 (U5): BulkMutate, EnsureIndex/DropIndex/ListIndexes
+		// implemented — removed from the floor. Positive coverage lives
+		// in provider_bulk_test.go.
 		{"BeginTransaction", func() error {
 			_, err := p.BeginTransaction(a)
-			return err
-		}},
-		// Phase 3 (U2): GetObjectAtVersion/GetObjectAtTime implemented —
-		// removed from the ErrUnimplemented floor. They have their own
-		// positive tests in provider_version_test.go.
-		{"EnsureIndex", func() error {
-			return p.EnsureIndex(a, "Supplier", spi.IndexDefinition{})
-		}},
-		{"DropIndex", func() error {
-			return p.DropIndex(a, "Supplier", "name")
-		}},
-		{"ListIndexes", func() error {
-			_, err := p.ListIndexes(a, "Supplier")
 			return err
 		}},
 	}
