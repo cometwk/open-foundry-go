@@ -189,18 +189,10 @@ func TestConformance_ErrUnimplementedFloor(t *testing.T) {
 		// Phase 3 (U5): BulkMutate, EnsureIndex/DropIndex/ListIndexes
 		// implemented — removed from the floor. Positive coverage lives
 		// in runtime/storage/memory/provider_bulk_test.go.
-		{"UpdateLink", func() error {
-			_, err := p.UpdateLink(ctx, "Supplies", "x", map[string]any{}, nil)
-			return err
-		}},
-		{"GetLinks", func() error {
-			_, err := p.GetLinks(ctx, "x", "Supplies", "outbound", nil)
-			return err
-		}},
-		{"Traverse", func() error {
-			_, err := p.Traverse(ctx, "x", spi.TraversalPath{}, nil)
-			return err
-		}},
+		// Phase 3 (U6): UpdateLink/GetLinks/Traverse implemented —
+		// removed from the floor. Positive coverage lives in
+		// runtime/storage/memory/provider_link_extra_test.go and
+		// runtime/engine/links_update_test.go.
 		{"BeginTransaction", func() error {
 			_, err := p.BeginTransaction(ctx)
 			return err

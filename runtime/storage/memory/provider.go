@@ -116,19 +116,20 @@ func (p *Provider) HealthCheck() (spi.HealthStatus, error) {
 //   - U2: SupportsTemporalQueries (GetObjectAtVersion/GetObjectAtTime)
 //   - U4: SupportsFullTextSearch (SearchObjects implemented)
 //   - U5: SupportsBulkMutations (BulkMutate implemented)
+//   - U6: SupportsGraphTraversal + MaxTraversalDepth=10 (GetLinks/Traverse)
 //
-// Remaining flags stay false until their units (U6 graph traversal, U7
-// transactions) land; they will flip in those units.
-// SupportsGeoQueries remains false for all of Phase 3.
+// Remaining flags stay false until their units (U7 transactions) land;
+// they will flip in those units. SupportsGeoQueries remains false for
+// all of Phase 3.
 func (p *Provider) Capabilities() spi.StorageCapabilities {
 	return spi.StorageCapabilities{
 		SupportsTransactions:    false,
 		SupportsTemporalQueries: true,
 		SupportsFullTextSearch:  true,
 		SupportsGeoQueries:      false,
-		SupportsGraphTraversal:  false,
+		SupportsGraphTraversal:  true,
 		SupportsBulkMutations:   true,
-		MaxTraversalDepth:       0,
+		MaxTraversalDepth:       10,
 		ReplicationSupport:      spi.ReplicationNone,
 	}
 }
@@ -472,17 +473,32 @@ func cloneLink(l spi.OntologyLink) (spi.OntologyLink, error) {
 // CreateLink honors the Engine-supplied _engineLinkId (UUIDv7) when present
 // and otherwise mints one internally. _engineLinkId is stripped from the
 // stored link's user-facing properties, matching the TS contract
-// "Engine generates, SPI stores".
+// "Engine generates, SPI stores". Cardinality is enforced atomically under
+// p.mu before the write (R4, KTD-1 — memory-only, Engine never advises).
 func (p *Provider) CreateLink(ctx spi.RequestContext, typ, fromID, toID string, properties map[string]any) (spi.OntologyLink, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.doCreateLinkUnlocked(ctx, typ, fromID, toID, properties)
+}
+
+// doCreateLinkUnlocked is the lock-free inner for CreateLink. Caller MUST
+// hold p.mu. Used by CreateLink, and later by BulkMutate / MemoryTransaction
+// (U7). Enforces cardinality before writing; on violation returns
+// ErrCardinalityViolation with no map mutation.
+func (p *Provider) doCreateLinkUnlocked(ctx spi.RequestContext, typ, fromID, toID string, properties map[string]any) (spi.OntologyLink, error) {
+	if err := p.enforceCardinalityUnlocked(ctx, typ, fromID, toID); err != nil {
+		return nil, err
+	}
 
 	engineID, _ := properties["_engineLinkId"].(string)
 	id := engineID
 	if id == "" {
 		id = uuidv7.New()
 	}
-	fromType, toType := p.linkTypeDefinitionUnlocked(typ)
+	fromType, toType := "unknown", "unknown"
+	if def, ok := p.linkTypeDefinitionUnlocked(typ); ok {
+		fromType, toType = def.FromType, def.ToType
+	}
 	ts := systemTimestamps()
 	link := spi.OntologyLink{
 		"_id":        id,
@@ -506,22 +522,78 @@ func (p *Provider) CreateLink(ctx spi.RequestContext, typ, fromID, toID string, 
 	return cloneLink(link)
 }
 
-// linkTypeDefinitionUnlocked is the lock-free inner used by CreateLink,
-// which already holds p.mu.
-func (p *Provider) linkTypeDefinitionUnlocked(typ string) (fromType, toType string) {
+// linkTypeDefinitionUnlocked returns the current-schema LinkTypeDefinition
+// for typ, or (nil, false) when no schema / no matching type. Caller MUST
+// hold p.mu. Upgraded in U6 from the prior (fromType, toType) pair so
+// cardinality enforcement can read LinkTypeDefinition.Cardinality.
+func (p *Provider) linkTypeDefinitionUnlocked(typ string) (*spi.LinkTypeDefinition, bool) {
 	if p.current == 0 {
-		return "unknown", "unknown"
+		return nil, false
 	}
 	schema, ok := p.schemas[p.current]
 	if !ok {
-		return "unknown", "unknown"
+		return nil, false
 	}
-	for _, lt := range schema.LinkTypes {
-		if lt.Name == typ {
-			return lt.FromType, lt.ToType
+	for i := range schema.LinkTypes {
+		if schema.LinkTypes[i].Name == typ {
+			return &schema.LinkTypes[i], true
 		}
 	}
-	return "unknown", "unknown"
+	return nil, false
+}
+
+// enforceCardinalityUnlocked scans active (non-_deletedAt) same-type
+// same-tenant links and rejects CreateLink when the schema cardinality
+// would be violated. MANY_TO_MANY is a no-op. No schema / unknown type
+// also skips (no constraint). Caller MUST hold p.mu. Covers R4, AE3.
+func (p *Provider) enforceCardinalityUnlocked(ctx spi.RequestContext, typ, fromID, toID string) error {
+	def, ok := p.linkTypeDefinitionUnlocked(typ)
+	if !ok {
+		return nil
+	}
+	switch def.Cardinality {
+	case spi.CardinalityManyToMany, "":
+		return nil
+	}
+
+	var active []spi.OntologyLink
+	for _, link := range p.links {
+		if link["_type"] != typ {
+			continue
+		}
+		if link["_tenantId"] != ctx.TenantID {
+			continue
+		}
+		if link["_deletedAt"] != nil {
+			continue
+		}
+		active = append(active, link)
+	}
+
+	switch def.Cardinality {
+	case spi.CardinalityOneToOne:
+		for _, l := range active {
+			if l["_fromId"] == fromID {
+				return fmt.Errorf("%w: ONE_TO_ONE link %s already exists from %s", spi.ErrCardinalityViolation, typ, fromID)
+			}
+			if l["_toId"] == toID {
+				return fmt.Errorf("%w: ONE_TO_ONE link %s already exists to %s", spi.ErrCardinalityViolation, typ, toID)
+			}
+		}
+	case spi.CardinalityOneToMany:
+		for _, l := range active {
+			if l["_toId"] == toID {
+				return fmt.Errorf("%w: ONE_TO_MANY link %s already exists to %s", spi.ErrCardinalityViolation, typ, toID)
+			}
+		}
+	case spi.CardinalityManyToOne:
+		for _, l := range active {
+			if l["_fromId"] == fromID {
+				return fmt.Errorf("%w: MANY_TO_ONE link %s already exists from %s", spi.ErrCardinalityViolation, typ, fromID)
+			}
+		}
+	}
+	return nil
 }
 
 // GetLink reads a link by (type, id). Cross-tenant reads are masked as
@@ -541,11 +613,69 @@ func (p *Provider) GetLink(ctx spi.RequestContext, typ, id string) (spi.Ontology
 	return cloneLink(link)
 }
 
+// UpdateLink merges patch into an existing link, re-stamps _updatedAt,
+// and increments _version. expectedVersion mismatch returns
+// ErrVersionConflict. Missing / cross-tenant links return ErrLinkNotFound.
+// Links never push versionHistory (mirrors TS _doUpdateLink). Covers R5,
+// AE9.
+func (p *Provider) UpdateLink(ctx spi.RequestContext, typ, linkID string, properties map[string]any, expectedVersion *int) (spi.OntologyLink, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.doUpdateLinkUnlocked(ctx, typ, linkID, properties, expectedVersion)
+}
+
+// doUpdateLinkUnlocked is the lock-free inner for UpdateLink. Caller MUST
+// hold p.mu. Used by UpdateLink and later by MemoryTransaction (U7).
+func (p *Provider) doUpdateLinkUnlocked(ctx spi.RequestContext, typ, linkID string, properties map[string]any, expectedVersion *int) (spi.OntologyLink, error) {
+	key := linkKey(typ, linkID)
+	existing, ok := p.links[key]
+	if !ok || existing["_tenantId"] != ctx.TenantID {
+		return nil, fmt.Errorf("%w: %s/%s", spi.ErrLinkNotFound, typ, linkID)
+	}
+	if expectedVersion != nil {
+		current := objectVersionInt(spi.OntologyObject(existing))
+		if current != *expectedVersion {
+			return nil, fmt.Errorf("%w: %s/%s has version %d, expected %d", spi.ErrVersionConflict, typ, linkID, current, *expectedVersion)
+		}
+	}
+	merged := spi.OntologyLink{}
+	for k, v := range existing {
+		merged[k] = v
+	}
+	for k, v := range properties {
+		if isLinkSystemField(k) {
+			continue
+		}
+		merged[k] = v
+	}
+	// Re-stamp system fields from the authoritative existing copy so a
+	// caller cannot relocate endpoints / change tenant via patch.
+	merged["_id"] = existing["_id"]
+	merged["_type"] = existing["_type"]
+	merged["_tenantId"] = existing["_tenantId"]
+	merged["_fromId"] = existing["_fromId"]
+	merged["_toId"] = existing["_toId"]
+	merged["_fromType"] = existing["_fromType"]
+	merged["_toType"] = existing["_toType"]
+	merged["_createdAt"] = existing["_createdAt"]
+	merged["_updatedAt"] = systemTimestamps()
+	merged["_version"] = objectVersionInt(spi.OntologyObject(existing)) + 1
+	p.links[key] = merged
+	return cloneLink(merged)
+}
+
 // DeleteLink removes the link from the map. Idempotent and a no-op across
 // tenants, matching the hard-delete semantics on objects.
 func (p *Provider) DeleteLink(ctx spi.RequestContext, typ, id string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.doDeleteLinkUnlocked(ctx, typ, id)
+}
+
+// doDeleteLinkUnlocked is the lock-free inner for DeleteLink. Caller MUST
+// hold p.mu. Lifted in U6 so MemoryTransaction (U7) can journal the
+// reverse put without re-entering the locked wrapper.
+func (p *Provider) doDeleteLinkUnlocked(ctx spi.RequestContext, typ, id string) error {
 	key := linkKey(typ, id)
 	existing, ok := p.links[key]
 	if !ok || existing["_tenantId"] != ctx.TenantID {
@@ -553,6 +683,211 @@ func (p *Provider) DeleteLink(ctx spi.RequestContext, typ, id string) error {
 	}
 	delete(p.links, key)
 	return nil
+}
+
+// GetLinks returns links of linkType touching objectID in the given
+// direction (outbound=_fromId, inbound=_toId). Honors IncludeDeleted
+// (default exclude) and paginates via QueryOptions.limit/offset. Covers
+// R5(getLinks), AE8.
+func (p *Provider) GetLinks(ctx spi.RequestContext, objectID, linkType, direction string, options *spi.QueryOptions) (spi.LinkPage, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	includeDeleted := false
+	offset := 0
+	limit := -1
+	if options != nil {
+		includeDeleted = options.IncludeDeleted
+		offset = options.Offset
+		if options.Limit > 0 {
+			limit = options.Limit
+		}
+	}
+
+	var matched []spi.OntologyLink
+	for _, link := range p.links {
+		if link["_tenantId"] != ctx.TenantID {
+			continue
+		}
+		if link["_type"] != linkType {
+			continue
+		}
+		if !includeDeleted && link["_deletedAt"] != nil {
+			continue
+		}
+		switch direction {
+		case "outbound":
+			if link["_fromId"] != objectID {
+				continue
+			}
+		default: // inbound (and any other value treated as inbound, matching TS)
+			if link["_toId"] != objectID {
+				continue
+			}
+		}
+		matched = append(matched, link)
+	}
+
+	totalCount := len(matched)
+	if limit < 0 {
+		limit = totalCount
+	}
+	if offset > totalCount {
+		offset = totalCount
+	}
+	end := offset + limit
+	if end > totalCount {
+		end = totalCount
+	}
+	sliced := matched[offset:end]
+	items := make([]spi.OntologyLink, 0, len(sliced))
+	for _, link := range sliced {
+		c, err := cloneLink(link)
+		if err != nil {
+			return spi.LinkPage{}, err
+		}
+		items = append(items, c)
+	}
+	return spi.LinkPage{
+		Items:       items,
+		TotalCount:  totalCount,
+		HasNextPage: offset+limit < totalCount,
+	}, nil
+}
+
+// Traverse walks path.Steps as a BFS over links, mirroring TS traverse
+// (memory-storage-provider.ts:887-970). Depth > MAX_TRAVERSAL_DEPTH=10
+// errors; total nodes > MAX_TRAVERSAL_NODES=10000 breaks early. nodes
+// are the final step's targets; edges are every traversed link.
+// includeDeleted applies to both links and target objects. Pagination
+// slices nodes only. Covers R5(traverse), AE8.
+func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.TraversalPath, options *spi.TraversalOptions) (spi.TraversalResult, error) {
+	const maxTraversalDepth = 10
+	const maxTraversalNodes = 10000
+
+	if len(path.Steps) > maxTraversalDepth {
+		return spi.TraversalResult{}, fmt.Errorf("traversal depth %d exceeds maximum of %d", len(path.Steps), maxTraversalDepth)
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	includeDeleted := false
+	offset := 0
+	limit := -1
+	if options != nil {
+		includeDeleted = options.IncludeDeleted
+		offset = options.Offset
+		if options.Limit > 0 {
+			limit = options.Limit
+		}
+	}
+
+	collectedEdges := map[string]spi.OntologyLink{}
+	totalNodesSeen := 0
+	currentIDs := map[string]struct{}{startID: {}}
+	stepNodes := map[string]spi.OntologyObject{}
+
+	for _, step := range path.Steps {
+		if len(currentIDs) == 0 || totalNodesSeen >= maxTraversalNodes {
+			break
+		}
+		nextIDs := map[string]struct{}{}
+		stepNodes = map[string]spi.OntologyObject{}
+
+		for objectID := range currentIDs {
+			if totalNodesSeen >= maxTraversalNodes {
+				break
+			}
+			for _, link := range p.links {
+				if totalNodesSeen >= maxTraversalNodes {
+					break
+				}
+				if link["_tenantId"] != ctx.TenantID {
+					continue
+				}
+				if link["_type"] != step.LinkType {
+					continue
+				}
+				if !includeDeleted && link["_deletedAt"] != nil {
+					continue
+				}
+				fromID, _ := link["_fromId"].(string)
+				toID, _ := link["_toId"].(string)
+				if step.Direction == "outbound" {
+					if fromID != objectID {
+						continue
+					}
+				} else {
+					if toID != objectID {
+						continue
+					}
+				}
+
+				targetID := toID
+				targetType, _ := link["_toType"].(string)
+				if step.Direction != "outbound" {
+					targetID = fromID
+					targetType, _ = link["_fromType"].(string)
+				}
+
+				targetObj, ok := p.objects[objectKey(targetType, targetID)]
+				if !ok || targetObj["_tenantId"] != ctx.TenantID {
+					continue
+				}
+				if !includeDeleted && targetObj["_deletedAt"] != nil {
+					continue
+				}
+				if step.Filter != nil && !evaluateFilter(targetObj, step.Filter) {
+					continue
+				}
+
+				edgeKey := fmt.Sprintf("%s:%s", link["_type"], link["_id"])
+				collectedEdges[edgeKey] = link
+				nodeKey := objectKey(targetType, targetID)
+				if _, seen := stepNodes[nodeKey]; !seen {
+					stepNodes[nodeKey] = targetObj
+					totalNodesSeen++
+				}
+				nextIDs[targetID] = struct{}{}
+			}
+		}
+		currentIDs = nextIDs
+	}
+
+	nodes := make([]spi.OntologyObject, 0, len(stepNodes))
+	for _, n := range stepNodes {
+		c, err := cloneObject(n)
+		if err != nil {
+			return spi.TraversalResult{}, err
+		}
+		nodes = append(nodes, c)
+	}
+	edges := make([]spi.OntologyLink, 0, len(collectedEdges))
+	for _, e := range collectedEdges {
+		c, err := cloneLink(e)
+		if err != nil {
+			return spi.TraversalResult{}, err
+		}
+		edges = append(edges, c)
+	}
+
+	totalCount := len(nodes)
+	if limit < 0 {
+		limit = totalCount
+	}
+	if offset > totalCount {
+		offset = totalCount
+	}
+	end := offset + limit
+	if end > totalCount {
+		end = totalCount
+	}
+	return spi.TraversalResult{
+		Nodes:      nodes[offset:end],
+		Edges:      edges,
+		TotalCount: totalCount,
+	}, nil
 }
 
 // isSystemField reports whether k is a memory-reserved field name that the

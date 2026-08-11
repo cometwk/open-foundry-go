@@ -317,6 +317,7 @@ type recordingProvider struct {
 	updateCalls     int
 	deleteCalls     int
 	createLinkCalls int
+	updateLinkCalls int
 	deleteLinkCalls int
 }
 
@@ -347,6 +348,10 @@ func (r *recordingProvider) CreateLink(ctx spi.RequestContext, typ, fromID, toID
 }
 func (r *recordingProvider) GetLink(ctx spi.RequestContext, typ, linkID string) (spi.OntologyLink, error) {
 	return r.inner.GetLink(ctx, typ, linkID)
+}
+func (r *recordingProvider) UpdateLink(ctx spi.RequestContext, typ, linkID string, p map[string]any, ev *int) (spi.OntologyLink, error) {
+	r.updateLinkCalls++
+	return r.inner.UpdateLink(ctx, typ, linkID, p, ev)
 }
 func (r *recordingProvider) DeleteLink(ctx spi.RequestContext, typ, linkID string) error {
 	r.deleteLinkCalls++

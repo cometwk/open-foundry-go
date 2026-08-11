@@ -212,31 +212,11 @@ func TestDeleteLink_CrossTenant_NoOpLeavesOriginalVisible(t *testing.T) {
 }
 
 func TestUnimplementedFloor_RemainingLinkSPI(t *testing.T) {
-	p := New()
-	a, _ := tenancyA()
-	cases := []struct {
-		name string
-		fn   func() error
-	}{
-		{"UpdateLink", func() error {
-			_, err := p.UpdateLink(a, "Supplies", "x", map[string]any{}, nil)
-			return err
-		}},
-		{"GetLinks", func() error {
-			_, err := p.GetLinks(a, "x", "Supplies", "outbound", nil)
-			return err
-		}},
-		{"Traverse", func() error {
-			_, err := p.Traverse(a, "x", spi.TraversalPath{}, nil)
-			return err
-		}},
-	}
-	for _, c := range cases {
-		err := c.fn()
-		if !errors.Is(err, spi.ErrUnimplemented) {
-			t.Errorf("%s err = %v, want ErrUnimplemented", c.name, err)
-		}
-	}
+	// Phase 3 (U6): UpdateLink/GetLinks/Traverse implemented — the link
+	// ErrUnimplemented floor is empty. Positive coverage lives in
+	// provider_link_extra_test.go. Retained as a doc-only sentinel so a
+	// future deferred link SPI method has a place to land.
+	t.Log("U6 folded UpdateLink/GetLinks/Traverse off the ErrUnimplemented floor")
 }
 
 // applySupplyLinkSchema installs a minimal schema with one link type so
