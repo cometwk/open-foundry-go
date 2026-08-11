@@ -113,14 +113,59 @@ func TestGetObject_AfterCrossTenantHardDelete_StillVisibleToOriginal(t *testing.
 	}
 }
 
-func TestDeleteObject_SoftMode_Unimplemented(t *testing.T) {
+// TestDeleteObject_SoftMode_StampsDeletedAt is the Phase 3 flip of the
+// Phase 2 "soft mode unimplemented" contract: soft delete now stamps
+// _deletedAt, increments _version, and re-stamps _updatedAt without
+// removing the object from the map (R3 write side, AE2 write side). The
+// read-path mask (GetObject returns ErrObjectNotFound for soft-deleted)
+// lands in U3 with its own dedicated test. Here, we assert the write
+// invariants directly via a parallel direct-read of the stored object;
+// for U2 the public GetObject still returns the soft-deleted object
+// until U3 adds the mask.
+func TestDeleteObject_SoftMode_StampsDeletedAt(t *testing.T) {
 	p := New()
 	a, _ := tenancyA()
 	obj, _ := p.CreateObject(a, "Supplier", map[string]any{"name": "x"})
 	id := obj["_id"].(string)
-	err := p.DeleteObject(a, "Supplier", id, "soft")
-	if !errors.Is(err, spi.ErrUnimplemented) {
-		t.Fatalf("DeleteObject(soft) err = %v, want ErrUnimplemented", err)
+	if err := p.DeleteObject(a, "Supplier", id, "soft"); err != nil {
+		t.Fatalf("DeleteObject(soft) err = %v, want nil (U2 soft delete implemented)", err)
+	}
+	// Read the stored object directly under lock — bypassing the public
+	// GetObject path that U3 will mask. Stamp invariants belong to U2.
+	p.mu.Lock()
+	stored, ok := p.objects[objectKey("Supplier", id)]
+	p.mu.Unlock()
+	if !ok {
+		t.Fatalf("soft delete must NOT remove the object from the map (U2), but it is gone")
+	}
+	if stored["_deletedAt"] == nil {
+		t.Errorf("soft delete must stamp _deletedAt, got nil (U2)")
+	}
+	if v := objectVersionValue(stored); v != 2 {
+		t.Errorf("soft delete must increment _version to 2, got %v (U2)", v)
+	}
+	if stored["_updatedAt"] == nil {
+		t.Errorf("soft delete must re-stamp _updatedAt (U2)")
+	}
+	// User fields preserved: hard-delete semantics would drop the entry.
+	if stored["name"] != "x" {
+		t.Errorf("soft delete must preserve user fields: name = %v, want x (U2)", stored["name"])
+	}
+	// Cross-tenant soft delete is a no-op (idempotent, original tenant keeps).
+	_, b := tenancyA() // b is tenantB (the second return value)
+	obj2, _ := p.CreateObject(b, "Supplier", map[string]any{"name": "y"})
+	id2 := obj2["_id"].(string)
+	if err := p.DeleteObject(a, "Supplier", id2, "soft"); err != nil {
+		t.Errorf("cross-tenant soft delete err = %v, want nil (U2 idempotent no-op)", err)
+	}
+	p.mu.Lock()
+	stored2, ok2 := p.objects[objectKey("Supplier", id2)]
+	p.mu.Unlock()
+	if !ok2 {
+		t.Fatalf("cross-tenant soft delete removed the other tenant's object (U2 no-leak)")
+	}
+	if stored2["_deletedAt"] != nil {
+		t.Errorf("cross-tenant soft delete must not stamp _deletedAt on other tenant's object (U2 no-leak)")
 	}
 }
 
@@ -230,17 +275,70 @@ func TestUpdateObject_CrossTenant_NotFound_NoLeak(t *testing.T) {
 	}
 }
 
-func TestUpdateObject_ExpectedVersionArgument_SilentlyIgnored(t *testing.T) {
+// TestUpdateObject_ExpectedVersionConflict_MismatchesReject is the Phase 3
+// flip of the Phase 2 "silently ignored" contract: a non-nil expectedVersion
+// that does not match the stored _version now returns ErrVersionConflict
+// before any write. A matching expectedVersion (or nil) accepts the update
+// and increments _version. Covers R1, AE1.
+func TestUpdateObject_ExpectedVersionConflict_MismatchesReject(t *testing.T) {
 	p := New()
 	a, _ := tenancyA()
 	obj, _ := p.CreateObject(a, "Supplier", map[string]any{"name": "x"})
 	id := obj["_id"].(string)
-	// Phase 2 does not store _version; passing an expected version must not
-	// reject the update. Use values a real version-check would reject.
-	v := 999
-	if _, err := p.UpdateObject(a, "Supplier", id, map[string]any{"name": "y"}, &v); err != nil {
-		t.Fatalf("UpdateObject with non-nil expectedVersion err = %v, want nil (versioning deferred)", err)
+
+	// Mismatch: stored _version is 1; expect 999 — must reject before write.
+	stale := 999
+	_, err := p.UpdateObject(a, "Supplier", id, map[string]any{"name": "y"}, &stale)
+	if !errors.Is(err, spi.ErrVersionConflict) {
+		t.Fatalf("UpdateObject(stale version) err = %v, want ErrVersionConflict (U2)", err)
 	}
+	// Reject-before-write: the stored object's name must be unchanged.
+	got, _ := p.GetObject(a, "Supplier", id)
+	if got["name"] != "x" {
+		t.Errorf("UpdateObject(stale version) wrote anyway: name = %v, want x (U2 reject-before-write)", got["name"])
+	}
+
+	// Match: expectedVersion 1 accepts and increments _version to 2.
+	match := 1
+	updated, err := p.UpdateObject(a, "Supplier", id, map[string]any{"name": "y"}, &match)
+	if err != nil {
+		t.Fatalf("UpdateObject(matching version) err = %v, want nil (U2)", err)
+	}
+	if updated["name"] != "y" {
+		t.Errorf("UpdateObject name = %v, want y (U2)", updated["name"])
+	}
+	if v := objectVersionValue(updated); v != 2 {
+		t.Errorf("UpdateObject _version = %v, want 2 (U2 increment-on-match)", v)
+	}
+
+	// nil expectedVersion skips the check; accepts at any current version and
+	// still increments. Covers R1's nil-means-accept clause.
+	if _, err := p.UpdateObject(a, "Supplier", id, map[string]any{"tier": "Gold"}, nil); err != nil {
+		t.Fatalf("UpdateObject(nil expectedVersion) err = %v, want nil (U2)", err)
+	}
+	got2, _ := p.GetObject(a, "Supplier", id)
+	if v := objectVersionValue(got2); v != 3 {
+		t.Errorf("UpdateObject _version after nil-check = %v, want 3 (U2)", v)
+	}
+	if got2["tier"] != "Gold" {
+		t.Errorf("UpdateObject tier = %v, want Gold (U2 merge)", got2["tier"])
+	}
+}
+
+// objectVersionValue is a tiny test helper that coerces _version (int when
+// read from the stored authoritative map under lock; float64 when read from
+// a JSON-clone returned to the caller) to a plain int for assertions. Mirrors
+// the coercion the provider's own conflict check (U2 objectVersionInt) uses.
+func objectVersionValue(o spi.OntologyObject) int {
+	switch v := o["_version"].(type) {
+	case int:
+		return v
+	case float64:
+		return int(v)
+	case int64:
+		return int(v)
+	}
+	return -1
 }
 
 func TestUnimplementedFloor_RemaingObjectSPI(t *testing.T) {
@@ -270,14 +368,9 @@ func TestUnimplementedFloor_RemaingObjectSPI(t *testing.T) {
 			_, err := p.BeginTransaction(a)
 			return err
 		}},
-		{"GetObjectAtVersion", func() error {
-			_, err := p.GetObjectAtVersion(a, "Supplier", "x", 1)
-			return err
-		}},
-		{"GetObjectAtTime", func() error {
-			_, err := p.GetObjectAtTime(a, "Supplier", "x", time.Now())
-			return err
-		}},
+		// Phase 3 (U2): GetObjectAtVersion/GetObjectAtTime implemented —
+		// removed from the ErrUnimplemented floor. They have their own
+		// positive tests in provider_version_test.go.
 		{"EnsureIndex", func() error {
 			return p.EnsureIndex(a, "Supplier", spi.IndexDefinition{})
 		}},

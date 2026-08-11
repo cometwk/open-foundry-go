@@ -78,11 +78,17 @@ func (p *Provider) HealthCheck() (spi.HealthStatus, error) {
 	return spi.HealthStatus{Healthy: true, Provider: "memory", LatencyMs: 0}, nil
 }
 
-// Capabilities returns Phase 1 capabilities (schema only).
+// Capabilities returns the Phase 3 capability surface. Phase 2 flipped
+// all flags false; Phase 3 enables them progressively (R9):
+//   - U2: SupportsTemporalQueries (GetObjectAtVersion/GetObjectAtTime)
+//
+// Remaining flags stay false until their units (U4 search, U5 bulk, U6
+// graph traversal, U7 transactions) land; they will flip in those units.
+// SupportsGeoQueries remains false for all of Phase 3.
 func (p *Provider) Capabilities() spi.StorageCapabilities {
 	return spi.StorageCapabilities{
 		SupportsTransactions:    false,
-		SupportsTemporalQueries: false,
+		SupportsTemporalQueries: true,
 		SupportsFullTextSearch:  false,
 		SupportsGeoQueries:      false,
 		SupportsGraphTraversal:  false,
@@ -206,14 +212,27 @@ func (p *Provider) GetObject(ctx spi.RequestContext, typ, id string) (spi.Ontolo
 
 // UpdateObject merges the patch (system fields ignored from the patch,
 // and re-stamped at the end) onto the existing object. expectedVersion is
-// intentionally ignored in Phase 2 (versioning deferred to Phase 3).
-func (p *Provider) UpdateObject(ctx spi.RequestContext, typ, id string, properties map[string]any, _ *int) (spi.OntologyObject, error) {
+// enforced in Phase 3: a non-nil pointer must equal the stored _version or
+// the call rejects with ErrVersionConflict before any write; nil accepts
+// any version. On accept, _version increments by 1 and a snapshot is pushed
+// into versionHistory (R1, R2). Covers AE1.
+func (p *Provider) UpdateObject(ctx spi.RequestContext, typ, id string, properties map[string]any, expectedVersion *int) (spi.OntologyObject, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	key := objectKey(typ, id)
 	existing, ok := p.objects[key]
 	if !ok || existing["_tenantId"] != ctx.TenantID {
 		return nil, fmt.Errorf("%w: %s/%s", spi.ErrObjectNotFound, typ, id)
+	}
+	// Conflict check before any write (mirrors TS _doUpdateObject
+	// VERSION_CONFLICT throw at memory-storage-provider.ts:372-375). The
+	// stored authoritative copy keeps _version as int; objectVersionInt
+	// also tolerates float64 in case history snapshots are compared.
+	if expectedVersion != nil {
+		current := objectVersionInt(existing)
+		if current != *expectedVersion {
+			return nil, fmt.Errorf("%w: %s/%s expected %d, have %d", spi.ErrVersionConflict, typ, id, *expectedVersion, current)
+		}
 	}
 	merged := spi.OntologyObject{}
 	for k, v := range existing {
@@ -225,34 +244,137 @@ func (p *Provider) UpdateObject(ctx spi.RequestContext, typ, id string, properti
 		}
 		merged[k] = v
 	}
-	// Re-stamp system fields with authoritative values.
+	// Re-stamp system fields with authoritative values. _version advances
+	// by 1 on every accepted mutation; the int representation stays the
+	// source of truth (JSON clones surface as float64, see Risks table).
 	merged["_id"] = existing["_id"]
 	merged["_type"] = existing["_type"]
 	merged["_tenantId"] = existing["_tenantId"]
 	merged["_createdAt"] = existing["_createdAt"]
 	merged["_updatedAt"] = systemTimestamps()
+	merged["_version"] = objectVersionInt(existing) + 1
 	p.objects[key] = merged
+	if snap, err := cloneVersionSnapshot(merged); err == nil {
+		p.pushVersionHistoryUnlocked(key, snap)
+	} else {
+		return nil, err
+	}
 	return cloneObject(merged)
 }
 
-// DeleteObject supports hard delete only in Phase 2. `mode="soft"`
-// returns ErrUnimplemented so the soft-delete path stays explicit. Hard
-// delete is idempotent and a no-op across tenants (the original tenant
-// retains its object).
+// DeleteObject supports hard and soft delete. `mode="soft"` stamps
+// _deletedAt, increments _version, re-stamps _updatedAt, and pushes a
+// snapshot — the object stays in the map so GetObject (U3) can mask it as
+// not-found and QueryObjects (U4) can honor includeDeleted. `mode="hard"`
+// removes the entry, idempotent and a no-op across tenants (the original
+// tenant retains its object). Any other mode is routed to soft (treated as
+// the catch-all non-destructive path), matching the plan's "non-hard is
+// soft" leaning. Covers R3 (write side), AE2 (write side).
 func (p *Provider) DeleteObject(ctx spi.RequestContext, typ, id, mode string) error {
-	if mode != "hard" {
-		return fmt.Errorf("%w: DeleteObject mode %q not supported in Phase 2 (hard only)", spi.ErrUnimplemented, mode)
-	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	key := objectKey(typ, id)
 	existing, ok := p.objects[key]
 	if !ok || existing["_tenantId"] != ctx.TenantID {
-		// Idempotent: a missing or cross-tenant id is a no-op.
+		// Idempotent: a missing or cross-tenant id is a no-op for both modes.
 		return nil
 	}
-	delete(p.objects, key)
+	if mode == "hard" {
+		delete(p.objects, key)
+		return nil
+	}
+	// Soft delete: stamp _deletedAt + _version+1, push history, keep the
+	// entry. Re-merging from existing preserves all user fields and prior
+	// system fields (_createdAt, _tenantId, _id, _type unchanged).
+	merged := spi.OntologyObject{}
+	for k, v := range existing {
+		merged[k] = v
+	}
+	merged["_updatedAt"] = systemTimestamps()
+	merged["_deletedAt"] = systemTimestamps()
+	merged["_version"] = objectVersionInt(existing) + 1
+	p.objects[key] = merged
+	if snap, err := cloneVersionSnapshot(merged); err == nil {
+		p.pushVersionHistoryUnlocked(key, snap)
+	} else {
+		return err
+	}
 	return nil
+}
+
+// GetObjectAtVersion returns the snapshot of (typ, id) at the given version,
+// masked to the caller's tenant. Missing key, version, or cross-tenant
+// access all surface as ErrObjectNotFound (no leak, matching GetObject).
+// Covers R2, AE1.
+func (p *Provider) GetObjectAtVersion(ctx spi.RequestContext, typ, id string, version int) (spi.OntologyObject, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	key := objectKey(typ, id)
+	for _, snap := range p.versionHistory[key] {
+		if snap["_tenantId"] != ctx.TenantID {
+			continue
+		}
+		if objectVersionInt(snap) == version {
+			return cloneObject(snap)
+		}
+	}
+	return nil, fmt.Errorf("%w: %s/%s at version %d", spi.ErrObjectNotFound, typ, id, version)
+}
+
+// GetObjectAtTime returns the newest snapshot of (typ, id) whose _updatedAt
+// is at or before ts, masked to the caller's tenant. Mirrors TS
+// getObjectAtTime (memory-storage-provider.ts:990-1004). Covers R2, AE1.
+func (p *Provider) GetObjectAtTime(ctx spi.RequestContext, typ, id string, ts time.Time) (spi.OntologyObject, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	key := objectKey(typ, id)
+	var newest spi.OntologyObject
+	var newestTs time.Time
+	found := false
+	for _, snap := range p.versionHistory[key] {
+		if snap["_tenantId"] != ctx.TenantID {
+			continue
+		}
+		s, ok := snap["_updatedAt"].(string)
+		if !ok {
+			continue
+		}
+		parsed, err := time.Parse(time.RFC3339Nano, s)
+		if err != nil {
+			// Unparseable _updatedAt: cannot order — skip per the plan's
+			// AsOfTime parse-failure handling (treat as no snapshot).
+			continue
+		}
+		if parsed.After(ts) {
+			continue
+		}
+		if !found || parsed.After(newestTs) {
+			newest = snap
+			newestTs = parsed
+			found = true
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("%w: %s/%s at or before %s", spi.ErrObjectNotFound, typ, id, ts.Format(time.RFC3339Nano))
+	}
+	return cloneObject(newest)
+}
+
+// objectVersionInt returns the _version of o as an int, tolerating the
+// JSON-clone int→float64 widening (Risks table). Returns 0 when _version
+// is absent (Phase 1/2 schemas that predate U1, or a malformed map); the
+// caller's behavior on 0 is a nil expectedVersion-skip or a conflict on
+// any positive expected version, which matches the "no version yet" intent.
+func objectVersionInt(o spi.OntologyObject) int {
+	switch v := o["_version"].(type) {
+	case int:
+		return v
+	case float64:
+		return int(v)
+	case int64:
+		return int(v)
+	}
+	return 0
 }
 
 // objectKey is the canonical map key for stored objects.

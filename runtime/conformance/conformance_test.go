@@ -1,24 +1,23 @@
 // Package conformance is the Go-native lifecycle conformance subset
-// for the Phase 2 runtime. It mirrors the intent — not the AST — of
-// the TypeScript SPI conformance suite at
+// for the runtime. It mirrors the intent — not the AST — of the
+// TypeScript SPI conformance suite at
 // tests/spi-conformance/src/categories/{crud,links}.ts: it walks the
-// six implemented verbs (Create/Get/Update/Delete Object and
-// Create/Delete Link), asserts the ErrUnimplemented floor for every
-// SPI method Phase 2 deliberately leaves to later phases, and drives
-// a single integration end-to-end through the supply-chain domain
-// pack (the Gold Path, F7).
+// six Phase 2 verbs (Create/Get/Update/Delete Object and Create/Delete
+// Link), asserts the ErrUnimplemented floor for the SPI methods later
+// phases leave unimplemented, and drives a single integration
+// end-to-end through the supply-chain domain pack (the Gold Path).
 //
-// This is intentionally NOT a port of the TS suite. Phase 2 does not
-// assert TS parity: cardinality, soft-delete, _version bookkeeping,
-// query, traversal, transactions, and event emission are all out of
-// scope and covered by the ErrUnimplemented floor here.
+// This is intentionally NOT a port of the TS suite. Phase 3 (U2) lifts
+// _version bookkeeping, soft-delete writes, and temporal reads off the
+// floor; cardinality, query, traversal, transactions, and event
+// emission remain deferred and stay floored here until their units
+// land. The package never asserts TS parity.
 package conformance_test
 
 import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/openfoundry/runtime/engine"
 	"github.com/openfoundry/runtime/ir"
@@ -216,14 +215,9 @@ func TestConformance_ErrUnimplementedFloor(t *testing.T) {
 			_, err := p.BeginTransaction(ctx)
 			return err
 		}},
-		{"GetObjectAtVersion", func() error {
-			_, err := p.GetObjectAtVersion(ctx, "Supplier", "x", 1)
-			return err
-		}},
-		{"GetObjectAtTime", func() error {
-			_, err := p.GetObjectAtTime(ctx, "Supplier", "x", time.Now())
-			return err
-		}},
+		// Phase 3 (U2): GetObjectAtVersion/GetObjectAtTime implemented —
+		// removed from the ErrUnimplemented floor. Positive coverage lives
+		// in runtime/storage/memory/provider_version_test.go.
 		{"EnsureIndex", func() error {
 			return p.EnsureIndex(ctx, "Supplier", spi.IndexDefinition{})
 		}},

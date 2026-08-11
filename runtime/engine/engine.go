@@ -63,7 +63,7 @@ func (e *Engine) CreateObject(ctx spi.RequestContext, typ string, properties map
 	if err != nil {
 		return nil, err
 	}
-	// TODO(Phase 3): emitObjectCreated via event bus.
+	// TODO(Phase 4): emitObjectCreated via event bus.
 	return obj, nil
 }
 
@@ -76,15 +76,18 @@ func (e *Engine) GetObject(ctx spi.RequestContext, typ, id string) (spi.Ontology
 	if err != nil {
 		return nil, err
 	}
-	// TODO(Phase 3): evaluate LAZY computed fields and merge.
+	// TODO(Phase 4): evaluate LAZY computed fields and merge.
 	return obj, nil
 }
 
 // UpdateObject reads the existing object first (returning a typed
 // not-found before any write), merges the patch excluding system
-// fields, validates the merged state, then delegates to SPI with
-// expectedVersion=nil (version bookkeeping is deferred to Phase 3).
-// The returned object carries the storage-advanced _updatedAt.
+// fields, validates the merged state, then delegates to SPI with the
+// caller's expectedVersion. Phase 3 transmits expectedVersion (Phase 2
+// passed nil and deferred versioning); the memory provider is now
+// authoritative for the conflict check and _version increment (R1, R8).
+// A nil expectedVersion from the caller means "accept any version".
+// The returned object carries the storage-advanced _updatedAt and _version.
 func (e *Engine) UpdateObject(ctx spi.RequestContext, typ, id string, patch map[string]any, expectedVersion *int) (spi.OntologyObject, error) {
 	existing, err := e.storage.GetObject(ctx, typ, id)
 	if err != nil {
@@ -97,11 +100,11 @@ func (e *Engine) UpdateObject(ctx spi.RequestContext, typ, id string, patch map[
 	if err := e.validateObjectPayload(typ, merged, true); err != nil {
 		return nil, err
 	}
-	updated, err := e.storage.UpdateObject(ctx, typ, id, patch, nil)
+	updated, err := e.storage.UpdateObject(ctx, typ, id, patch, expectedVersion)
 	if err != nil {
 		return nil, err
 	}
-	// TODO(Phase 3): emitObjectUpdated via event bus.
+	// TODO(Phase 4): emitObjectUpdated via event bus.
 	return updated, nil
 }
 
@@ -118,7 +121,7 @@ func (e *Engine) DeleteObject(ctx spi.RequestContext, typ, id, mode string) erro
 	if err := e.storage.DeleteObject(ctx, typ, id, mode); err != nil {
 		return err
 	}
-	// TODO(Phase 3): emitObjectDeleted via event bus.
+	// TODO(Phase 4): emitObjectDeleted via event bus.
 	return nil
 }
 
@@ -314,7 +317,7 @@ func (e *Engine) CreateLink(ctx spi.RequestContext, typ, fromID, toID string, pr
 	if err != nil {
 		return nil, err
 	}
-	// TODO(Phase 3): emitLinkCreated via event bus.
+	// TODO(Phase 4): emitLinkCreated via event bus.
 	return link, nil
 }
 
@@ -341,6 +344,6 @@ func (e *Engine) DeleteLink(ctx spi.RequestContext, typ, linkID string) error {
 	if err := e.storage.DeleteLink(ctx, typ, linkID); err != nil {
 		return err
 	}
-	// TODO(Phase 3): emitLinkDeleted via event bus.
+	// TODO(Phase 4): emitLinkDeleted via event bus.
 	return nil
 }

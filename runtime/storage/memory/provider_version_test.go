@@ -3,6 +3,7 @@ package memory
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/openfoundry/runtime/spi"
 )
@@ -122,5 +123,150 @@ func TestCreateLink_DoesNotPushVersionHistory(t *testing.T) {
 		if _, ok := p.versionHistory[endKey]; !ok {
 			t.Errorf("end object %s missing versionHistory entry (U1 sanity)", endKey)
 		}
+	}
+}
+
+// TestGetObjectAtVersion_ReturnsSnapshotAtVersion exercises the temporal
+// read path landed in U2. Create pushes version 1; each accepted update
+// pushes version N+1; GetObjectAtVersion returns the snapshot at that
+// version. Covers R2, AE1 (temporal read half).
+func TestGetObjectAtVersion_ReturnsSnapshotAtVersion(t *testing.T) {
+	p := New()
+	a, _ := tenancyA()
+	obj, _ := p.CreateObject(a, "Supplier", map[string]any{"name": "v1"})
+	id := obj["_id"].(string)
+
+	// version 1, 2, 3 — drive through UpdateObject with nil expectedVersion
+	// (accept any) to advance _version and push snapshots.
+	if _, err := p.UpdateObject(a, "Supplier", id, map[string]any{"name": "v2"}, nil); err != nil {
+		t.Fatalf("UpdateObject v1->v2 err: %v", err)
+	}
+	if _, err := p.UpdateObject(a, "Supplier", id, map[string]any{"name": "v3"}, nil); err != nil {
+		t.Fatalf("UpdateObject v2->v3 err: %v", err)
+	}
+
+	cases := []struct {
+		version    int
+		wantName any
+	}{
+		{1, "v1"},
+		{2, "v2"},
+		{3, "v3"},
+	}
+	for _, c := range cases {
+		got, err := p.GetObjectAtVersion(a, "Supplier", id, c.version)
+		if err != nil {
+			t.Fatalf("GetObjectAtVersion(%d) err = %v, want nil (U2 AE1)", c.version, err)
+		}
+		if got["name"] != c.wantName {
+			t.Errorf("GetObjectAtVersion(%d) name = %v, want %v (U2 AE1)", c.version, got["name"], c.wantName)
+		}
+		if v := objectVersionValue(got); v != c.version {
+			t.Errorf("GetObjectAtVersion(%d) _version = %d, want %d (U2 AE1)", c.version, v, c.version)
+		}
+	}
+
+	// Missing version surfaces typed not-found; no leak.
+	if _, err := p.GetObjectAtVersion(a, "Supplier", id, 999); !errors.Is(err, spi.ErrObjectNotFound) {
+		t.Errorf("GetObjectAtVersion(missing) err = %v, want ErrObjectNotFound (U2 AE1)", err)
+	}
+	// Missing object+version surfaces typed not-found.
+	if _, err := p.GetObjectAtVersion(a, "Supplier", "never-existed", 1); !errors.Is(err, spi.ErrObjectNotFound) {
+		t.Errorf("GetObjectAtVersion(missing obj) err = %v, want ErrObjectNotFound (U2 AE1)", err)
+	}
+}
+
+// TestGetObjectAtVersion_CrossTenant_NoLeak asserts the temporal read
+// path honors tenant isolation: tenant B cannot retrieve tenant A's
+// snapshots. Covers R2 + the cross-tenant mask KTD-1/Tenancy invariant.
+func TestGetObjectAtVersion_CrossTenant_NoLeak(t *testing.T) {
+	p := New()
+	a, b := tenancyA()
+	obj, _ := p.CreateObject(a, "Supplier", map[string]any{"name": "v1"})
+	id := obj["_id"].(string)
+	if _, err := p.UpdateObject(a, "Supplier", id, map[string]any{"name": "v2"}, nil); err != nil {
+		t.Fatalf("UpdateObject err: %v", err)
+	}
+	if _, err := p.GetObjectAtVersion(b, "Supplier", id, 1); !errors.Is(err, spi.ErrObjectNotFound) {
+		t.Errorf("GetObjectAtVersion cross-tenant err = %v, want ErrObjectNotFound (U2 no leak)", err)
+	}
+}
+
+// TestGetObjectAtTime_ReturnsNewestAtOrBefore exercises the temporal
+// read path for time-based lookup. Create pushes v1 at t0; update pushes
+// v2 at t1; GetObjectAtTime(t介于) returns the newest snapshot whose
+// _updatedAt ≤ ts. Covers R2, AE1 (temporal read half).
+func TestGetObjectAtTime_ReturnsNewestAtOrBefore(t *testing.T) {
+	p := New()
+	a, _ := tenancyA()
+	obj, _ := p.CreateObject(a, "Supplier", map[string]any{"name": "v1"})
+	id := obj["_id"].(string)
+
+	// Capture t0 after the create so GetObjectAtTime(t0) sees v1.
+	p.mu.Lock()
+	t0Snap, _ := cloneObject(p.objects[objectKey("Supplier", id)])
+	p.mu.Unlock()
+	t0Str, _ := t0Snap["_updatedAt"].(string)
+	t0, err := time.Parse(time.RFC3339Nano, t0Str)
+	if err != nil {
+		t.Fatalf("parse t0 _updatedAt %q: %v", t0Str, err)
+	}
+
+	// Advance time so the next snapshot's _updatedAt is strictly after t0.
+	time.Sleep(2 * time.Millisecond)
+	if _, err := p.UpdateObject(a, "Supplier", id, map[string]any{"name": "v2"}, nil); err != nil {
+		t.Fatalf("UpdateObject err: %v", err)
+	}
+	p.mu.Lock()
+	t1Snap, _ := cloneObject(p.objects[objectKey("Supplier", id)])
+	p.mu.Unlock()
+	t1Str, _ := t1Snap["_updatedAt"].(string)
+	t1, err := time.Parse(time.RFC3339Nano, t1Str)
+	if err != nil {
+		t.Fatalf("parse t1 _updatedAt %q: %v", t1Str, err)
+	}
+
+	// At t0: only v1 is admissible.
+	got0, err := p.GetObjectAtTime(a, "Supplier", id, t0)
+	if err != nil {
+		t.Fatalf("GetObjectAtTime(t0) err = %v, want nil (U2 AE1)", err)
+	}
+	if got0["name"] != "v1" {
+		t.Errorf("GetObjectAtTime(t0) name = %v, want v1 (U2 AE1)", got0["name"])
+	}
+
+	// At t1: v2 is newest at-or-before.
+	got1, err := p.GetObjectAtTime(a, "Supplier", id, t1)
+	if err != nil {
+		t.Fatalf("GetObjectAtTime(t1) err = %v, want nil (U2 AE1)", err)
+	}
+	if got1["name"] != "v2" {
+		t.Errorf("GetObjectAtTime(t1) name = %v, want v2 (U2 AE1)", got1["name"])
+	}
+
+	// Before any snapshot: not-found (no leak).
+	pre := t0.Add(-1 * time.Second)
+	if _, err := p.GetObjectAtTime(a, "Supplier", id, pre); !errors.Is(err, spi.ErrObjectNotFound) {
+		t.Errorf("GetObjectAtTime(pre-t0) err = %v, want ErrObjectNotFound (U2 AE1)", err)
+	}
+	// Missing object: not-found (no leak).
+	if _, err := p.GetObjectAtTime(a, "Supplier", "never-existed", t1); !errors.Is(err, spi.ErrObjectNotFound) {
+		t.Errorf("GetObjectAtTime(missing obj) err = %v, want ErrObjectNotFound (U2 AE1 no leak)", err)
+	}
+}
+
+// TestGetObjectAtTime_CrossTenant_NoLeak asserts time-based lookup also
+// honors tenant isolation. Covers R2 + cross-tenant mask.
+func TestGetObjectAtTime_CrossTenant_NoLeak(t *testing.T) {
+	p := New()
+	a, b := tenancyA()
+	obj, _ := p.CreateObject(a, "Supplier", map[string]any{"name": "v1"})
+	id := obj["_id"].(string)
+	p.mu.Lock()
+	snap, _ := cloneObject(p.objects[objectKey("Supplier", id)])
+	p.mu.Unlock()
+	ts, _ := time.Parse(time.RFC3339Nano, snap["_updatedAt"].(string))
+	if _, err := p.GetObjectAtTime(b, "Supplier", id, ts); !errors.Is(err, spi.ErrObjectNotFound) {
+		t.Errorf("GetObjectAtTime cross-tenant err = %v, want ErrObjectNotFound (U2 no leak)", err)
 	}
 }
