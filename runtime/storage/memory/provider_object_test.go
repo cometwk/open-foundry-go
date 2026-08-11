@@ -12,7 +12,9 @@ func tenantCtx(tenant string) spi.RequestContext {
 	return spi.RequestContext{TenantID: tenant, ActorID: "test"}
 }
 
-func tenancyA() (spi.RequestContext, spi.RequestContext) { return tenantCtx("tenantA"), tenantCtx("tenantB") }
+func tenancyA() (spi.RequestContext, spi.RequestContext) {
+	return tenantCtx("tenantA"), tenantCtx("tenantB")
+}
 
 func TestCreateObject_ThenGet_RoundTrips(t *testing.T) {
 	p := New()
@@ -233,7 +235,7 @@ func TestUnimplementedFloor_RemaingObjectSPI(t *testing.T) {
 	a, _ := tenancyA()
 	cases := []struct {
 		name string
-		fn  func() error
+		fn   func() error
 	}{
 		{"QueryObjects", func() error {
 			_, err := p.QueryObjects(a, "Supplier", spi.FilterExpression{}, nil)

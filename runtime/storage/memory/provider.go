@@ -17,10 +17,11 @@ import (
 // UnimplementedStorageProvider and return ErrUnimplemented.
 type Provider struct {
 	spi.UnimplementedStorageProvider
-	mu       sync.Mutex
-	schemas  map[int]spi.OntologySchema
-	current  int
-	objects  map[string]spi.OntologyObject // type:id -> OntologyObject
+	mu      sync.Mutex
+	schemas map[int]spi.OntologySchema
+	current int
+	objects map[string]spi.OntologyObject // type:id -> OntologyObject
+	links   map[string]spi.OntologyLink   // type:id -> OntologyLink
 }
 
 // New creates an empty memory provider.
@@ -28,6 +29,7 @@ func New() *Provider {
 	return &Provider{
 		schemas: map[int]spi.OntologySchema{},
 		objects: map[string]spi.OntologyObject{},
+		links:   map[string]spi.OntologyLink{},
 	}
 }
 
@@ -73,14 +75,14 @@ func (p *Provider) HealthCheck() (spi.HealthStatus, error) {
 // Capabilities returns Phase 1 capabilities (schema only).
 func (p *Provider) Capabilities() spi.StorageCapabilities {
 	return spi.StorageCapabilities{
-		SupportsTransactions:   false,
+		SupportsTransactions:    false,
 		SupportsTemporalQueries: false,
-		SupportsFullTextSearch: false,
-		SupportsGeoQueries:     false,
-		SupportsGraphTraversal: false,
-		SupportsBulkMutations:  false,
-		MaxTraversalDepth:      0,
-		ReplicationSupport:     spi.ReplicationNone,
+		SupportsFullTextSearch:  false,
+		SupportsGeoQueries:      false,
+		SupportsGraphTraversal:  false,
+		SupportsBulkMutations:   false,
+		MaxTraversalDepth:       0,
+		ReplicationSupport:      spi.ReplicationNone,
 	}
 }
 
@@ -209,6 +211,124 @@ func (p *Provider) DeleteObject(ctx spi.RequestContext, typ, id, mode string) er
 
 // objectKey is the canonical map key for stored objects.
 func objectKey(typ, id string) string { return typ + ":" + id }
+
+// linkKey is the canonical map key for stored links.
+func linkKey(typ, id string) string { return "link:" + typ + ":" + id }
+
+// linkSystemFields is the reserved field set on OntologyLink. Properties
+// supplying these are ignored and the authoritative values are stamped.
+func linkSystemFields() map[string]bool {
+	return map[string]bool{
+		"_id":        true,
+		"_type":      true,
+		"_tenantId":  true,
+		"_fromId":    true,
+		"_toId":      true,
+		"_fromType":  true,
+		"_toType":    true,
+		"_createdAt": true,
+		"_updatedAt": true,
+		"_version":   true,
+		"_deletedAt": true,
+	}
+}
+
+// isLinkSystemField reports whether k is a link-reserved field name.
+func isLinkSystemField(k string) bool { return linkSystemFields()[k] }
+
+// cloneLink deep-copies an OntologyLink through JSON, matching the
+// cloneObject / cloneSchema convention.
+func cloneLink(l spi.OntologyLink) (spi.OntologyLink, error) {
+	b, err := json.Marshal(l)
+	if err != nil {
+		return nil, err
+	}
+	var out spi.OntologyLink
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// CreateLink honors the Engine-supplied _engineLinkId (UUIDv7) when present
+// and otherwise mints one internally. _engineLinkId is stripped from the
+// stored link's user-facing properties, matching the TS contract
+// "Engine generates, SPI stores".
+func (p *Provider) CreateLink(ctx spi.RequestContext, typ, fromID, toID string, properties map[string]any) (spi.OntologyLink, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	engineID, _ := properties["_engineLinkId"].(string)
+	id := engineID
+	if id == "" {
+		id = uuidv7.New()
+	}
+	fromType, toType := p.linkTypeDefinitionUnlocked(typ)
+	ts := systemTimestamps()
+	link := spi.OntologyLink{
+		"_id":        id,
+		"_type":      typ,
+		"_tenantId":  ctx.TenantID,
+		"_fromId":    fromID,
+		"_toId":      toID,
+		"_fromType":  fromType,
+		"_toType":    toType,
+		"_createdAt": ts,
+		"_updatedAt": ts,
+	}
+	for k, v := range properties {
+		if k == "_engineLinkId" || isLinkSystemField(k) {
+			continue
+		}
+		link[k] = v
+	}
+	p.links[linkKey(typ, id)] = link
+	return cloneLink(link)
+}
+
+// linkTypeDefinitionUnlocked is the lock-free inner used by CreateLink,
+// which already holds p.mu.
+func (p *Provider) linkTypeDefinitionUnlocked(typ string) (fromType, toType string) {
+	if p.current == 0 {
+		return "unknown", "unknown"
+	}
+	schema, ok := p.schemas[p.current]
+	if !ok {
+		return "unknown", "unknown"
+	}
+	for _, lt := range schema.LinkTypes {
+		if lt.Name == typ {
+			return lt.FromType, lt.ToType
+		}
+	}
+	return "unknown", "unknown"
+}
+
+// GetLink reads a link by (type, id). Cross-tenant reads are masked as
+// ErrLinkNotFound so the caller cannot probe another tenant's links.
+func (p *Provider) GetLink(ctx spi.RequestContext, typ, id string) (spi.OntologyLink, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	link, ok := p.links[linkKey(typ, id)]
+	if !ok || link["_tenantId"] != ctx.TenantID {
+		return nil, fmt.Errorf("%w: %s/%s", spi.ErrLinkNotFound, typ, id)
+	}
+	return cloneLink(link)
+}
+
+// DeleteLink removes the link from the map. Idempotent and a no-op across
+// tenants, matching the hard-delete semantics on objects.
+func (p *Provider) DeleteLink(ctx spi.RequestContext, typ, id string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	key := linkKey(typ, id)
+	existing, ok := p.links[key]
+	if !ok || existing["_tenantId"] != ctx.TenantID {
+		return nil
+	}
+	delete(p.links, key)
+	return nil
+}
 
 // isSystemField reports whether k is a memory-reserved field name that the
 // caller cannot override via properties. Matches the TS memory provider's
