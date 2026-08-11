@@ -23,12 +23,14 @@ type memoryTransaction struct {
 }
 
 // txEntry is one journaled mutation. Discriminated by Op; Prev is set for
-// update/softDelete/hardDelete/updateLink/deleteLink; Value is informational.
+// update/softDelete/hardDelete/updateLink/deleteLink. History is set for
+// hardDeleteObject so rollback can restore versionHistory cleared by the
+// hard-delete apply path.
 type txEntry struct {
-	Op    string
-	Key   string
-	Prev  map[string]any // OntologyObject or OntologyLink snapshot
-	Value map[string]any
+	Op      string
+	Key     string
+	Prev    map[string]any // OntologyObject or OntologyLink snapshot
+	History []spi.OntologyObject
 }
 
 // BeginTransaction returns a new memoryTransaction bound to ctx. The
@@ -60,7 +62,7 @@ func (tx *memoryTransaction) CreateObject(typ string, properties map[string]any)
 	}
 	id, _ := obj["_id"].(string)
 	key := objectKey(typ, id)
-	tx.journal = append(tx.journal, txEntry{Op: "createObject", Key: key, Value: obj})
+	tx.journal = append(tx.journal, txEntry{Op: "createObject", Key: key})
 	return obj, nil
 }
 
@@ -79,7 +81,7 @@ func (tx *memoryTransaction) UpdateObject(typ, id string, properties map[string]
 	if err != nil {
 		return nil, err
 	}
-	tx.journal = append(tx.journal, txEntry{Op: "updateObject", Key: key, Prev: prev, Value: updated})
+	tx.journal = append(tx.journal, txEntry{Op: "updateObject", Key: key, Prev: prev})
 	return updated, nil
 }
 
@@ -94,6 +96,10 @@ func (tx *memoryTransaction) DeleteObject(typ, id, mode string) error {
 	if err != nil {
 		return err
 	}
+	var hist []spi.OntologyObject
+	if mode == "hard" {
+		hist = cloneHistorySlice(tx.p.versionHistory[key])
+	}
 	if err := tx.p.doDeleteObjectUnlocked(tx.ctx, typ, id, mode); err != nil {
 		return err
 	}
@@ -101,7 +107,7 @@ func (tx *memoryTransaction) DeleteObject(typ, id, mode string) error {
 	if mode == "hard" {
 		op = "hardDeleteObject"
 	}
-	tx.journal = append(tx.journal, txEntry{Op: op, Key: key, Prev: prev})
+	tx.journal = append(tx.journal, txEntry{Op: op, Key: key, Prev: prev, History: hist})
 	return nil
 }
 
@@ -117,7 +123,7 @@ func (tx *memoryTransaction) CreateLink(typ, fromID, toID string, properties map
 	}
 	id, _ := link["_id"].(string)
 	key := linkKey(typ, id)
-	tx.journal = append(tx.journal, txEntry{Op: "createLink", Key: key, Value: link})
+	tx.journal = append(tx.journal, txEntry{Op: "createLink", Key: key})
 	return link, nil
 }
 
@@ -136,7 +142,7 @@ func (tx *memoryTransaction) UpdateLink(typ, linkID string, properties map[strin
 	if err != nil {
 		return nil, err
 	}
-	tx.journal = append(tx.journal, txEntry{Op: "updateLink", Key: key, Prev: prev, Value: updated})
+	tx.journal = append(tx.journal, txEntry{Op: "updateLink", Key: key, Prev: prev})
 	return updated, nil
 }
 
@@ -168,7 +174,8 @@ func (tx *memoryTransaction) Commit() error {
 }
 
 // Rollback reverses the journal under p.mu and restores Begin-time state
-// including versionHistory pops for update/softDelete. Covers R6, AE10.
+// including versionHistory pops for update/softDelete and full history
+// restore for hardDelete. Covers R6, AE10.
 func (tx *memoryTransaction) Rollback() error {
 	if err := tx.assertOpen(); err != nil {
 		return err
@@ -187,6 +194,11 @@ func (tx *memoryTransaction) Rollback() error {
 			tx.p.popVersionHistoryUnlocked(e.Key)
 		case "hardDeleteObject":
 			tx.p.objects[e.Key] = e.Prev
+			if e.History == nil {
+				delete(tx.p.versionHistory, e.Key)
+			} else {
+				tx.p.versionHistory[e.Key] = e.History
+			}
 		case "createLink":
 			delete(tx.p.links, e.Key)
 		case "updateLink", "deleteLink":
@@ -215,4 +227,21 @@ func (tx *memoryTransaction) cloneLinkInternal(key string) (spi.OntologyLink, er
 		return nil, fmt.Errorf("%w: %s", spi.ErrLinkNotFound, key)
 	}
 	return cloneLink(link)
+}
+
+// cloneHistorySlice deep-copies each snapshot so rollback cannot share
+// mutable map references with live history.
+func cloneHistorySlice(in []spi.OntologyObject) []spi.OntologyObject {
+	if in == nil {
+		return nil
+	}
+	out := make([]spi.OntologyObject, 0, len(in))
+	for _, snap := range in {
+		c, err := cloneObject(snap)
+		if err != nil {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
 }

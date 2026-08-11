@@ -168,7 +168,6 @@ func TestConformance_LinkRoundTrip(t *testing.T) {
 	}
 }
 
-// TestConformance_ErrUnimplementedFloor asserts every SPI method
 // TestConformance_ErrUnimplementedFloor documents that Phase 3 folded the
 // 13-case ErrUnimplemented floor to zero. Positive coverage for each
 // former floor method lives in the packages listed in the comments below.

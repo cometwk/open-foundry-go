@@ -268,6 +268,12 @@ func (p *Provider) doUpdateObjectUnlocked(ctx spi.RequestContext, typ, id string
 	if !ok || existing["_tenantId"] != ctx.TenantID {
 		return nil, fmt.Errorf("%w: %s/%s", spi.ErrObjectNotFound, typ, id)
 	}
+	// Soft-deleted objects are not mutable via update (mirrors TS
+	// _doUpdateObject). Engine.UpdateObject already masks via GetObject;
+	// BulkMutate / MemoryTransaction call this unlocked helper directly.
+	if existing["_deletedAt"] != nil {
+		return nil, fmt.Errorf("%w: %s/%s", spi.ErrObjectNotFound, typ, id)
+	}
 	// Conflict check before any write (mirrors TS _doUpdateObject
 	// VERSION_CONFLICT throw at memory-storage-provider.ts:372-375). The
 	// stored authoritative copy keeps _version as int; objectVersionInt
@@ -332,6 +338,9 @@ func (p *Provider) doDeleteObjectUnlocked(ctx spi.RequestContext, typ, id, mode 
 	}
 	if mode == "hard" {
 		delete(p.objects, key)
+		// Clear version history so GetObjectAtVersion/AtTime cannot
+		// resurrect a hard-deleted object (mirrors TS _doHardDeleteObject).
+		delete(p.versionHistory, key)
 		return nil
 	}
 	// Soft delete: stamp _deletedAt + _version+1, push history, keep the
@@ -434,26 +443,17 @@ func objectKey(typ, id string) string { return typ + ":" + id }
 // linkKey is the canonical map key for stored links.
 func linkKey(typ, id string) string { return "link:" + typ + ":" + id }
 
-// linkSystemFields is the reserved field set on OntologyLink. Properties
-// supplying these are ignored and the authoritative values are stamped.
-func linkSystemFields() map[string]bool {
-	return map[string]bool{
-		"_id":        true,
-		"_type":      true,
-		"_tenantId":  true,
-		"_fromId":    true,
-		"_toId":      true,
-		"_fromType":  true,
-		"_toType":    true,
-		"_createdAt": true,
-		"_updatedAt": true,
-		"_version":   true,
-		"_deletedAt": true,
+// linkSystemFields / isLinkSystemField: reserved OntologyLink field names.
+// Switch form matches isSystemField (avoids allocating a map per call).
+func isLinkSystemField(k string) bool {
+	switch k {
+	case "_id", "_type", "_tenantId", "_fromId", "_toId", "_fromType", "_toType",
+		"_createdAt", "_updatedAt", "_version", "_deletedAt", "_engineLinkId":
+		return true
+	default:
+		return false
 	}
 }
-
-// isLinkSystemField reports whether k is a link-reserved field name.
-func isLinkSystemField(k string) bool { return linkSystemFields()[k] }
 
 // cloneLink deep-copies an OntologyLink through JSON, matching the
 // cloneObject / cloneSchema convention.
@@ -512,7 +512,7 @@ func (p *Provider) doCreateLinkUnlocked(ctx spi.RequestContext, typ, fromID, toI
 		"_version":   1,
 	}
 	for k, v := range properties {
-		if k == "_engineLinkId" || isLinkSystemField(k) {
+		if isLinkSystemField(k) {
 			continue
 		}
 		link[k] = v
@@ -1651,23 +1651,19 @@ func (p *Provider) SearchObjects(ctx spi.RequestContext, typ string, query spi.S
 // (non-transactional, matches TS). The result is cloned before caching
 // so later callers cannot mutate the cached entry. Covers R5(bulk), AE6.
 func (p *Provider) BulkMutate(ctx spi.RequestContext, request spi.BulkMutationRequest) (spi.BulkMutationResult, error) {
-	// Empty idempotencyKey: do not cache. Two consecutive uncached calls
-	// with the same operations both apply (the plan's R5(bulk) intent).
+	// Hold p.mu for the full check → apply → cache path so concurrent
+	// callers with the same (tenant, idempotencyKey) cannot double-apply
+	// (R5/AE6 idempotency under concurrency).
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	if request.IdempotencyKey != "" {
 		cacheKey := ctx.TenantID + ":" + request.IdempotencyKey
-		p.mu.Lock()
-		cached, ok := p.idempotencyCache[cacheKey]
-		p.mu.Unlock()
-		if ok {
-			// Clone the cached result so callers cannot mutate the cached
-			// entry (matches TS `return clone(cached)`).
+		if cached, ok := p.idempotencyCache[cacheKey]; ok {
 			return cloneBulkMutationResult(cached), nil
 		}
 	}
 
-	// Apply under one lock — keep the eager-apply + best-effort model.
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	result := p.bulkMutateUnlocked(ctx, request)
 
 	if request.IdempotencyKey != "" {
@@ -1713,6 +1709,20 @@ func applyBulkOperation(p *Provider, ctx spi.RequestContext, op spi.BulkOperatio
 		_, err := p.doUpdateObjectUnlocked(ctx, op.ObjectType, op.ID, op.Properties, nil)
 		return err
 	case "deleteObject":
+		// Mode must be explicit soft|hard (TS required); zero-value "" must
+		// not silently soft-delete. Soft-delete of a missing id fails so
+		// Accepted/Failed counts stay honest (public DeleteObject stays
+		// idempotent).
+		if op.Mode != "soft" && op.Mode != "hard" {
+			return fmt.Errorf("bulk: deleteObject mode must be soft or hard, got %q", op.Mode)
+		}
+		if op.Mode == "soft" {
+			key := objectKey(op.ObjectType, op.ID)
+			existing, ok := p.objects[key]
+			if !ok || existing["_tenantId"] != ctx.TenantID {
+				return fmt.Errorf("%w: %s/%s", spi.ErrObjectNotFound, op.ObjectType, op.ID)
+			}
+		}
 		return p.doDeleteObjectUnlocked(ctx, op.ObjectType, op.ID, op.Mode)
 	}
 	return fmt.Errorf("bulk: unknown operation type %q", op.Type)

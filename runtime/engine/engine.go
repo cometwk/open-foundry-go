@@ -334,19 +334,16 @@ func (e *Engine) GetLink(ctx spi.RequestContext, typ, linkID string) (spi.Ontolo
 }
 
 // UpdateLink mirrors UpdateObject for the link surface (R7, AE9): read
-// existing first (typed ErrLinkNotFound before any write), merge-patch
-// for validation, then delegate to storage.UpdateLink with the caller's
-// expectedVersion. Version bookkeeping stays memory-authoritative; the
-// Engine only transmits. Soft-delete is not applicable to links in
-// Phase 3 (TS memory hard-deletes links).
+// existing first (typed ErrLinkNotFound before any write), confirm the
+// link type exists in the TBox, then delegate to storage.UpdateLink with
+// the caller's expectedVersion. Version bookkeeping stays
+// memory-authoritative; the Engine only transmits.
 func (e *Engine) UpdateLink(ctx spi.RequestContext, typ, linkID string, patch map[string]any, expectedVersion *int) (spi.OntologyLink, error) {
-	existing, err := e.storage.GetLink(ctx, typ, linkID)
-	if err != nil {
+	if _, err := e.storage.GetLink(ctx, typ, linkID); err != nil {
 		return nil, err
 	}
-	merged := mergeLinkPatch(existing, patch)
-	if err := e.validateLinkPayload(typ, merged); err != nil {
-		return nil, err
+	if e.ontology.LinkByName(typ) == nil {
+		return nil, fmt.Errorf("%w: %s", spi.ErrInvalidLinkType, typ)
 	}
 	updated, err := e.storage.UpdateLink(ctx, typ, linkID, patch, expectedVersion)
 	if err != nil {
@@ -368,49 +365,5 @@ func (e *Engine) DeleteLink(ctx spi.RequestContext, typ, linkID string) error {
 		return err
 	}
 	// TODO(Phase 4): emitLinkDeleted via event bus.
-	return nil
-}
-
-// mergeLinkPatch returns existing non-system link fields plus every key
-// in patch. Link system fields (endpoints, tenant, version, …) are kept
-// from existing so validation sees a coherent merged state; the SPI
-// re-stamps them authoritatively on write.
-func mergeLinkPatch(existing spi.OntologyLink, patch map[string]any) map[string]any {
-	merged := make(map[string]any, len(existing)+len(patch))
-	for k, v := range existing {
-		if isLinkSystemField(k) {
-			continue
-		}
-		merged[k] = v
-	}
-	for k, v := range patch {
-		if isLinkSystemField(k) {
-			continue
-		}
-		merged[k] = v
-	}
-	return merged
-}
-
-// isLinkSystemField mirrors memory.linkSystemFields so Engine and SPI
-// agree on the reserved link set without crossing the package boundary.
-func isLinkSystemField(k string) bool {
-	switch k {
-	case "_id", "_type", "_tenantId", "_fromId", "_toId", "_fromType", "_toType",
-		"_createdAt", "_updatedAt", "_version", "_deletedAt", "_engineLinkId":
-		return true
-	}
-	return false
-}
-
-// validateLinkPayload is a minimal per-verb check for link user fields.
-// Phase 3 keeps this lean (Deferred to Implementation): unknown link
-// type → ErrInvalidLinkType; otherwise accept (link property schemas
-// are uncommon in the supply-chain fixture and strict property typing
-// stays Phase 4+).
-func (e *Engine) validateLinkPayload(typ string, _ map[string]any) error {
-	if e.ontology.LinkByName(typ) == nil {
-		return fmt.Errorf("%w: %s", spi.ErrInvalidLinkType, typ)
-	}
 	return nil
 }
