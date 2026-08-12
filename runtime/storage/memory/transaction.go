@@ -60,7 +60,7 @@ func (tx *memoryTransaction) CreateObject(typ string, properties map[string]any)
 	if err != nil {
 		return nil, err
 	}
-	id, _ := obj["_id"].(string)
+	id, _ := obj[spi.FieldID].(string)
 	key := objectKey(typ, id)
 	tx.journal = append(tx.journal, txEntry{Op: "createObject", Key: key})
 	return obj, nil
@@ -121,7 +121,7 @@ func (tx *memoryTransaction) CreateLink(typ, fromID, toID string, properties map
 	if err != nil {
 		return nil, err
 	}
-	id, _ := link["_id"].(string)
+	id, _ := link[spi.FieldID].(string)
 	key := linkKey(typ, id)
 	tx.journal = append(tx.journal, txEntry{Op: "createLink", Key: key})
 	return link, nil
@@ -214,7 +214,7 @@ func (tx *memoryTransaction) Rollback() error {
 // Caller MUST hold p.mu.
 func (tx *memoryTransaction) cloneObjectInternal(key string) (spi.OntologyObject, error) {
 	obj, ok := tx.p.objects[key]
-	if !ok || obj["_tenantId"] != tx.ctx.TenantID {
+	if !ok || obj[spi.FieldTenantID] != tx.ctx.TenantID {
 		return nil, fmt.Errorf("%w: %s", spi.ErrObjectNotFound, key)
 	}
 	return cloneObject(obj)
@@ -223,7 +223,7 @@ func (tx *memoryTransaction) cloneObjectInternal(key string) (spi.OntologyObject
 // cloneLinkInternal snapshots the live link map entry. Caller MUST hold p.mu.
 func (tx *memoryTransaction) cloneLinkInternal(key string) (spi.OntologyLink, error) {
 	link, ok := tx.p.links[key]
-	if !ok || link["_tenantId"] != tx.ctx.TenantID {
+	if !ok || link[spi.FieldTenantID] != tx.ctx.TenantID {
 		return nil, fmt.Errorf("%w: %s", spi.ErrLinkNotFound, key)
 	}
 	return cloneLink(link)

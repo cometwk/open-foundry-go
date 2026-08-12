@@ -212,20 +212,20 @@ func (p *Provider) CreateObject(ctx spi.RequestContext, typ string, properties m
 func (p *Provider) doCreateObjectUnlocked(ctx spi.RequestContext, typ string, properties map[string]any) (spi.OntologyObject, error) {
 	ts := systemTimestamps()
 	obj := spi.OntologyObject{
-		"_id":        uuidv7.New(),
-		"_type":      typ,
-		"_tenantId":  ctx.TenantID,
-		"_createdAt": ts,
-		"_updatedAt": ts,
-		"_version":   1,
+		spi.FieldID:        uuidv7.New(),
+		spi.FieldType:      typ,
+		spi.FieldTenantID:  ctx.TenantID,
+		spi.FieldCreatedAt: ts,
+		spi.FieldUpdatedAt: ts,
+		spi.FieldVersion:   1,
 	}
 	for k, v := range properties {
-		if isSystemField(k) {
+		if spi.IsSystemField(k) {
 			continue
 		}
 		obj[k] = v
 	}
-	key := objectKey(typ, obj["_id"].(string))
+	key := objectKey(typ, obj[spi.FieldID].(string))
 	p.objects[key] = obj
 	// Phase 3 (U1): stamp authoritative _version:1 on create and push the
 	// initial snapshot into versionHistory. Update/soft-delete (U2) advance
@@ -247,7 +247,7 @@ func (p *Provider) GetObject(ctx spi.RequestContext, typ, id string) (spi.Ontolo
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	obj, ok := p.objects[objectKey(typ, id)]
-	if !ok || obj["_tenantId"] != ctx.TenantID || obj["_deletedAt"] != nil {
+	if !ok || obj[spi.FieldTenantID] != ctx.TenantID || obj[spi.FieldDeletedAt] != nil {
 		return nil, fmt.Errorf("%w: %s/%s", spi.ErrObjectNotFound, typ, id)
 	}
 	return cloneObject(obj)
@@ -265,13 +265,13 @@ func (p *Provider) UpdateObject(ctx spi.RequestContext, typ, id string, properti
 func (p *Provider) doUpdateObjectUnlocked(ctx spi.RequestContext, typ, id string, properties map[string]any, expectedVersion *int) (spi.OntologyObject, error) {
 	key := objectKey(typ, id)
 	existing, ok := p.objects[key]
-	if !ok || existing["_tenantId"] != ctx.TenantID {
+	if !ok || existing[spi.FieldTenantID] != ctx.TenantID {
 		return nil, fmt.Errorf("%w: %s/%s", spi.ErrObjectNotFound, typ, id)
 	}
 	// Soft-deleted objects are not mutable via update (mirrors TS
 	// _doUpdateObject). Engine.UpdateObject already masks via GetObject;
 	// BulkMutate / MemoryTransaction call this unlocked helper directly.
-	if existing["_deletedAt"] != nil {
+	if existing[spi.FieldDeletedAt] != nil {
 		return nil, fmt.Errorf("%w: %s/%s", spi.ErrObjectNotFound, typ, id)
 	}
 	// Conflict check before any write (mirrors TS _doUpdateObject
@@ -289,7 +289,7 @@ func (p *Provider) doUpdateObjectUnlocked(ctx spi.RequestContext, typ, id string
 		merged[k] = v
 	}
 	for k, v := range properties {
-		if isSystemField(k) {
+		if spi.IsSystemField(k) {
 			continue
 		}
 		merged[k] = v
@@ -297,12 +297,12 @@ func (p *Provider) doUpdateObjectUnlocked(ctx spi.RequestContext, typ, id string
 	// Re-stamp system fields with authoritative values. _version advances
 	// by 1 on every accepted mutation; the int representation stays the
 	// source of truth (JSON clones surface as float64, see Risks table).
-	merged["_id"] = existing["_id"]
-	merged["_type"] = existing["_type"]
-	merged["_tenantId"] = existing["_tenantId"]
-	merged["_createdAt"] = existing["_createdAt"]
-	merged["_updatedAt"] = systemTimestamps()
-	merged["_version"] = objectVersionInt(existing) + 1
+	merged[spi.FieldID] = existing[spi.FieldID]
+	merged[spi.FieldType] = existing[spi.FieldType]
+	merged[spi.FieldTenantID] = existing[spi.FieldTenantID]
+	merged[spi.FieldCreatedAt] = existing[spi.FieldCreatedAt]
+	merged[spi.FieldUpdatedAt] = systemTimestamps()
+	merged[spi.FieldVersion] = objectVersionInt(existing) + 1
 	p.objects[key] = merged
 	if snap, err := cloneVersionSnapshot(merged); err == nil {
 		p.pushVersionHistoryUnlocked(key, snap)
@@ -332,7 +332,7 @@ func (p *Provider) DeleteObject(ctx spi.RequestContext, typ, id, mode string) er
 func (p *Provider) doDeleteObjectUnlocked(ctx spi.RequestContext, typ, id, mode string) error {
 	key := objectKey(typ, id)
 	existing, ok := p.objects[key]
-	if !ok || existing["_tenantId"] != ctx.TenantID {
+	if !ok || existing[spi.FieldTenantID] != ctx.TenantID {
 		// Idempotent: a missing or cross-tenant id is a no-op for both modes.
 		return nil
 	}
@@ -350,9 +350,9 @@ func (p *Provider) doDeleteObjectUnlocked(ctx spi.RequestContext, typ, id, mode 
 	for k, v := range existing {
 		merged[k] = v
 	}
-	merged["_updatedAt"] = systemTimestamps()
-	merged["_deletedAt"] = systemTimestamps()
-	merged["_version"] = objectVersionInt(existing) + 1
+	merged[spi.FieldUpdatedAt] = systemTimestamps()
+	merged[spi.FieldDeletedAt] = systemTimestamps()
+	merged[spi.FieldVersion] = objectVersionInt(existing) + 1
 	p.objects[key] = merged
 	if snap, err := cloneVersionSnapshot(merged); err == nil {
 		p.pushVersionHistoryUnlocked(key, snap)
@@ -371,7 +371,7 @@ func (p *Provider) GetObjectAtVersion(ctx spi.RequestContext, typ, id string, ve
 	defer p.mu.Unlock()
 	key := objectKey(typ, id)
 	for _, snap := range p.versionHistory[key] {
-		if snap["_tenantId"] != ctx.TenantID {
+		if snap[spi.FieldTenantID] != ctx.TenantID {
 			continue
 		}
 		if objectVersionInt(snap) == version {
@@ -392,10 +392,10 @@ func (p *Provider) GetObjectAtTime(ctx spi.RequestContext, typ, id string, ts ti
 	var newestTs time.Time
 	found := false
 	for _, snap := range p.versionHistory[key] {
-		if snap["_tenantId"] != ctx.TenantID {
+		if snap[spi.FieldTenantID] != ctx.TenantID {
 			continue
 		}
-		s, ok := snap["_updatedAt"].(string)
+		s, ok := snap[spi.FieldUpdatedAt].(string)
 		if !ok {
 			continue
 		}
@@ -426,7 +426,7 @@ func (p *Provider) GetObjectAtTime(ctx spi.RequestContext, typ, id string, ts ti
 // caller's behavior on 0 is a nil expectedVersion-skip or a conflict on
 // any positive expected version, which matches the "no version yet" intent.
 func objectVersionInt(o spi.OntologyObject) int {
-	switch v := o["_version"].(type) {
+	switch v := o[spi.FieldVersion].(type) {
 	case int:
 		return v
 	case float64:
@@ -442,18 +442,6 @@ func objectKey(typ, id string) string { return typ + ":" + id }
 
 // linkKey is the canonical map key for stored links.
 func linkKey(typ, id string) string { return "link:" + typ + ":" + id }
-
-// linkSystemFields / isLinkSystemField: reserved OntologyLink field names.
-// Switch form matches isSystemField (avoids allocating a map per call).
-func isLinkSystemField(k string) bool {
-	switch k {
-	case "_id", "_type", "_tenantId", "_fromId", "_toId", "_fromType", "_toType",
-		"_createdAt", "_updatedAt", "_version", "_deletedAt", "_engineLinkId":
-		return true
-	default:
-		return false
-	}
-}
 
 // cloneLink deep-copies an OntologyLink through JSON, matching the
 // cloneObject / cloneSchema convention.
@@ -489,7 +477,7 @@ func (p *Provider) doCreateLinkUnlocked(ctx spi.RequestContext, typ, fromID, toI
 		return nil, err
 	}
 
-	engineID, _ := properties["_engineLinkId"].(string)
+	engineID, _ := properties[spi.LinkFieldEngineLinkID].(string)
 	id := engineID
 	if id == "" {
 		id = uuidv7.New()
@@ -500,19 +488,19 @@ func (p *Provider) doCreateLinkUnlocked(ctx spi.RequestContext, typ, fromID, toI
 	}
 	ts := systemTimestamps()
 	link := spi.OntologyLink{
-		"_id":        id,
-		"_type":      typ,
-		"_tenantId":  ctx.TenantID,
-		"_fromId":    fromID,
-		"_toId":      toID,
-		"_fromType":  fromType,
-		"_toType":    toType,
-		"_createdAt": ts,
-		"_updatedAt": ts,
-		"_version":   1,
+		spi.FieldID:           id,
+		spi.FieldType:         typ,
+		spi.FieldTenantID:     ctx.TenantID,
+		spi.LinkFieldFromID:   fromID,
+		spi.LinkFieldToID:     toID,
+		spi.LinkFieldFromType: fromType,
+		spi.LinkFieldToType:   toType,
+		spi.FieldCreatedAt:    ts,
+		spi.FieldUpdatedAt:    ts,
+		spi.FieldVersion:      1,
 	}
 	for k, v := range properties {
-		if isLinkSystemField(k) {
+		if spi.IsLinkSystemField(k) {
 			continue
 		}
 		link[k] = v
@@ -557,13 +545,13 @@ func (p *Provider) enforceCardinalityUnlocked(ctx spi.RequestContext, typ, fromI
 
 	var active []spi.OntologyLink
 	for _, link := range p.links {
-		if link["_type"] != typ {
+		if link[spi.FieldType] != typ {
 			continue
 		}
-		if link["_tenantId"] != ctx.TenantID {
+		if link[spi.FieldTenantID] != ctx.TenantID {
 			continue
 		}
-		if link["_deletedAt"] != nil {
+		if link[spi.FieldDeletedAt] != nil {
 			continue
 		}
 		active = append(active, link)
@@ -572,22 +560,22 @@ func (p *Provider) enforceCardinalityUnlocked(ctx spi.RequestContext, typ, fromI
 	switch def.Cardinality {
 	case spi.CardinalityOneToOne:
 		for _, l := range active {
-			if l["_fromId"] == fromID {
+			if l[spi.LinkFieldFromID] == fromID {
 				return fmt.Errorf("%w: ONE_TO_ONE link %s already exists from %s", spi.ErrCardinalityViolation, typ, fromID)
 			}
-			if l["_toId"] == toID {
+			if l[spi.LinkFieldToID] == toID {
 				return fmt.Errorf("%w: ONE_TO_ONE link %s already exists to %s", spi.ErrCardinalityViolation, typ, toID)
 			}
 		}
 	case spi.CardinalityOneToMany:
 		for _, l := range active {
-			if l["_toId"] == toID {
+			if l[spi.LinkFieldToID] == toID {
 				return fmt.Errorf("%w: ONE_TO_MANY link %s already exists to %s", spi.ErrCardinalityViolation, typ, toID)
 			}
 		}
 	case spi.CardinalityManyToOne:
 		for _, l := range active {
-			if l["_fromId"] == fromID {
+			if l[spi.LinkFieldFromID] == fromID {
 				return fmt.Errorf("%w: MANY_TO_ONE link %s already exists from %s", spi.ErrCardinalityViolation, typ, fromID)
 			}
 		}
@@ -606,7 +594,7 @@ func (p *Provider) GetLink(ctx spi.RequestContext, typ, id string) (spi.Ontology
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	link, ok := p.links[linkKey(typ, id)]
-	if !ok || link["_tenantId"] != ctx.TenantID || link["_deletedAt"] != nil {
+	if !ok || link[spi.FieldTenantID] != ctx.TenantID || link[spi.FieldDeletedAt] != nil {
 		return nil, fmt.Errorf("%w: %s/%s", spi.ErrLinkNotFound, typ, id)
 	}
 	return cloneLink(link)
@@ -628,7 +616,7 @@ func (p *Provider) UpdateLink(ctx spi.RequestContext, typ, linkID string, proper
 func (p *Provider) doUpdateLinkUnlocked(ctx spi.RequestContext, typ, linkID string, properties map[string]any, expectedVersion *int) (spi.OntologyLink, error) {
 	key := linkKey(typ, linkID)
 	existing, ok := p.links[key]
-	if !ok || existing["_tenantId"] != ctx.TenantID {
+	if !ok || existing[spi.FieldTenantID] != ctx.TenantID {
 		return nil, fmt.Errorf("%w: %s/%s", spi.ErrLinkNotFound, typ, linkID)
 	}
 	if expectedVersion != nil {
@@ -642,23 +630,23 @@ func (p *Provider) doUpdateLinkUnlocked(ctx spi.RequestContext, typ, linkID stri
 		merged[k] = v
 	}
 	for k, v := range properties {
-		if isLinkSystemField(k) {
+		if spi.IsLinkSystemField(k) {
 			continue
 		}
 		merged[k] = v
 	}
 	// Re-stamp system fields from the authoritative existing copy so a
 	// caller cannot relocate endpoints / change tenant via patch.
-	merged["_id"] = existing["_id"]
-	merged["_type"] = existing["_type"]
-	merged["_tenantId"] = existing["_tenantId"]
-	merged["_fromId"] = existing["_fromId"]
-	merged["_toId"] = existing["_toId"]
-	merged["_fromType"] = existing["_fromType"]
-	merged["_toType"] = existing["_toType"]
-	merged["_createdAt"] = existing["_createdAt"]
-	merged["_updatedAt"] = systemTimestamps()
-	merged["_version"] = objectVersionInt(spi.OntologyObject(existing)) + 1
+	merged[spi.FieldID] = existing[spi.FieldID]
+	merged[spi.FieldType] = existing[spi.FieldType]
+	merged[spi.FieldTenantID] = existing[spi.FieldTenantID]
+	merged[spi.LinkFieldFromID] = existing[spi.LinkFieldFromID]
+	merged[spi.LinkFieldToID] = existing[spi.LinkFieldToID]
+	merged[spi.LinkFieldFromType] = existing[spi.LinkFieldFromType]
+	merged[spi.LinkFieldToType] = existing[spi.LinkFieldToType]
+	merged[spi.FieldCreatedAt] = existing[spi.FieldCreatedAt]
+	merged[spi.FieldUpdatedAt] = systemTimestamps()
+	merged[spi.FieldVersion] = objectVersionInt(spi.OntologyObject(existing)) + 1
 	p.links[key] = merged
 	return cloneLink(merged)
 }
@@ -677,7 +665,7 @@ func (p *Provider) DeleteLink(ctx spi.RequestContext, typ, id string) error {
 func (p *Provider) doDeleteLinkUnlocked(ctx spi.RequestContext, typ, id string) error {
 	key := linkKey(typ, id)
 	existing, ok := p.links[key]
-	if !ok || existing["_tenantId"] != ctx.TenantID {
+	if !ok || existing[spi.FieldTenantID] != ctx.TenantID {
 		return nil
 	}
 	delete(p.links, key)
@@ -705,22 +693,22 @@ func (p *Provider) GetLinks(ctx spi.RequestContext, objectID, linkType, directio
 
 	var matched []spi.OntologyLink
 	for _, link := range p.links {
-		if link["_tenantId"] != ctx.TenantID {
+		if link[spi.FieldTenantID] != ctx.TenantID {
 			continue
 		}
-		if link["_type"] != linkType {
+		if link[spi.FieldType] != linkType {
 			continue
 		}
-		if !includeDeleted && link["_deletedAt"] != nil {
+		if !includeDeleted && link[spi.FieldDeletedAt] != nil {
 			continue
 		}
 		switch direction {
 		case "outbound":
-			if link["_fromId"] != objectID {
+			if link[spi.LinkFieldFromID] != objectID {
 				continue
 			}
 		default: // inbound (and any other value treated as inbound, matching TS)
-			if link["_toId"] != objectID {
+			if link[spi.LinkFieldToID] != objectID {
 				continue
 			}
 		}
@@ -802,17 +790,17 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 				if totalNodesSeen >= maxTraversalNodes {
 					break
 				}
-				if link["_tenantId"] != ctx.TenantID {
+				if link[spi.FieldTenantID] != ctx.TenantID {
 					continue
 				}
-				if link["_type"] != step.LinkType {
+				if link[spi.FieldType] != step.LinkType {
 					continue
 				}
-				if !includeDeleted && link["_deletedAt"] != nil {
+				if !includeDeleted && link[spi.FieldDeletedAt] != nil {
 					continue
 				}
-				fromID, _ := link["_fromId"].(string)
-				toID, _ := link["_toId"].(string)
+				fromID, _ := link[spi.LinkFieldFromID].(string)
+				toID, _ := link[spi.LinkFieldToID].(string)
 				if step.Direction == "outbound" {
 					if fromID != objectID {
 						continue
@@ -824,24 +812,24 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 				}
 
 				targetID := toID
-				targetType, _ := link["_toType"].(string)
+				targetType, _ := link[spi.LinkFieldToType].(string)
 				if step.Direction != "outbound" {
 					targetID = fromID
-					targetType, _ = link["_fromType"].(string)
+					targetType, _ = link[spi.LinkFieldFromType].(string)
 				}
 
 				targetObj, ok := p.objects[objectKey(targetType, targetID)]
-				if !ok || targetObj["_tenantId"] != ctx.TenantID {
+				if !ok || targetObj[spi.FieldTenantID] != ctx.TenantID {
 					continue
 				}
-				if !includeDeleted && targetObj["_deletedAt"] != nil {
+				if !includeDeleted && targetObj[spi.FieldDeletedAt] != nil {
 					continue
 				}
 				if step.Filter != nil && !evaluateFilter(targetObj, step.Filter) {
 					continue
 				}
 
-				edgeKey := fmt.Sprintf("%s:%s", link["_type"], link["_id"])
+				edgeKey := fmt.Sprintf("%s:%s", link[spi.FieldType], link[spi.FieldID])
 				collectedEdges[edgeKey] = link
 				nodeKey := objectKey(targetType, targetID)
 				if _, seen := stepNodes[nodeKey]; !seen {
@@ -887,18 +875,6 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 		Edges:      edges,
 		TotalCount: totalCount,
 	}, nil
-}
-
-// isSystemField reports whether k is a memory-reserved field name that the
-// caller cannot override via properties. Matches the TS memory provider's
-// system-field set plus the Phase 2 deferral note for _version/_deletedAt.
-func isSystemField(k string) bool {
-	switch k {
-	case "_id", "_type", "_tenantId", "_createdAt", "_updatedAt", "_version", "_deletedAt":
-		return true
-	default:
-		return false
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -961,6 +937,7 @@ func evaluateFilter(obj map[string]any, f *spi.FilterExpression) bool {
 //   - exists: pred.Value truthy → must be present-non-null; falsy → must
 //     be nil/absent
 //   - unknown operator: false
+//
 // The TS `===` semantics pair naturally with JSON-clone types —
 // float64 vs float64, string vs string, bool vs bool.
 func evaluateFieldPredicate(obj map[string]any, f *spi.FilterExpression) bool {
@@ -1087,10 +1064,10 @@ func (p *Provider) QueryObjects(ctx spi.RequestContext, typ string, filter spi.F
 		// plan's best-effort keeps the same default).
 	} else {
 		for key, obj := range p.objects {
-			if obj["_tenantId"] != ctx.TenantID || obj["_type"] != typ {
+			if obj[spi.FieldTenantID] != ctx.TenantID || obj[spi.FieldType] != typ {
 				continue
 			}
-			if !includeDeleted && obj["_deletedAt"] != nil {
+			if !includeDeleted && obj[spi.FieldDeletedAt] != nil {
 				continue
 			}
 			_ = key
@@ -1215,10 +1192,10 @@ func (p *Provider) historySnapshotUnlocked(ctx spi.RequestContext, typ string, o
 		typMatch := false
 		if options.AsOfVersion != nil {
 			for _, snap := range hist {
-				if snap["_tenantId"] != ctx.TenantID {
+				if snap[spi.FieldTenantID] != ctx.TenantID {
 					continue
 				}
-				if snap["_type"] != typ {
+				if snap[spi.FieldType] != typ {
 					continue
 				}
 				typMatch = true
@@ -1231,14 +1208,14 @@ func (p *Provider) historySnapshotUnlocked(ctx spi.RequestContext, typ string, o
 			var newestTs time.Time
 			found := false
 			for _, snap := range hist {
-				if snap["_tenantId"] != ctx.TenantID {
+				if snap[spi.FieldTenantID] != ctx.TenantID {
 					continue
 				}
-				if snap["_type"] != typ {
+				if snap[spi.FieldType] != typ {
 					continue
 				}
 				typMatch = true
-				tsStr, ok := snap["_updatedAt"].(string)
+				tsStr, ok := snap[spi.FieldUpdatedAt].(string)
 				if !ok {
 					continue
 				}
@@ -1289,10 +1266,10 @@ func (p *Provider) AggregateObjects(ctx spi.RequestContext, typ string, query sp
 	// 1. Collect matching objects (tenant-scoped, type-matched, non-deleted).
 	var items []map[string]any
 	for _, obj := range p.objects {
-		if obj["_tenantId"] != ctx.TenantID || obj["_type"] != typ {
+		if obj[spi.FieldTenantID] != ctx.TenantID || obj[spi.FieldType] != typ {
 			continue
 		}
-		if obj["_deletedAt"] != nil {
+		if obj[spi.FieldDeletedAt] != nil {
 			continue
 		}
 		if query.Filter != nil && !evaluateFilter(obj, query.Filter) {
@@ -1511,18 +1488,18 @@ func (p *Provider) SearchObjects(ctx spi.RequestContext, typ string, query spi.S
 	// Candidate set: tenant + type + non-soft-deleted.
 	var candidates []map[string]any
 	for _, obj := range p.objects {
-		if obj["_tenantId"] != ctx.TenantID || obj["_type"] != typ {
+		if obj[spi.FieldTenantID] != ctx.TenantID || obj[spi.FieldType] != typ {
 			continue
 		}
-		if obj["_deletedAt"] != nil {
+		if obj[spi.FieldDeletedAt] != nil {
 			continue
 		}
 		candidates = append(candidates, obj)
 	}
 
 	type scored struct {
-		hit        spi.SearchHit
-		idx        int // preserve insertion order for tie-stable sort
+		hit spi.SearchHit
+		idx int // preserve insertion order for tie-stable sort
 	}
 	scoredHits := make([]scored, 0, len(candidates))
 	for i, obj := range candidates {
@@ -1719,7 +1696,7 @@ func applyBulkOperation(p *Provider, ctx spi.RequestContext, op spi.BulkOperatio
 		if op.Mode == "soft" {
 			key := objectKey(op.ObjectType, op.ID)
 			existing, ok := p.objects[key]
-			if !ok || existing["_tenantId"] != ctx.TenantID {
+			if !ok || existing[spi.FieldTenantID] != ctx.TenantID {
 				return fmt.Errorf("%w: %s/%s", spi.ErrObjectNotFound, op.ObjectType, op.ID)
 			}
 		}
