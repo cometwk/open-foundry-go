@@ -15,8 +15,60 @@ type RequestContext struct {
 // OntologyObject is a persisted ontology object with tenant isolation.
 type OntologyObject map[string]any
 
+// Reserved wire-field names for OntologyObject. These are the single source
+// of truth for the _-prefixed storage-wire columns; storage backends and the
+// engine use IsSystemField to strip/filter them from user payloads rather than
+// re-deriving the set. Untyped string constants (no `string` type) so they
+// remain usable as map keys and in concatenation without conversion.
+// Mirrors TS OntologyObject's named reserved fields (packages/spi/src/ontology.ts).
+const (
+	FieldID        = "_id"
+	FieldType      = "_type"
+	FieldTenantID  = "_tenantId"
+	FieldVersion   = "_version"
+	FieldCreatedAt = "_createdAt"
+	FieldUpdatedAt = "_updatedAt"
+	FieldDeletedAt = "_deletedAt"
+)
+
+// IsSystemField reports whether k is one of the seven object reserved wire
+// fields. Allocation-free switch (mirrors the prior memory.isSystemField
+// shape at provider.go). The link-only reserved fields (_fromId, _toId,
+// _fromType, _toType, _engineLinkId) are NOT object reserved and return false.
+func IsSystemField(k string) bool {
+	switch k {
+	case FieldID, FieldType, FieldTenantID, FieldVersion,
+		FieldCreatedAt, FieldUpdatedAt, FieldDeletedAt:
+		return true
+	}
+	return false
+}
+
 // OntologyLink is a typed, directed relationship between two ontology objects.
 type OntologyLink map[string]any
+
+// Reserved wire-field names for OntologyLink beyond the seven object fields.
+// A link carries every object reserved field plus these five link-specific
+// endpoint/id fields. IsLinkSystemField is the superset membership helper.
+const (
+	LinkFieldFromID       = "_fromId"
+	LinkFieldToID         = "_toId"
+	LinkFieldFromType     = "_fromType"
+	LinkFieldToType       = "_toType"
+	LinkFieldEngineLinkID = "_engineLinkId"
+)
+
+// IsLinkSystemField reports whether k is reserved on a link: the seven object
+// reserved fields (delegated to IsSystemField) plus the five link-specific
+// fields. The seven base names are listed exactly once, in IsSystemField.
+func IsLinkSystemField(k string) bool {
+	return IsSystemField(k) ||
+		k == LinkFieldFromID ||
+		k == LinkFieldToID ||
+		k == LinkFieldFromType ||
+		k == LinkFieldToType ||
+		k == LinkFieldEngineLinkID
+}
 
 // Cardinality mirrors ODL / SPI link cardinalities.
 type Cardinality string
