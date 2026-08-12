@@ -138,7 +138,7 @@ func (e *Engine) validateObjectPayload(typ string, properties map[string]any, is
 		return fmt.Errorf("%w: %s", spi.ErrInvalidObjectType, typ)
 	}
 	for name, val := range properties {
-		if isSystemField(name) {
+		if spi.IsSystemField(name) {
 			// System fields are SPI/Engine-managed; ignore them in the
 			// user-payload check (Create/Update strips them anyway).
 			continue
@@ -163,7 +163,7 @@ func (e *Engine) validateObjectPayload(typ string, properties map[string]any, is
 	if !isUpdate {
 		for i := range objType.Fields {
 			f := &objType.Fields[i]
-			if isSystemField(f.Name) || !roleWritable(f.Role) {
+			if spi.IsSystemField(f.Name) || !roleWritable(f.Role) {
 				continue
 			}
 			if !f.Type.NonNull {
@@ -187,12 +187,12 @@ func (e *Engine) validateObjectPayload(typ string, properties map[string]any, is
 func mergePatch(existing spi.OntologyObject, patch map[string]any) map[string]any {
 	merged := make(map[string]any, len(existing)+len(patch))
 	for k, v := range existing {
-		if !isSystemField(k) {
+		if !spi.IsSystemField(k) {
 			merged[k] = v
 		}
 	}
 	for k, v := range patch {
-		if !isSystemField(k) {
+		if !spi.IsSystemField(k) {
 			merged[k] = v
 		}
 	}
@@ -271,18 +271,6 @@ func checkScalarType(t ir.TypeRef, val any) error {
 	return nil
 }
 
-// isSystemField reports whether k is an Engine/SPI-managed field name.
-// Mirrors memory.isSystemField so the two layers agree on the reserved
-// set; intentionally kept inline here to preserve the engine→storage
-// layer boundary (engine does not import the memory package).
-func isSystemField(k string) bool {
-	switch k {
-	case "_id", "_type", "_tenantId", "_createdAt", "_updatedAt", "_version", "_deletedAt", "_engineLinkId":
-		return true
-	}
-	return false
-}
-
 // CreateLink validates the link type exists in the held TBox, asserts
 // both endpoints are present objects via storage.GetObject (returning
 // a typed not-found before any write per AE6), mints a UUIDv7 link id,
@@ -312,7 +300,7 @@ func (e *Engine) CreateLink(ctx spi.RequestContext, typ, fromID, toID string, pr
 	for k, v := range properties {
 		props[k] = v
 	}
-	props["_engineLinkId"] = linkID
+	props[spi.LinkFieldEngineLinkID] = linkID
 	link, err := e.storage.CreateLink(ctx, typ, fromID, toID, props)
 	if err != nil {
 		return nil, err
