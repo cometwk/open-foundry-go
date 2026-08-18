@@ -7,7 +7,9 @@
 
 ---
 
-## 1. 概述
+## Overview & Architecture
+
+### 1. 概述
 
 Open Foundry ODL 定义业务语义模型：
 
@@ -56,9 +58,9 @@ OBDA 不重新定义 ODL 语义，也不替代 ODL。
 
 ---
 
-# 2. 设计原则
+### 2. 设计原则
 
-## 2.1 ODL 是 Semantic Source of Truth
+#### 2.1 ODL 是 Semantic Source of Truth
 
 OBDA MUST NOT 重新定义：
 
@@ -103,7 +105,7 @@ Patient:
 
 ---
 
-# 3. 核心架构
+### 3. 核心架构
 
 ```text
                   ┌────────────────────┐
@@ -134,6 +136,13 @@ Patient:
                             │
                             ▼
                   ┌────────────────────┐
+                  │  Security Layer    │
+                  │ AuthN / AuthZ /    │
+                  │ Consent            │
+                  └─────────┬──────────┘
+                            │
+                            ▼
+                  ┌────────────────────┐
                   │   Query Planner    │
                   │                    │
                   │ queryObjects()     │
@@ -153,7 +162,7 @@ Patient:
 
 ---
 
-# 4. 文件命名
+### 4. 文件命名
 
 推荐：
 
@@ -187,7 +196,7 @@ nhs-acute/
 
 ---
 
-# 5. 顶层结构
+### 5. 顶层结构
 
 规范结构：
 
@@ -234,12 +243,12 @@ sync:
 | `sources` | MUST | 数据源定义 |
 | `models` | MUST | ObjectType 映射 |
 | `links` | MAY | LinkType 映射 |
-| `runtime` | MAY | Overlay / cache 等执行参数 |
+| `runtime` | MAY | Overlay cache / query limits 等执行参数。Overlay vs materialized 以 `sync.mode` 为准。 |
 | `sync` | MAY | CDC / polling / batch 等摄入配置 |
 
 ---
 
-# 6. 完整示例
+### 6. 最小可读示例
 
 假设 ODL：
 
@@ -312,6 +321,13 @@ models:
           transform:
             - prefix: "patient-"
 
+    tenant:
+      column: tenant_id
+
+    system:
+      deletedAt:
+        source: deleted_at
+
     fields:
 
       nhsNumber:
@@ -350,6 +366,13 @@ models:
           source: ward_id
           transform:
             - prefix: "ward-"
+
+    tenant:
+      column: tenant_id
+
+    system:
+      deletedAt:
+        source: deleted_at
 
     fields:
 
@@ -396,6 +419,13 @@ links:
           transform:
             - prefix: "ward-"
 
+    tenant:
+      column: tenant_id
+
+    system:
+      deletedAt:
+        source: deleted_at
+
     fields:
 
       admissionDate:
@@ -403,11 +433,8 @@ links:
 
 runtime:
 
-  mode: OVERLAY
-
   cache:
-    strategy: TTL
-    ttl: PT5M
+    strategy: NONE
 
 sync:
 
@@ -417,11 +444,13 @@ sync:
 
 ---
 
-# 7. `sources`
+## Sources
 
-`source` 表示物理数据来源。
+### 7. `sources`
 
-## 7.1 SQL Source
+顶层键 MUST 为 `sources`（复数）。`source` 只用于 model/link 上的 relation descriptor，不得当作 datasource 名称字符串。
+
+#### 7.1 SQL Source
 
 ```yaml
 sources:
@@ -433,15 +462,24 @@ sources:
 
     connection:
       urlRef: secret://hospital-db/jdbc-url
+
+    capabilities:
+      temporal: false
+      fullTextSearch: false
+      transactions: false
 ```
 
 `connection` MUST NOT contain plaintext credentials.
+
+`secret://` MUST 仅在 runtime 解析，MUST NOT 写入 `obda.compiled.json`、explain、traces 或 introspection 输出。Overlay 查询 MUST 使用 least-privilege 只读数据库角色；若启用 writeback，MUST 使用独立写凭证。
+
+`sources.<name>.capabilities` 为 MAY：声明该 source 是否支持 temporal / fullTextSearch / transactions。未声明视为 false。
 
 Open Foundry v2.0 的安全要求明确禁止 plaintext secrets，并要求集成 Vault/Kubernetes Secrets。
 
 ---
 
-# 8. Source Relation
+### 8. Source Relation
 
 OBDA Source SHOULD 支持：
 
@@ -463,7 +501,7 @@ source:
 
 ```yaml
 source:
-  kind: sql
+  kind: sqlQuery
   query: |
     SELECT ...
 ```
@@ -491,7 +529,9 @@ JOIN patient_status ...
 
 ---
 
-# 9. Model
+## Models & Identity
+
+### 9. Model
 
 `models` 是整个 OBDA 规范最核心的部分。
 
@@ -509,21 +549,26 @@ models:
 
     fields:
       ...
+
+    tenant:
+      ...
+
+    system:
+      ...
 ```
 
 规则：
 
 1. `models.X` 中的 `X` MUST 对应一个 ODL ObjectType。
-2. 每个 ObjectType 在一个 active OBDA configuration 中 MUST 有明确的 read mapping，除非它是纯计算对象。
-3. 一个 ObjectType MAY 被多个 datasource mapping 实现。
-4. 同一个 ObjectType 可以来自多个 Source。
-5. 多 Source 冲突处理属于 Sync Engine 的职责，不属于 ODL 语义。
+2. 只有从外部 source 投影的 ObjectType 才 MUST 有 read mapping。Ontology Engine / SPI store 中的 native ObjectType MUST 在没有 mapping 的情况下可查询。
+3. v1 OVERLAY：每个 ObjectType 在一份 active OBDA 文件中 MUST 恰好一个 read binding（`source` relation descriptor）。`bindings[]` 与跨 source 选择推迟到 phase 3 / MATERIALIZED Sync。
+4. 多 Source 冲突处理属于 Sync Engine 的职责，不属于 ODL 语义。
 
 原规范已经定义了 `SOURCE_PRIORITY`、`LAST_WRITE_WINS`、`MERGE`、`CUSTOM` 等冲突策略。
 
 ---
 
-# 10. Identity Mapping
+### 10. Identity Mapping
 
 这是 OBDA 中最重要的 Mapping。
 
@@ -548,7 +593,7 @@ ODL Patient.id
 
 ---
 
-# 11. Composite Identity
+### 11. Composite Identity
 
 虽然 ODL 对外只有一个 `id`，物理数据库允许 composite key：
 
@@ -587,7 +632,7 @@ SQL identity predicate
 
 ---
 
-# 12. Identity Transform 的限制
+### 12. Identity Transform 的限制
 
 普通字段可以使用任意可执行 transform。
 
@@ -633,13 +678,15 @@ hash(SQL column)
 
 因此：
 
-- Identity Transform SHOULD be invertible。
-- 不可逆 Identity Transform MUST NOT be used for direct `getObject()` / `traverse()` pushdown，除非另有 lookup strategy。
+- v1 OVERLAY 的 Identity Transform MUST 可逆，并能编译为 SQL predicate。
+- 不可逆 Identity Transform（如 `hash`）MUST NOT 用于 `getObject()` / `traverse()` pushdown。v1 不提供 lookup-strategy 例外。
 - Compiler MUST reject unsupported identity mappings。
 
 ---
 
-# 13. Property Mapping
+## Properties & Transforms
+
+### 13. Property Mapping
 
 最简单：
 
@@ -660,7 +707,7 @@ patient.patient_name
 
 ---
 
-# 14. Expression Mapping
+### 14. Expression Mapping
 
 允许：
 
@@ -692,7 +739,7 @@ fields:
 
 ---
 
-# 15. 推荐的 Source Expression 层级
+### 15. 推荐的 Source Expression 层级
 
 Property Mapping 支持三种形式：
 
@@ -706,9 +753,11 @@ source:
 ```
 
 ```yaml
-source:
+dateOfBirth:
+  source: dob
   transform:
-    ...
+    - parseDate:
+        format: "DD/MM/YYYY"
 ```
 
 三者分别对应：
@@ -721,7 +770,7 @@ Transform Mapping
 
 ---
 
-# 16. Transform Pipeline
+### 16. Transform Pipeline
 
 Transform 可以组合：
 
@@ -763,7 +812,7 @@ ODL Value
 
 ---
 
-# 17. 标准 Transform
+### 17. 标准 Transform
 
 第一版直接复用 v2.0 已定义的 Transform Vocabulary：
 
@@ -799,7 +848,7 @@ OVERLAY
 
 ---
 
-# 18. Enum Mapping
+### 18. Enum Mapping
 
 例如 ODL：
 
@@ -835,7 +884,7 @@ status:
 
 ---
 
-# 19. Null Mapping
+### 19. Null Mapping
 
 NULL SHOULD 保持 NULL：
 
@@ -857,7 +906,7 @@ OBDA MUST NOT 默默把 SQL NULL 转换成空字符串。
 
 ---
 
-# 20. Type Mapping
+### 20. Type Mapping
 
 OBDA Compiler MUST 根据 ODL 类型进行 SQL 类型验证。
 
@@ -881,7 +930,9 @@ ODL v2.0 明确规定了这些基础 scalar。
 
 ---
 
-# 21. Link Mapping
+## Links, Filters & Traversal
+
+### 21. Link Mapping
 
 LinkType 与 ObjectType 不同。
 
@@ -915,7 +966,7 @@ _deletedAt
 
 ---
 
-# 22. Link Mapping 示例
+### 22. Link Mapping 示例
 
 ```yaml
 links:
@@ -952,11 +1003,11 @@ links:
 
 ---
 
-# 23. Link Physical Model
+### 23. Link Physical Model
 
 一个 LinkType 可以物理实现为：
 
-### 23.1 Association Table
+#### 23.1 Association Table
 
 ```text
 patient
@@ -966,7 +1017,7 @@ ward
 
 最典型。
 
-### 23.2 Foreign Key
+#### 23.2 Foreign Key
 
 例如：
 
@@ -980,13 +1031,15 @@ patient.ward_id
 Patient ── AdmittedTo ──> Ward
 ```
 
-### 23.3 View
+FK-backed link 没有独立 association 主键。v1 MUST 为 23.2 声明确定性 identity：hash(`from-key`, `to-key`, `linkType`, 以及声明的 uniqueness scope)。未声明 identity 的 FK link MUST 被 compiler 拒绝。
+
+#### 23.3 View
 
 ```text
 patient_current_ward
 ```
 
-### 23.4 SQL Query
+#### 23.4 SQL Query
 
 ```sql
 SELECT ...
@@ -1002,7 +1055,7 @@ JOIN ...
 
 ---
 
-# 24. Link Cardinality
+### 24. Link Cardinality
 
 ODL 定义：
 
@@ -1030,9 +1083,11 @@ OBDA 只能负责：
 如何找到 to
 ```
 
+MANY_TO_ONE / ONE_TO_ONE link mapping MUST 声明 uniqueness / current-row selector（unique key、`WHERE current_flag`、或 `ORDER BY … DESC LIMIT 1`）。Compiler MUST 拒绝缺少 selector 的 association table，否则历史行会破坏 ODL cardinality（例如 `AdmittedTo` 映射到多次入院的 `admission` 表）。
+
 ---
 
-# 25. Link Direction
+### 25. Link Direction
 
 例如：
 
@@ -1065,7 +1120,7 @@ Traversal Planner 决定 SQL Join 方向。
 
 ---
 
-# 26. Filter Mapping
+### 26. Filter Mapping
 
 SPI 的 FilterExpression 已明确支持：
 
@@ -1092,18 +1147,20 @@ OBDA Compiler MUST 将这些 Semantic Predicate 翻译为 source predicate。
 例如：
 
 ```text
-Patient.status = ACTIVE
+Patient.nhsNumber = "943 476 5919"
 ```
 
 ↓
 
 ```sql
-patient.status = 'ACTIVE'
+patient.nhs_no = $1
 ```
+
+v1 OVERLAY 中，可作为 FilterExpression 目标的字段 MUST 是 column mapping 或可逆 transform。CASE / `source.expression` / `computed.kind: sql` 字段 MUST NOT 作为 filter 目标，直到 compiler 定义 predicate inversion。Planner MUST 在渲染 overlay SQL 之前丢弃或拒绝调用者无权读取的字段谓词（含 `@sensitive`）。
 
 ---
 
-# 27. Filter 不应该直接进入 SQL 字符串
+### 27. Filter 不应该直接进入 SQL 字符串
 
 内部 MUST 采用 AST：
 
@@ -1135,7 +1192,7 @@ LIKE '%' || $1 || '%'
 
 ---
 
-# 28. Traversal Mapping
+### 28. Traversal Mapping
 
 SPI 已定义：
 
@@ -1174,7 +1231,7 @@ SQL
 
 ---
 
-# 29. Traversal 示例
+### 29. Traversal 示例
 
 调用：
 
@@ -1226,7 +1283,7 @@ WHERE p.patient_id = $1
 
 ---
 
-# 30. Multi-hop Traversal
+### 30. Multi-hop Traversal
 
 例如：
 
@@ -1262,7 +1319,7 @@ trust
 
 ---
 
-# 31. `maxDepth`
+### 31. `maxDepth`
 
 ODL SPI 已规定：
 
@@ -1291,7 +1348,7 @@ TRAVERSAL_DEPTH_EXCEEDED
 
 ---
 
-# 32. Variable-Length Traversal
+### 32. Variable-Length Traversal
 
 建议 v1：
 
@@ -1332,7 +1389,9 @@ WITH RECURSIVE
 
 ---
 
-# 33. Temporal Mapping
+## Temporal, Tenancy & System Fields
+
+### 33. Temporal Mapping
 
 这是一个必须保留的能力。
 
@@ -1364,14 +1423,13 @@ temporal:
 
   validTo:
     source: valid_to
-
-  deletedAt:
-    source: deleted_at
 ```
+
+Soft-delete 时间戳只映射在 `system.deletedAt`（见 §36），不放进 `temporal:`。默认查询已经 `WHERE deleted_at IS NULL`，把同一列同时当作 temporal tombstone 和业务 `status=DECEASED` 会让默认语义永远读不到 DECEASED。
 
 ---
 
-# 34. Temporal Query
+### 34. Temporal Query
 
 例如：
 
@@ -1391,7 +1449,7 @@ AND (
 
 ---
 
-# 35. Version Mapping
+### 35. Version Mapping
 
 这里要非常谨慎：
 
@@ -1429,7 +1487,7 @@ Ontology Version Adapter
 
 ---
 
-# 36. Soft Delete
+### 36. Soft Delete
 
 ODL/SPI 明确要求：
 
@@ -1464,7 +1522,7 @@ includeDeleted: true
 
 ---
 
-# 37. Tenant Mapping
+### 37. Tenant Mapping
 
 这是 OBDA 的强制要求之一。
 
@@ -1494,9 +1552,16 @@ WHERE tenant_id = :tenantId
 
 > **MUST 由 runtime 自动添加，不能由 LLM / Agent / Client 指定。**
 
+v1 OVERLAY MUST 支持两种 tenant strategy：
+
+- `COLUMN` — 源表确有 tenant 列时注入 `WHERE tenant_id = :tenantId`
+- `CONSTANT` / `CONNECTION` — 将 Open Foundry `RequestContext.tenantId` 绑定到该 source；不要求物理 `tenant_id` 列（典型单租户 PAS）
+
+每个 overlay model、link 与 `sqlQuery` source MUST 声明一种 strategy。Compiler MUST 拒绝无法把 tenant predicate 应用到最终 SQL 的 mapping。Overlay cache key MUST 包含 `tenantId`。
+
 ---
 
-# 38. Tenant Source Isolation
+### 38. Tenant Source Isolation
 
 如果源数据库本身已经按 tenant 隔离：
 
@@ -1516,15 +1581,17 @@ SCHEMA
 CONNECTION
 ```
 
-但 v1 最先只实现：
+但 v1 最先实现：
 
 ```text
 COLUMN
+CONSTANT
+CONNECTION
 ```
 
 ---
 
-# 39. System Fields
+### 39. System Fields
 
 Open Foundry Object 包含：
 
@@ -1574,7 +1641,7 @@ _id
 
 ---
 
-# 40. `createdBy / updatedBy`
+### 40. `createdBy / updatedBy`
 
 如果来源系统有：
 
@@ -1599,7 +1666,9 @@ system:
 
 ---
 
-# 41. Computed Field
+## ODL Directives & Advanced Mapping
+
+### 41. Computed Field
 
 ODL 支持：
 
@@ -1648,7 +1717,7 @@ fields:
 
 ---
 
-# 42. Computed Field Mapping 的优先级
+### 42. Computed Field Mapping 的优先级
 
 推荐：
 
@@ -1679,7 +1748,7 @@ Function runtime
 
 ---
 
-# 43. `@indexed`
+### 43. `@indexed`
 
 ODL：
 
@@ -1708,7 +1777,7 @@ indexes:
 
 ---
 
-# 44. `@searchable`
+### 44. `@searchable`
 
 ODL 已把：
 
@@ -1747,7 +1816,7 @@ supportsFullTextSearch
 
 ---
 
-# 45. `@unique`
+### 45. `@unique`
 
 ODL：
 
@@ -1755,7 +1824,7 @@ ODL：
 nhsNumber: String @unique
 ```
 
-对于 Virtual OBDA：
+对于 `OVERLAY`：
 
 ```text
 @unique
@@ -1777,7 +1846,7 @@ COUNT(DISTINCT nhs_number)
 
 ---
 
-# 46. `@constraint`
+### 46. `@constraint`
 
 `@constraint` 属于 ODL 业务语义，不能复制到 OBDA。
 
@@ -1813,7 +1882,7 @@ SQL Predicate
 
 ---
 
-# 47. `@sensitive`
+### 47. `@sensitive`
 
 `@sensitive` 也不属于 OBDA Mapping。
 
@@ -1835,7 +1904,7 @@ v2.0 明确规定 Overlay 对象也必须经过与 native object 相同的 secur
 
 ---
 
-# 48. Permission 不放进 `obda.yaml`
+### 48. Permission 不放进 `obda.yaml`
 
 强烈建议：
 
@@ -1879,7 +1948,7 @@ Who can see it?
 
 ---
 
-# 49. `@terminology`
+### 49. `@terminology`
 
 例如：
 
@@ -1907,7 +1976,7 @@ fields:
 
 ---
 
-# 50. Interface Mapping
+### 50. Interface Mapping
 
 例如：
 
@@ -1950,7 +2019,7 @@ interfaces:
 
 ---
 
-# 51. Link Property Mapping
+### 51. Link Property Mapping
 
 LinkType 可以带自己的属性：
 
@@ -1982,7 +2051,7 @@ links:
 
 ---
 
-# 52. Many-to-Many
+### 52. Many-to-Many
 
 例如：
 
@@ -2026,14 +2095,14 @@ links:
 
 ---
 
-# 53. Source JOIN Mapping
+### 53. Source JOIN Mapping
 
 复杂 Link 可以：
 
 ```yaml
 source:
 
-  kind: sql
+  kind: sqlQuery
 
   query: |
     SELECT
@@ -2056,28 +2125,19 @@ LinkMapping
 
 ---
 
-# 54. SQL Source 的安全限制
+### 54. SQL Source 的安全限制
 
-`source.sql`：
+Datasource `sources.*.kind` 仍为 `sql`（JDBC）。Relation 的 `kind` MUST 为 `table` | `view` | `sqlQuery`，字段名为 `query`，不得使用 `source.sql`。
 
-- MUST NOT 包含用户输入
-- MUST NOT 拼接 runtime values
-- MUST 使用 parameterized expression
-- MUST 是 read-only relation
-- MUST NOT 包含 DDL
-- MUST NOT 包含 mutation
+`sqlQuery` 与 field `expression:`、`computed.kind: sql`：
 
-因此：
+- MUST 是常量只读 SELECT，无 bind parameters、无多语句、无 DDL/DML
+- MUST 只引用 mapping 中已声明的 relations / columns / 函数 allowlist
+- MUST NOT 包含用户输入或 runtime 值拼接
+- MUST NOT 跨未声明 schema
+- Mapping 文件是 privileged artifact，激活前 MUST 经人工审查
 
-```yaml
-query: |
-  SELECT ...
-  WHERE status = :status
-```
-
-允许。
-
-而：
+禁止：
 
 ```yaml
 query: |
@@ -2085,69 +2145,48 @@ query: |
   WHERE id = '${userInput}'
 ```
 
-禁止。
+也禁止 mapping SQL 中的 `:status` 一类 runtime bind；过滤走 FilterExpression AST（§26–§27）。
 
 ---
 
-# 55. Runtime Mode
+## Runtime & Overlay
 
-建议：
+### 55. Runtime Mode
 
-```yaml
-runtime:
-  mode: OVERLAY
-```
-
-支持：
-
-```text
-OVERLAY
-MATERIALIZED
-```
-
-### OVERLAY
-
-数据保留在 source：
-
-```text
-SQL
- ↓
-OBDA
- ↓
-Open Foundry Query
-```
-
-v2.0 已明确规定 Overlay 是 read-through，不将对象复制到 ontology store。
-
-### MATERIALIZED
-
-```text
-SQL
- ↓
-Sync Engine
- ↓
-Ontology Store
-```
-
-此时由：
+Overlay vs materialized MUST 使用 v2 已有的 `sync.mode`，不要再引入并行的 `runtime.mode`：
 
 ```yaml
 sync:
-  mode: CDC
+  mode: OVERLAY   # OVERLAY | CDC | POLLING | BATCH
 ```
 
-或：
+`runtime` 只承载 cache 与 query limits：
 
-```text
-POLLING
-BATCH
+```yaml
+runtime:
+  cache:
+    strategy: NONE
+    ttl: PT5M
+  query:
+    maxTraversalDepth: 8
+    timeout: PT2S
 ```
 
-驱动。
+`runtime.query.maxTraversalDepth` / `runtime.query.timeout` 为 MAY。
+
+#### OVERLAY
+
+数据保留在 source。v2.0 已明确规定 Overlay 是 read-through，不将对象复制到 ontology store。
+
+OBDA 是 Sync Engine overlay/mapping compiler，**不是**与 TypeDB / Neo4j / PostgreSQL+AGE 对等的第四个 StorageProvider。Ontology Engine 把 OVERLAY ObjectType 路由到 connector 读路径；`applySchema`、Action 事务、lineage 与 OVERLAY→CDC 物化继续走已有 SPI store。
+
+#### MATERIALIZED
+
+由 `sync.mode: CDC` / `POLLING` / `BATCH` 驱动，写入 ontology store。参与 Action 的 ObjectType MUST 使用 materialized/CDC binding；纯 OVERLAY 对象保持只读（除非 `writeback: true`）。
 
 ---
 
-# 56. 推荐不要单独复制一套 `MATERIALIZED`
+### 56. 推荐不要单独复制一套 `MATERIALIZED`
 
 Open Foundry v2.0 已经定义：
 
@@ -2158,12 +2197,9 @@ BATCH
 OVERLAY
 ```
 
-所以建议：
+所以建议只写 v2 字段：
 
 ```yaml
-runtime:
-  mode: OVERLAY
-
 sync:
   mode: OVERLAY
 ```
@@ -2171,18 +2207,17 @@ sync:
 或者：
 
 ```yaml
-runtime:
-  mode: MATERIALIZED
-
 sync:
   mode: CDC
 ```
+
+不要同时写 `runtime.mode` 与 `sync.mode`。
 
 这样可以保持 v2.0 compatibility。
 
 ---
 
-# 57. Overlay Cache
+### 57. Overlay Cache
 
 v2.0 已定义：
 
@@ -2197,13 +2232,12 @@ cacheTTL: "PT5M"
 
 ```yaml
 runtime:
-
-  mode: OVERLAY
-
   cache:
-    strategy: TTL
+    strategy: NONE
     ttl: PT5M
 ```
+
+v1 默认 `strategy: NONE`。若使用 TTL，cache entry MUST 以 `(tenantId, actorId, purpose, objectType, objectId, mappingVersion)` 为键，或只缓存 pre-security 物理行并在 hit 时重跑 ReBAC / consent / redaction。Cache MUST 在 `openfoundry.consent.revoked` 与 permission-tuple 变更时立即失效，不得只靠 TTL。
 
 支持：
 
@@ -2222,7 +2256,7 @@ CDC_INVALIDATED
 
 ---
 
-# 58. Writeback
+### 58. Writeback
 
 Overlay 默认：
 
@@ -2268,11 +2302,13 @@ GraphQL mutation
 SQL UPDATE
 ```
 
+Writeback SQL MUST 应用 tenant 与 ReBAC predicates，只写 Action authz/consent 之后映射过的可变列，并使用与 overlay 只读角色分离的写凭证。`writeback: true` 不是 Security Layer 的替代。
+
 这与 v2.0 “所有 mutation 必须进入 Action Pipeline”的设计保持一致。
 
 ---
 
-# 59. Provenance
+### 59. Provenance
 
 v2.0 的 `FieldProvenance` 已明确：
 
@@ -2319,7 +2355,7 @@ sourcePointer
 
 ---
 
-# 60. Mapping Version
+### 60. Mapping Version
 
 Mapping 是独立 artifact，所以：
 
@@ -2352,7 +2388,7 @@ OBDA Mapping
 
 ---
 
-# 61. Compatibility Matrix
+### 61. Compatibility Matrix
 
 Runtime 必须检查：
 
@@ -2376,7 +2412,9 @@ Physical Source
 
 ---
 
-# 62. Compiler Validation
+## Validation & Compiler
+
+### 62. Compiler Validation
 
 `obda validate` 至少需要执行：
 
@@ -2398,7 +2436,7 @@ Physical Source
 
 ---
 
-# 63. Object Validation Rules
+### 63. Object Validation Rules
 
 例如：
 
@@ -2432,7 +2470,7 @@ OBDA_UNKNOWN_OBJECT_TYPE
 
 ---
 
-# 64. Field Validation
+### 64. Field Validation
 
 例如：
 
@@ -2464,7 +2502,7 @@ OBDA_UNKNOWN_PROPERTY
 
 ---
 
-# 65. Link Validation
+### 65. Link Validation
 
 例如：
 
@@ -2494,7 +2532,7 @@ to.object   == @linkType.to
 
 ---
 
-# 66. Direction Validation
+### 66. Direction Validation
 
 如果：
 
@@ -2530,7 +2568,7 @@ INBOUND
 
 ---
 
-# 67. Physical Join Validation
+### 67. Physical Join Validation
 
 Compiler SHOULD 检查：
 
@@ -2566,7 +2604,7 @@ OBDA_INVALID_LINK_KEY
 
 ---
 
-# 68. SQL Type Validation
+### 68. SQL Type Validation
 
 例如：
 
@@ -2586,7 +2624,9 @@ OBDA_TYPE_MISMATCH
 
 ---
 
-# 69. Query Pushdown Contract
+## Query Pipeline
+
+### 69. Query Pushdown Contract
 
 OBDA Runtime SHOULD 最大化 source pushdown。
 
@@ -2626,7 +2666,7 @@ Projection
 
 ---
 
-# 70. Query Compilation Pipeline
+### 70. Query Compilation Pipeline
 
 推荐：
 
@@ -2660,7 +2700,7 @@ SQL string
 
 ---
 
-# 71. Query IR
+### 71. Query IR
 
 建议：
 
@@ -2695,7 +2735,7 @@ Relational Query
 
 ---
 
-# 72. `traverse()` 的最终执行模型
+### 72. `traverse()` 的最终执行模型
 
 ```text
 traverse(startId, path)
@@ -2725,31 +2765,26 @@ traverse(startId, path)
 
 ---
 
-# 73. SQL Backend 不需要 Graph Database
+### 73. SQL Backend 不需要 Graph Database
 
-因此：
+Overlay SQL 可以把固定深度 `traverse()` 编译为 JOIN，**但这不是第四个 StorageProvider**。
 
 ```text
 Open Foundry
     │
     ├── TypeDB
     ├── Neo4j
-    ├── PostgreSQL + AGE
-    │
-    └── PostgreSQL / MySQL / DuckDB via OBDA
+    └── PostgreSQL + AGE     ← v1 本体存储 / ReBAC 物化 / Action 事务
+            │
+            └── OVERLAY read adapter
+                  PostgreSQL / MySQL / DuckDB via OBDA
 ```
 
-均可实现相同：
-
-```ts
-traverse()
-```
-
-这正好符合 v2.0 的 Storage-Agnostic 原则。
+v1 storage provider 仍是 PostgreSQL + Apache AGE。OBDA overlay 是该 provider 前面的 read-through adapter，不能替代 AGE 上的 native objects、link identity 与 ReBAC 物化。
 
 ---
 
-# 74. Schema Cache
+### 74. Schema Cache
 
 建议 OBDA 编译后的运行时缓存：
 
@@ -2777,7 +2812,7 @@ interface SemanticSchemaCache {
 
 ---
 
-# 75. Compiled Artifact
+### 75. Compiled Artifact
 
 建议 `obda compile` 生成：
 
@@ -2812,7 +2847,7 @@ compiled artifact
 
 ---
 
-# 76. `explain`
+### 76. `explain`
 
 应该提供：
 
@@ -2840,9 +2875,11 @@ SQL:
   WHERE patient_id = $1
 ```
 
+`explain` / traces / provenance MUST 对 `@sensitive` bind values 与列 payload 做 redaction。对 live identifiers 执行 explain MUST 经过与 `getObject` 相同的 ReBAC/consent 检查，并审计该 CLI/API 调用。Compiled artifact、explain 与 spans MUST NOT 包含 `secret://` 解析后的 JDBC URL。
+
 ---
 
-# 77. `explain traverse`
+### 77. `explain traverse`
 
 例如：
 
@@ -2882,7 +2919,7 @@ JOIN ward ...
 
 ---
 
-# 78. `validate`
+### 78. `validate`
 
 ```bash
 obda validate hospital.obda.yaml
@@ -2904,7 +2941,7 @@ obda validate hospital.obda.yaml
 
 ---
 
-# 79. Source Introspection
+### 79. Source Introspection
 
 因为 v2.0 Connector 已定义：
 
@@ -2937,9 +2974,11 @@ Database Schema
 Candidate OBDA
 ```
 
+`obda introspect` / `obda generate` / `obda explain` 是 privileged operator 操作：MUST 认证授权、默认非生产、并审计。生成结果 MUST 保持 candidate-only，直到人工审查标记 `@sensitive` 与 tenant isolation。
+
 ---
 
-# 80. Auto-Mapping
+### 80. Auto-Mapping
 
 推荐提供：
 
@@ -2957,9 +2996,11 @@ candidate.obda.yaml
 
 而不是直接修改 production mapping。
 
+v1 作者路径 SHOULD 先于 Explain/IR 提供 `obda generate`（从 source introspection 生成 candidate mapping，永不静默应用到 production）。
+
 ---
 
-# 81. Mapping Diff
+### 81. Mapping Diff
 
 类似 ODL schema diff：
 
@@ -2985,7 +3026,7 @@ MODIFIED AdmittedTo
 
 ---
 
-# 82. Mapping Compatibility
+### 82. Mapping Compatibility
 
 定义：
 
@@ -3011,7 +3052,7 @@ BREAKING
 
 ---
 
-# 83. Mapping Version Rollback
+### 83. Mapping Version Rollback
 
 类似 ODL schema：
 
@@ -3033,40 +3074,35 @@ OBDA mapping v9
 
 ---
 
-# 84. Multiple Source Mapping
+## Multi-source
 
-一个 ObjectType 可以：
+### 84. Multiple Source Mapping
 
-```text
-Patient
- ├── PAS
- ├── EHR
- └── FHIR
-```
+v1 OVERLAY 禁止同一 ObjectType 多个 Overlay bindings。一份 active OBDA 文件里，一个 ObjectType 的 read path 恰好来自一个 source relation。
 
-因此：
+`bindings[]` 仅允许出现在 MATERIALIZED mappings，并使用 Sync `conflictResolution`。跨 source JOIN 与 cost-based source selection 属于 v2 / phase 3。
+
+错误（v1）：
 
 ```yaml
 models:
-
   Patient:
-
     bindings:
-
-      - source: PAS
-        ...
-
-      - source: EHR
-        ...
+      - fromSource: pas
+        source:
+          kind: table
+          name: patient
+      - fromSource: ehr
+        source:
+          kind: table
+          name: patient_current
 ```
 
-但：
-
-> 一个请求必须由 Query Planner 决定哪个 Source 可满足该 query。
+`bindings[].fromSource` 引用顶层 `sources` 的键；不要把 `source:` 写成 datasource 名称字符串。
 
 ---
 
-# 85. Source Priority
+### 85. Source Priority
 
 Materialized Sync 可以：
 
@@ -3083,11 +3119,11 @@ sync:
 
 这沿用 v2.0 已定义的 conflict resolution。
 
-Virtual OBDA 则不应该自动选择“谁更新”，而应该由 Query Planner 按 Binding Capability 与 policy 决定。
+`OVERLAY` 则不应该自动选择“谁更新”，而应该由 Query Planner 按 Binding Capability 与 policy 决定。
 
 ---
 
-# 86. Cross-source Relationship
+### 86. Cross-source Relationship
 
 未来可以：
 
@@ -3122,7 +3158,7 @@ links:
 
 ---
 
-# 87. Federation
+### 87. Federation
 
 跨 Open Foundry instance 不属于 OBDA。
 
@@ -3140,7 +3176,9 @@ v2.0 已明确 federation 是 instance-to-instance、tenant-scoped。
 
 ---
 
-# 88. Security Boundary
+## Security
+
+### 88. Security Boundary
 
 完整查询执行链：
 
@@ -3172,7 +3210,7 @@ SQL
 
 ---
 
-# 89. Permission Predicate 注入
+### 89. Permission Predicate 注入
 
 例如：
 
@@ -3204,9 +3242,11 @@ JOIN authorization_scope ...
 
 它由 Security Planner 注入。
 
+Security Planner MUST 把 object-level ReBAC（以及 tenant）谓词注入每一条 overlay SQL。当谓词无法 pushdown（表达式 mapping、`sqlQuery`、过大 ID 集）时，查询 MUST fail-closed 被拒绝，不得先 SELECT 再在内存中求交。
+
 ---
 
-# 90. Query Execution Order
+### 90. Query Execution Order
 
 推荐严格：
 
@@ -3223,11 +3263,13 @@ JOIN authorization_scope ...
 10. Response
 ```
 
+`queryObjects` 在 SQL 返回行之前不知道 subject IDs，因此 overlay consent 是 fail-closed 的 post-ReBAC、pre-response 过滤，并进入 cache key。Overlay cache MUST 在 `openfoundry.consent.revoked` 时立即 purge，而不是等待 TTL。Field redaction（步骤 8）不能保护一份从 raw SQL 填充、且未按 principal 分键的 cache。
+
 这一点与 v2.0 Action Pipeline 中“Authorize / Consent 先于读取业务状态”的安全原则一致。
 
 ---
 
-# 91. Provenance of Virtual Query
+### 91. Provenance of Virtual Query
 
 对于 Overlay：
 
@@ -3256,7 +3298,9 @@ Patient.name
 
 ---
 
-# 92. Observability
+## Observability
+
+### 92. Observability
 
 OBDA SHOULD emit spans：
 
@@ -3290,7 +3334,7 @@ openfoundry.sync.map
 
 ---
 
-# 93. Query Cost
+### 93. Query Cost
 
 OBDA Planner SHOULD 生成：
 
@@ -3315,7 +3359,7 @@ cost: 3.4ms
 
 ---
 
-# 94. Capability Detection
+### 94. Capability Detection
 
 OBDA Backend SHOULD 映射到：
 
@@ -3351,19 +3395,21 @@ searchFoos
 
 ---
 
-# 95. v1 必须支持的 Source Kind
+## v1 / v2 Scope
+
+### 95. v1 必须支持的 Source Kind
 
 建议：
 
 ```text
 TABLE
 VIEW
-SQL
+SQLQUERY
 ```
 
 ---
 
-# 96. v1 必须支持的 Mapping Kind
+### 96. v1 必须支持的 Mapping Kind
 
 ```text
 Object Mapping
@@ -3375,7 +3421,7 @@ Link Property Mapping
 
 ---
 
-# 97. v1 必须支持的 Query Capability
+### 97. v1 必须支持的 Query Capability
 
 ```text
 getObject
@@ -3386,7 +3432,7 @@ traverse
 
 ---
 
-# 98. v1 必须支持的 Semantic Features
+### 98. v1 必须支持的 Semantic Features
 
 ```text
 Identity
@@ -3405,7 +3451,7 @@ Soft Delete
 
 ---
 
-# 99. v1 SHOULD 支持
+### 99. v1 SHOULD 支持
 
 ```text
 Date / DateTime
@@ -3421,7 +3467,7 @@ Introspection
 
 ---
 
-# 100. v2 再支持
+### 100. v2 再支持
 
 ```text
 Variable-length traversal
@@ -3436,7 +3482,9 @@ Materialized view routing
 
 ---
 
-# 101. Complete Recommended YAML
+## Examples & Conclusion
+
+### 101. Complete Recommended YAML
 
 下面给出一个更完整的 production-style 示例：
 
@@ -3534,8 +3582,6 @@ models:
         source:
           expression: |
             CASE
-              WHEN deleted_at IS NOT NULL
-                THEN 'DECEASED'
               WHEN discharge_date IS NULL
                 THEN 'ACTIVE'
               ELSE 'DISCHARGED'
@@ -3653,7 +3699,7 @@ sync:
 
 ---
 
-# 102. 推荐的 JSON Schema
+### 102. 推荐的 JSON Schema
 
 `obda.yaml` 必须提供 JSON Schema：
 
@@ -3675,7 +3721,7 @@ CLI
 
 ---
 
-# 103. 推荐目录结构
+### 103. 推荐目录结构
 
 建议把 v2.0 当前的 datasource mapping 演进成：
 
@@ -3702,7 +3748,7 @@ openfoundry/
 
 ---
 
-# 104. 与 v2.0 当前 `datasource mapping` 的关系
+### 104. 与 v2.0 当前 `datasource mapping` 的关系
 
 原规范目前已经有：
 
@@ -3759,7 +3805,7 @@ sync
 
 ---
 
-# 105. 最终语义模型
+### 105. 最终语义模型
 
 最终整个 Open Foundry 可以清楚地分成：
 
@@ -3788,7 +3834,7 @@ sync
 
 ---
 
-# 106. 更重要的关系：TBox / OBDA / ABox
+### 106. 更重要的关系：TBox / OBDA / ABox
 
 这个设计之后可以非常清晰：
 
@@ -3828,12 +3874,15 @@ ABox
 
 ---
 
-# 107. Query 的最终链路
+### 107. Query 的最终链路
 
 这样，之前讨论的 `traverse()` 就完整闭环：
 
 ```text
 Agent
+  │
+  ▼
+Security (AuthN / AuthZ / Consent)
   │
   ▼
 Semantic Query
@@ -3878,7 +3927,7 @@ Agent 只需要知道 ODL
 
 ---
 
-# 108. 最终推荐的 Open Foundry 四层语义架构
+### 108. 最终推荐的 Open Foundry 四层语义架构
 
 我会正式把它定义成：
 
@@ -3900,6 +3949,12 @@ Agent 只需要知道 ODL
                 │
                 ▼
 ┌───────────────────────────────┐
+│       Security Layer          │
+│     AuthN / AuthZ / Consent   │
+└───────────────┬───────────────┘
+                │
+                ▼
+┌───────────────────────────────┐
 │        Semantic Query         │
 │                               │
 │ GraphQL / traverse / Query IR │
@@ -3915,7 +3970,7 @@ Agent 只需要知道 ODL
 
 ---
 
-# 109. 一个非常重要的边界
+### 109. 一个非常重要的边界
 
 我建议明确规定：
 
@@ -3950,7 +4005,7 @@ SQL
 
 ---
 
-# 110. 与 Hasura 思路的最终关系
+### 110. 与 Hasura 思路的最终关系
 
 如果借鉴 Hasura，建议借鉴它的：
 
@@ -3978,15 +4033,13 @@ OBDA Connector
 
 所以最终可以把 Open Foundry OBDA 理解成：
 
-> **Ontology-aware Hasura Metadata + Query Compiler**
+> **Ontology-aware query compiler over mapping metadata**
 
-而不是：
-
-> **R2RML 的 YAML 翻版。**
+Hasura 只作为 prior-art 比较（Source / Model / Relationship / Schema Cache / Query Planning），不是产品别名。工件名称保持 **OBDA Mapping**（`*.obda.yaml`，`kind: OBDAConfig`）。「Semantic Data Mapping Metadata」只是 OBDA Mapping 的一句 gloss，不是第二正式名。
 
 ---
 
-# 111. 推荐 v1 实现边界
+### 111. 推荐 v1 实现边界
 
 第一阶段只需要完成：
 
@@ -4010,6 +4063,7 @@ OBDA Connector
 ✓ Explain
 ✓ Validate
 ✓ Schema Cache
+✓ obda generate (candidate only)
 ```
 
 这已经足以证明整个架构。
@@ -4036,7 +4090,7 @@ OBDA Connector
 
 ---
 
-# 112. 结论
+### 112. 结论
 
 结合 v2.0，我认为最好的调整不是简单新增：
 
@@ -4046,7 +4100,7 @@ xxx.obda.yaml
 
 而是把它正式定义为：
 
-> **Open Foundry Semantic Data Mapping Metadata**
+> **OBDA Mapping**（Open Foundry Semantic Data Mapping Metadata 的正式名）
 
 并遵循：
 
@@ -4068,7 +4122,7 @@ SQL / Graph / API
 
 **第二：Identity Mapping 是核心，不是普通 Column Mapping。** 因为 `getObject()`、`getLinks()`、`traverse()` 都依赖 ODL ID → 物理 key 的可执行映射。
 
-**第三：`OVERLAY` 应该成为 OBDA 的第一实现模式。** 这与 v2.0 已经存在的 Overlay 语义天然一致，而且无需先实现 Object Data Funnel / 全量复制，就能让 PostgreSQL 直接成为 Open Foundry 的一个 Semantic Backend。
+**第三：`OVERLAY` 是 v1 的第一实现模式，但是 Sync Engine 的 read-through on-ramp，不是把 PostgreSQL 变成第四个 Semantic Backend。** 这与 v2.0 Overlay 语义一致；Action 事务、schema registry 与 ReBAC 物化仍走 PostgreSQL+AGE SPI。参与 Action 的 ObjectType 需要 materialized/CDC binding。
 
 从工程落地角度，我会把下一步定成这四个产物：
 
@@ -4094,4 +4148,35 @@ traverse()
 SQL
 ```
 
-是否能够完整跑通。  
+是否能够完整跑通。
+
+---
+
+## Deferred / Open Questions
+
+### From 2026-08-14 review
+
+- **New language duplicates v2 mapping** — 1. 概述 / 104 (P0, scope-guardian, product-lens, confidence 100)
+
+  Pack authors would have to learn and maintain a second mapping format while v2 Domain Packs already ship `datasources/*.yaml` for the same ODL-to-source job. Shipping `*.obda.yaml` as a parallel language splits the pack contract and doubles compiler surface. Related: Hasura as product identity vs YAML authors; whether Ontop or view-only mapping was evaluated; whether v1 should be dialect-declared and expression-free.
+
+- **Spec exceeds mapping-language goal** — Purpose / 3 / 69–77 / 112 (P0, scope-guardian, adversarial, confidence 100)
+
+  Implementers will treat a Query Planner, Semantic Query IR, optimizer, explain CLI, and PostgreSQL compiler as v1 mapping work. The stated goal is a physical mapping between ODL types and sources. Publishing the full 112-section contract before one Overlay getObject path runs may freeze the wrong IR.
+
+- **v1 MUST/SHOULD/phase lists conflict** — 8, 33, 59, 62, 95–100, 111 (P0, coherence, product-lens, scope-guardian, confidence 100)
+
+  Implementers cannot tell what v1 must ship. §§95–100 treat SQL query sources as MUST while §111 puts them in phase 2; Temporal / Provenance / Explain flip between MUST, SHOULD, and phase 2. Authoritative inventory is either §§95–100 or §111 — the review did not pick one.
+
+- **Overlay cannot populate ReBAC graph** — 55 / 89 (P0, adversarial, confidence 100)
+
+  OVERLAY never writes objects or links into the ontology store, so OpenFGA ListObjects has no admitted_to tuples. The spec still requires Security before SQL and injects allowed IDs as WHERE IN. Overlay-first therefore either returns nothing (fail closed) or skips graph-derived checks. Needs an explicit ReBAC tuple-projection contract.
+
+- **Mapping-only premise already falsified** — 2 / 14 / 41 / 44 (P1, adversarial, confidence 75)
+
+  Recommended examples encode Patient.status and occupancy as CASE / computed.sql inside obda.yaml, while the spec says OBDA MUST NOT restate ODL semantics. Either drop the purity claim or ban CASE/computed.sql from v1.
+
+- **IN-list ReBAC pushdown will not scale** — 69 / 89 (P1, adversarial, confidence 75)
+
+  A trust-wide ListObjects result of 10^5–10^6 IDs cannot be injected as `patient_id IN (...)`. The JOIN authorization_scope sketch has no schema or writer. List queries need a temp-table / COPY / semi-join contract and a named error for oversized ID sets.
+  
