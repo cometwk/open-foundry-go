@@ -41,4 +41,14 @@ var (
 	// listed in the package comment above. Phase 3 enforces this atomically
 	// under the memory provider's mutex (R4).
 	ErrCardinalityViolation = errors.New("openfoundry: cardinality violation")
+
+	// ErrPreconditionFailed signals a CEL precondition that compiled and
+	// ran but did not evaluate to true. The error chain carries the
+	// manifest `error` string; it is distinct from resolve failures
+	// (ErrObjectNotFound) and CEL compile/runtime failures (ErrCelEval).
+	ErrPreconditionFailed = errors.New("openfoundry: precondition failed")
+
+	// ErrCelEval signals a CEL compile or runtime error (including
+	// missing-field access on dyn maps). It is not a false precondition.
+	ErrCelEval = errors.New("openfoundry: cel eval")
 )
