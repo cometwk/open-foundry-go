@@ -16,6 +16,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/openfoundry/runtime/action"
 	"github.com/openfoundry/runtime/engine"
 	"github.com/openfoundry/runtime/pack"
 	"github.com/openfoundry/runtime/projection"
@@ -229,4 +230,116 @@ func TestGoldPath_SupplyChain_F8(t *testing.T) {
 	// Outcome: pipeline ran end-to-end with zero ErrUnimplemented hits
 	// across the Phase 3 verb surface (query/traverse/tx/soft-delete/
 	// UpdateLink included). Covers AE11 / F8 / R11.
+}
+
+// TestGoldPath_CreateOrder_F1 is the Phase 4 acceptance: load CreateOrder
+// YAML from the real pack, resolve Supplier/Product, pass CEL preconditions,
+// then the caller hand-writes CreateObject. Evaluation and CreateObject are
+// two steps — no PurchaseOrder exists between them. Covers AE6 / F1.
+func TestGoldPath_CreateOrder_F1(t *testing.T) {
+	dir, err := pack.SupplyChainDir()
+	if err != nil {
+		t.Fatalf("pack.SupplyChainDir err = %v, want nil", err)
+	}
+	o, err := pack.LoadDir(dir)
+	if err != nil {
+		t.Fatalf("pack.LoadDir(supply-chain) err = %v, want nil", err)
+	}
+	manifests, err := pack.LoadActions(dir, o)
+	if err != nil {
+		t.Fatalf("pack.LoadActions err = %v, want nil", err)
+	}
+
+	p := memory.New()
+	ctx := spi.RequestContext{TenantID: "gold-path-order", ActorID: "test"}
+	if _, err := p.ApplySchema(ctx, projection.ProjectStorage(o)); err != nil {
+		t.Fatalf("ApplySchema err = %v, want nil", err)
+	}
+	e, err := engine.New(p, o)
+	if err != nil {
+		t.Fatalf("engine.New err = %v, want nil", err)
+	}
+
+	supplier, err := e.CreateObject(ctx, "Supplier", map[string]any{
+		"name":    "Acme",
+		"code":    "ACME-F1",
+		"tier":    "STRATEGIC",
+		"country": "US",
+	})
+	if err != nil {
+		t.Fatalf("CreateObject(Supplier) err = %v, want nil", err)
+	}
+	product, err := e.CreateObject(ctx, "Product", map[string]any{
+		"sku":             "P-F1",
+		"name":            "Widget",
+		"category":        "Hardware",
+		"unitOfMeasure":   "each",
+		"reorderPoint":    5,
+		"reorderQuantity": 50,
+	})
+	if err != nil {
+		t.Fatalf("CreateObject(Product) err = %v, want nil", err)
+	}
+
+	params := map[string]any{
+		"supplier":              supplier["_id"].(string),
+		"product":               product["_id"].(string),
+		"orderNumber":           "PO-F1-001",
+		"quantity":              12,
+		"unitCost":              9.5,
+		"currency":              "USD",
+		"requestedDeliveryDate": "2026-09-01T00:00:00Z",
+	}
+	result, err := action.Evaluate(ctx, e, o, manifests, action.Request{
+		Name:   "CreateOrder",
+		Params: params,
+		Actor:  action.Actor{ID: "buyer-1", Type: "user", Roles: []string{"procurement_manager"}},
+	})
+	if err != nil {
+		t.Fatalf("Evaluate(CreateOrder) err = %v, want nil", err)
+	}
+
+	page, err := p.QueryObjects(ctx, "PurchaseOrder", spi.FilterExpression{}, nil)
+	if err != nil {
+		t.Fatalf("QueryObjects after eval err = %v", err)
+	}
+	if page.TotalCount != 0 {
+		t.Fatalf("PurchaseOrder count after Evaluate = %d, want 0 (eval must not write)", page.TotalCount)
+	}
+
+	po, err := e.CreateObject(ctx, "PurchaseOrder", map[string]any{
+		"orderNumber":           params["orderNumber"],
+		"status":                "DRAFT",
+		"supplier":              result.Objects["supplier"]["_id"],
+		"product":               result.Objects["product"]["_id"],
+		"quantity":              params["quantity"],
+		"unitCost":              params["unitCost"],
+		"currency":              params["currency"],
+		"requestedDeliveryDate": params["requestedDeliveryDate"],
+	})
+	if err != nil {
+		t.Fatalf("CreateObject(PurchaseOrder) err = %v, want nil", err)
+	}
+	got, err := e.GetObject(ctx, "PurchaseOrder", po["_id"].(string))
+	if err != nil {
+		t.Fatalf("GetObject(PurchaseOrder) err = %v, want nil", err)
+	}
+	if got["status"] != "DRAFT" {
+		t.Errorf("status = %v, want DRAFT", got["status"])
+	}
+	if got["supplier"] != supplier["_id"] {
+		t.Errorf("supplier = %v, want %v", got["supplier"], supplier["_id"])
+	}
+	if got["product"] != product["_id"] {
+		t.Errorf("product = %v, want %v", got["product"], product["_id"])
+	}
+	if got["orderNumber"] != "PO-F1-001" {
+		t.Errorf("orderNumber = %v, want PO-F1-001", got["orderNumber"])
+	}
+	if got["quantity"] != 12 && got["quantity"] != float64(12) {
+		t.Errorf("quantity = %v (%T), want 12", got["quantity"], got["quantity"])
+	}
+	if got["currency"] != "USD" {
+		t.Errorf("currency = %v, want USD", got["currency"])
+	}
 }
