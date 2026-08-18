@@ -12,19 +12,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Manifest is the subset of pack.yaml needed for Phase 1 schema loading.
+// Manifest is the subset of pack.yaml needed for schema and action loading.
 type Manifest struct {
 	Name      string   `yaml:"name"`
 	Namespace string   `yaml:"namespace"`
 	Schema    []string `yaml:"schema"`
+	Actions   []string `yaml:"actions"`
 }
 
 var namespaceExtendRe = regexp.MustCompile(`(?m)^extend\s+schema\s+@namespace\([^)]*\)\s*\n?`)
 
-// LoadDir loads a domain pack directory by reading pack.yaml schema list,
-// concatenating ODL with duplicate namespace stripping, then parse+lower+validate.
-// It does not load dependency packs (e.g. core) or action YAML.
-func LoadDir(packDir string) (*ir.Ontology, error) {
+func readManifest(packDir string) (*Manifest, error) {
 	manifestPath := filepath.Join(packDir, "pack.yaml")
 	raw, err := os.ReadFile(manifestPath)
 	if err != nil {
@@ -33,6 +31,17 @@ func LoadDir(packDir string) (*ir.Ontology, error) {
 	var m Manifest
 	if err := yaml.Unmarshal(raw, &m); err != nil {
 		return nil, fmt.Errorf("pack: parse manifest: %w", err)
+	}
+	return &m, nil
+}
+
+// LoadDir loads a domain pack directory by reading pack.yaml schema list,
+// concatenating ODL with duplicate namespace stripping, then parse+lower+validate.
+// It does not load dependency packs (e.g. core) or action YAML.
+func LoadDir(packDir string) (*ir.Ontology, error) {
+	m, err := readManifest(packDir)
+	if err != nil {
+		return nil, err
 	}
 	if len(m.Schema) == 0 {
 		return nil, fmt.Errorf("pack: %s has empty schema list", packDir)

@@ -182,3 +182,13 @@ func (o *Ontology) LinkByName(name string) *LinkType {
 	}
 	return nil
 }
+
+// ActionByName returns an action type by name.
+func (o *Ontology) ActionByName(name string) *ActionType {
+	for i := range o.Actions {
+		if o.Actions[i].Name == name {
+			return &o.Actions[i]
+		}
+	}
+	return nil
+}
