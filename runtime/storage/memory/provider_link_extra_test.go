@@ -124,6 +124,43 @@ func TestTraverse_MultiStep_NodesAreFinalStep(t *testing.T) {
 	if len(res.Edges) != 2 {
 		t.Errorf("edges = %d, want 2 (both hops) (AE8)", len(res.Edges))
 	}
+	if len(res.Visited) != 1 {
+		t.Fatalf("visited = %d, want 1 (Part only)", len(res.Visited))
+	}
+	if res.Visited[0]["_id"] != pt["_id"] {
+		t.Errorf("visited _id = %v, want Part %v", res.Visited[0]["_id"], pt["_id"])
+	}
+}
+
+func TestTraverse_OneHop_VisitedEmpty(t *testing.T) {
+	p := New()
+	a, _ := tenancyA()
+	schema := spi.OntologySchema{
+		Version: 1,
+		ObjectTypes: []spi.ObjectTypeDefinition{
+			{Name: "Supplier"}, {Name: "Part"},
+		},
+		LinkTypes: []spi.LinkTypeDefinition{
+			{Name: "Supplies", FromType: "Supplier", ToType: "Part", Cardinality: spi.CardinalityManyToMany},
+		},
+	}
+	if _, err := p.ApplySchema(a, schema); err != nil {
+		t.Fatalf("ApplySchema err = %v", err)
+	}
+	s, _ := p.CreateObject(a, "Supplier", map[string]any{"name": "Acme"})
+	pt, _ := p.CreateObject(a, "Part", map[string]any{"sku": "P1"})
+	if _, err := p.CreateLink(a, "Supplies", s["_id"].(string), pt["_id"].(string), nil); err != nil {
+		t.Fatalf("CreateLink err = %v", err)
+	}
+	res, err := p.Traverse(a, s["_id"].(string), spi.TraversalPath{
+		Steps: []spi.TraversalStep{{LinkType: "Supplies", Direction: "outbound"}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Traverse err = %v", err)
+	}
+	if len(res.Nodes) != 1 || len(res.Visited) != 0 {
+		t.Fatalf("1-hop nodes=%d visited=%d, want 1/0", len(res.Nodes), len(res.Visited))
+	}
 }
 
 func TestTraverse_DepthExceedsMax_Errors(t *testing.T) {

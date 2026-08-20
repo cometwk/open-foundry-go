@@ -774,8 +774,10 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 	totalNodesSeen := 0
 	currentIDs := map[string]struct{}{startID: {}}
 	stepNodes := map[string]spi.OntologyObject{}
+	visited := make([]spi.OntologyObject, 0)
+	visitedSeen := map[string]struct{}{}
 
-	for _, step := range path.Steps {
+	for si, step := range path.Steps {
 		if len(currentIDs) == 0 || totalNodesSeen >= maxTraversalNodes {
 			break
 		}
@@ -840,6 +842,19 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 			}
 		}
 		currentIDs = nextIDs
+		if si < len(path.Steps)-1 {
+			for key, n := range stepNodes {
+				if _, ok := visitedSeen[key]; ok {
+					continue
+				}
+				visitedSeen[key] = struct{}{}
+				c, err := cloneObject(n)
+				if err != nil {
+					return spi.TraversalResult{}, err
+				}
+				visited = append(visited, c)
+			}
+		}
 	}
 
 	nodes := make([]spi.OntologyObject, 0, len(stepNodes))
@@ -873,6 +888,7 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 	return spi.TraversalResult{
 		Nodes:      nodes[offset:end],
 		Edges:      edges,
+		Visited:    visited,
 		TotalCount: totalCount,
 	}, nil
 }
