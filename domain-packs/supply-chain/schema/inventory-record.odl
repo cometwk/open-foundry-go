@@ -1,9 +1,8 @@
 # Supply Chain Domain Pack — InventoryRecord ObjectType
 #
 # product and facility are implicit reference fields (foreign keys).
-# Per the InventoryOf/InventoryAt link type declarations in links.odl,
-# graph-based traversal is available when links are populated by the
-# link-sync pipeline.
+# Graph traversal uses inventoryRecords / trackedProduct @link fields;
+# those are independent of the FKs and stay empty without CreateLink.
 
 extend schema @namespace(name: "supply.chain", version: "0.1.0")
 
@@ -15,4 +14,5 @@ type InventoryRecord @objectType {
   lastCountDate: DateTime
   product: Product!
   facility: Facility!
+  trackedProduct: Product @link(type: "InventoryOf", direction: OUTBOUND)
 }

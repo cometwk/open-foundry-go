@@ -8,10 +8,9 @@ import (
 	graphql "github.com/graph-gophers/graphql-go"
 
 	"github.com/openfoundry/runtime/ir"
+	"github.com/openfoundry/runtime/query"
 	"github.com/openfoundry/runtime/spi"
 )
-
-const linkPageLimit = 1000
 
 // node is the GraphQL object resolver for every ObjectType. Field methods
 // are a union of supply-chain (and engine test fixture) names; extra
@@ -82,6 +81,28 @@ func (n *node) Products(ctx context.Context) ([]*node, error) {
 func (n *node) CurrentShipments(ctx context.Context) ([]*node, error) {
 	return n.srv.resolveLink(ctx, n, "currentShipments")
 }
+func (n *node) InventoryRecords(ctx context.Context) ([]*node, error) {
+	return n.srv.resolveLink(ctx, n, "inventoryRecords")
+}
+func (n *node) TrackedProduct(ctx context.Context) (*node, error) {
+	list, err := n.srv.resolveLink(ctx, n, "trackedProduct")
+	if err != nil || len(list) == 0 {
+		return nil, err
+	}
+	return list[0], nil
+}
+func (n *node) B(ctx context.Context) ([]*node, error) {
+	return n.srv.resolveLink(ctx, n, "b")
+}
+func (n *node) C(ctx context.Context) ([]*node, error) {
+	return n.srv.resolveLink(ctx, n, "c")
+}
+func (n *node) D(ctx context.Context) ([]*node, error) {
+	return n.srv.resolveLink(ctx, n, "d")
+}
+func (n *node) Leaf(ctx context.Context) ([]*node, error) {
+	return n.srv.resolveLink(ctx, n, "leaf")
+}
 
 func (n *node) Supplier(ctx context.Context) (*node, error) {
 	return n.srv.resolveFK(ctx, n, "supplier")
@@ -125,49 +146,44 @@ func (n *node) computedInt(ctx context.Context, field string) (*int32, error) {
 }
 
 func (s *Server) resolveLink(ctx context.Context, n *node, fieldName string) ([]*node, error) {
-	ot := s.engine.Ontology().ObjectByName(n.typ)
-	if ot == nil {
+	if kids, ok := memoFrom(ctx).lookup(n.idString(), fieldName); ok {
+		return s.wrapMany(fieldName, n.typ, kids), nil
+	}
+	ex, err := compileExpand(ctx, s.engine.Ontology(), n.typ, fieldName)
+	if err != nil {
 		return []*node{}, nil
 	}
-	f := fieldByName(ot, fieldName)
-	if f == nil || f.Link == nil {
-		return []*node{}, nil
-	}
-	dir := "inbound"
-	if f.Link.Direction == ir.DirectionOutbound {
-		dir = "outbound"
-	}
-	page, err := s.engine.GetLinks(rcFrom(ctx), n.idString(), f.Link.Type, dir, &spi.QueryOptions{Limit: linkPageLimit})
+	ex.StartID = n.idString()
+	res, err := query.Execute(s.engine, rcFrom(ctx), query.Op{Expand: ex})
 	if err != nil {
 		return nil, err
 	}
-	seen := map[string]bool{}
-	out := make([]*node, 0, len(page.Items))
-	targetType := f.Type.Name
-	for _, link := range page.Items {
-		var targetID string
-		if dir == "outbound" {
-			targetID, _ = link[spi.LinkFieldToID].(string)
-		} else {
-			targetID, _ = link[spi.LinkFieldFromID].(string)
+	if res.Expand != nil {
+		memoFrom(ctx).merge(res.Expand.Adjacency)
+		return s.wrapMany(fieldName, n.typ, res.Expand.FirstHop), nil
+	}
+	return []*node{}, nil
+}
+
+func (s *Server) wrapMany(fieldName, startType string, objs []spi.OntologyObject) []*node {
+	target := startType
+	if ot := s.engine.Ontology().ObjectByName(startType); ot != nil {
+		if f := fieldByName(ot, fieldName); f != nil {
+			target = f.Type.Name
 		}
-		if targetID == "" || seen[targetID] {
-			continue
+	}
+	out := make([]*node, 0, len(objs))
+	for _, obj := range objs {
+		typ := target
+		if t, _ := obj[spi.FieldType].(string); t != "" {
+			typ = t
 		}
-		seen[targetID] = true
-		obj, err := s.engine.GetObject(rcFrom(ctx), targetType, targetID)
-		if err != nil {
-			if errors.Is(err, spi.ErrObjectNotFound) {
-				continue
-			}
-			return nil, err
-		}
-		out = append(out, s.wrap(targetType, obj))
+		out = append(out, s.wrap(typ, obj))
 	}
 	if out == nil {
 		out = []*node{}
 	}
-	return out, nil
+	return out
 }
 
 func (s *Server) resolveFK(ctx context.Context, n *node, fieldName string) (*node, error) {
@@ -184,14 +200,14 @@ func (s *Server) resolveFK(ctx context.Context, n *node, fieldName string) (*nod
 	if id == "" {
 		return nil, nil
 	}
-	obj, err := s.engine.GetObject(rcFrom(ctx), f.Type.Name, id)
+	res, err := query.Execute(s.engine, rcFrom(ctx), query.Op{Get: &query.Get{Type: f.Type.Name, ID: id}})
 	if err != nil {
 		if errors.Is(err, spi.ErrObjectNotFound) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	return s.wrap(f.Type.Name, obj), nil
+	return s.wrap(f.Type.Name, res.Object), nil
 }
 
 func fieldByName(ot *ir.ObjectType, name string) *ir.Field {

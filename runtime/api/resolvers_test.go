@@ -11,6 +11,7 @@ import (
 	"github.com/openfoundry/runtime/ir"
 	"github.com/openfoundry/runtime/pack"
 	"github.com/openfoundry/runtime/projection"
+	projgql "github.com/openfoundry/runtime/projection/graphql"
 	"github.com/openfoundry/runtime/spi"
 	"github.com/openfoundry/runtime/storage/memory"
 )
@@ -228,6 +229,218 @@ func TestExec_ComputedSelectionAware(t *testing.T) {
 	}
 }
 
+func TestExec_OneHopLink_GetLinksNotTraverse(t *testing.T) {
+	rec := &getLinksCounter{inner: memory.New()}
+	s, ids := seedSupplyChainOn(t, rec)
+	rc := tenantRC("gold")
+	rec.n, rec.t = 0, 0
+	res := s.Exec(context.Background(), rc, `{ product(id: "`+ids.product+`") { suppliers { name } } }`, nil)
+	if len(res.Errors) > 0 {
+		t.Fatalf("errors = %v", res.Errors)
+	}
+	if rec.n != 1 || rec.t != 0 {
+		t.Fatalf("GetLinks/Traverse = %d/%d, want 1/0", rec.n, rec.t)
+	}
+}
+
+func TestExec_TwoHopLink_TraverseNotGetLinks(t *testing.T) {
+	rec := &getLinksCounter{inner: memory.New()}
+	s, ids := seedSupplyChainOn(t, rec)
+	e := s.Engine()
+	if _, err := e.CreateLink(tenantRC("gold"), "InventoryOf", ids.inventory, ids.product, nil); err != nil {
+		t.Fatalf("CreateLink InventoryOf err = %v", err)
+	}
+	rc := tenantRC("gold")
+	rec.n, rec.t = 0, 0
+	res := s.Exec(context.Background(), rc, `{
+		facility(id: "`+ids.facility+`") {
+			inventoryRecords { quantity trackedProduct { name } }
+		}
+	}`, nil)
+	if len(res.Errors) > 0 {
+		t.Fatalf("errors = %v", res.Errors)
+	}
+	if rec.t < 1 {
+		t.Fatalf("Traverse = %d, want >= 1", rec.t)
+	}
+	if rec.n != 0 {
+		t.Fatalf("GetLinks = %d, want 0 for nested @link path", rec.n)
+	}
+	data := decodeData(t, res.Data)
+	recs := data["facility"].(map[string]any)["inventoryRecords"].([]any)
+	if len(recs) != 1 {
+		t.Fatalf("inventoryRecords = %v", recs)
+	}
+	tp := recs[0].(map[string]any)["trackedProduct"].(map[string]any)
+	if tp["name"] != "Widget" {
+		t.Fatalf("trackedProduct = %v", tp)
+	}
+	rec.n, rec.t = 0, 0
+	again := s.Exec(context.Background(), rc, `{
+		facility(id: "`+ids.facility+`") {
+			inventoryRecords { trackedProduct { name } }
+		}
+	}`, nil)
+	if len(again.Errors) > 0 {
+		t.Fatalf("second exec errors = %v", again.Errors)
+	}
+	if rec.t != 1 {
+		t.Fatalf("child resolvers must not re-Traverse; Traverse = %d, want 1", rec.t)
+	}
+}
+
+func TestExec_TrackedProduct_RequiresLinkNotFK(t *testing.T) {
+	s, ids := seedSupplyChain(t)
+	rc := tenantRC("gold")
+	res := s.Exec(context.Background(), rc, `{
+		inventoryRecord(id: "`+ids.inventory+`") {
+			product { name }
+			trackedProduct { name }
+		}
+	}`, nil)
+	if len(res.Errors) > 0 {
+		t.Fatalf("errors = %v", res.Errors)
+	}
+	data := decodeData(t, res.Data)
+	inv := data["inventoryRecord"].(map[string]any)
+	if inv["product"].(map[string]any)["name"] != "Widget" {
+		t.Fatalf("FK product = %v", inv["product"])
+	}
+	if inv["trackedProduct"] != nil {
+		t.Fatalf("trackedProduct = %v, want null without InventoryOf", inv["trackedProduct"])
+	}
+}
+
+func TestExec_CycleAssemblesByLayer(t *testing.T) {
+	s, ids := seedSupplyChain(t)
+	rc := tenantRC("gold")
+	res := s.Exec(context.Background(), rc, `{
+		product(id: "`+ids.product+`") {
+			sku
+			suppliers { products { sku } }
+		}
+	}`, nil)
+	if len(res.Errors) > 0 {
+		t.Fatalf("errors = %v", res.Errors)
+	}
+	data := decodeData(t, res.Data)
+	suppliers := data["product"].(map[string]any)["suppliers"].([]any)
+	products := suppliers[0].(map[string]any)["products"].([]any)
+	if len(products) != 1 || products[0].(map[string]any)["sku"] != "P1" {
+		t.Fatalf("cycle products = %v, want original P1 at second layer", products)
+	}
+}
+
+func TestExec_SyntheticForkAndMixed(t *testing.T) {
+	rec := &getLinksCounter{inner: memory.New()}
+	s, ids := seedSynthetic(t, rec)
+	rc := tenantRC("syn")
+
+	rec.n, rec.t = 0, 0
+	fork := s.Exec(context.Background(), rc, `{ a(id: "`+ids.a+`") { b { c { name } d { name } } } }`, nil)
+	if len(fork.Errors) > 0 {
+		t.Fatalf("fork errors = %v", fork.Errors)
+	}
+	if rec.t != 2 || rec.n != 0 {
+		t.Fatalf("fork GetLinks/Traverse = %d/%d, want 0/2", rec.n, rec.t)
+	}
+	data := decodeData(t, fork.Data)
+	b := data["a"].(map[string]any)["b"].([]any)
+	if len(b) != 1 {
+		t.Fatalf("fork b = %v", b)
+	}
+	bm := b[0].(map[string]any)
+	if len(bm["c"].([]any)) != 1 || len(bm["d"].([]any)) != 1 {
+		t.Fatalf("fork c/d = %v", bm)
+	}
+
+	rec.n, rec.t = 0, 0
+	mixed := s.Exec(context.Background(), rc, `{ a(id: "`+ids.a+`") { leaf { name } b { c { name } } } }`, nil)
+	if len(mixed.Errors) > 0 {
+		t.Fatalf("mixed errors = %v", mixed.Errors)
+	}
+	if rec.n != 1 || rec.t != 1 {
+		t.Fatalf("mixed GetLinks/Traverse = %d/%d, want 1/1", rec.n, rec.t)
+	}
+}
+
+func TestSDL_NoRootTraverseOrFollow(t *testing.T) {
+	o := loadSupplyChainIR(t)
+	sdl := projgql.Generate(o, spi.StorageCapabilities{SupportsFullTextSearch: true})
+	if strings.Contains(sdl, "traverse(") || strings.Contains(sdl, "follow(") {
+		t.Fatalf("SDL must not expose root traverse/follow")
+	}
+}
+
+func seedSynthetic(t *testing.T, store spi.StorageProvider) (*Server, struct{ a string }) {
+	t.Helper()
+	ont := &ir.Ontology{
+		Namespace: &ir.Namespace{Name: "syn"},
+		Objects: []ir.ObjectType{
+			{Name: "A", Fields: []ir.Field{
+				{Name: "id", Type: ir.TypeRef{Name: "ID", NonNull: true}, Role: ir.RolePrimary},
+				{Name: "name", Type: ir.TypeRef{Name: "String", NonNull: true}, Role: ir.RoleProperty},
+				{Name: "b", Type: ir.TypeRef{Name: "B", IsList: true, NonNull: true, ListElementNonNull: true}, Role: ir.RoleLinkNav, Link: &ir.LinkRef{Type: "AB", Direction: ir.DirectionOutbound}},
+				{Name: "leaf", Type: ir.TypeRef{Name: "L", IsList: true, NonNull: true, ListElementNonNull: true}, Role: ir.RoleLinkNav, Link: &ir.LinkRef{Type: "AL", Direction: ir.DirectionOutbound}},
+			}},
+			{Name: "B", Fields: []ir.Field{
+				{Name: "id", Type: ir.TypeRef{Name: "ID", NonNull: true}, Role: ir.RolePrimary},
+				{Name: "name", Type: ir.TypeRef{Name: "String", NonNull: true}, Role: ir.RoleProperty},
+				{Name: "c", Type: ir.TypeRef{Name: "C", IsList: true, NonNull: true, ListElementNonNull: true}, Role: ir.RoleLinkNav, Link: &ir.LinkRef{Type: "BC", Direction: ir.DirectionOutbound}},
+				{Name: "d", Type: ir.TypeRef{Name: "D", IsList: true, NonNull: true, ListElementNonNull: true}, Role: ir.RoleLinkNav, Link: &ir.LinkRef{Type: "BD", Direction: ir.DirectionOutbound}},
+			}},
+			{Name: "C", Fields: []ir.Field{
+				{Name: "id", Type: ir.TypeRef{Name: "ID", NonNull: true}, Role: ir.RolePrimary},
+				{Name: "name", Type: ir.TypeRef{Name: "String", NonNull: true}, Role: ir.RoleProperty},
+			}},
+			{Name: "D", Fields: []ir.Field{
+				{Name: "id", Type: ir.TypeRef{Name: "ID", NonNull: true}, Role: ir.RolePrimary},
+				{Name: "name", Type: ir.TypeRef{Name: "String", NonNull: true}, Role: ir.RoleProperty},
+			}},
+			{Name: "L", Fields: []ir.Field{
+				{Name: "id", Type: ir.TypeRef{Name: "ID", NonNull: true}, Role: ir.RolePrimary},
+				{Name: "name", Type: ir.TypeRef{Name: "String", NonNull: true}, Role: ir.RoleProperty},
+			}},
+		},
+		Links: []ir.LinkType{
+			{Name: "AB", From: "A", To: "B", Cardinality: ir.CardinalityOneToMany},
+			{Name: "AL", From: "A", To: "L", Cardinality: ir.CardinalityOneToMany},
+			{Name: "BC", From: "B", To: "C", Cardinality: ir.CardinalityOneToMany},
+			{Name: "BD", From: "B", To: "D", Cardinality: ir.CardinalityOneToMany},
+		},
+	}
+	ctx := tenantRC("syn")
+	if _, err := store.ApplySchema(ctx, projection.ProjectStorage(ont)); err != nil {
+		t.Fatalf("ApplySchema err = %v", err)
+	}
+	e, err := engine.New(store, ont)
+	if err != nil {
+		t.Fatalf("engine.New err = %v", err)
+	}
+	srv, err := New(e)
+	if err != nil {
+		t.Fatalf("api.New err = %v", err)
+	}
+	a, _ := e.CreateObject(ctx, "A", map[string]any{"name": "root"})
+	b, _ := e.CreateObject(ctx, "B", map[string]any{"name": "B1"})
+	c, _ := e.CreateObject(ctx, "C", map[string]any{"name": "C1"})
+	d, _ := e.CreateObject(ctx, "D", map[string]any{"name": "D1"})
+	l, _ := e.CreateObject(ctx, "L", map[string]any{"name": "L1"})
+	if _, err := e.CreateLink(ctx, "AB", a[spi.FieldID].(string), b[spi.FieldID].(string), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.CreateLink(ctx, "AL", a[spi.FieldID].(string), l[spi.FieldID].(string), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.CreateLink(ctx, "BC", b[spi.FieldID].(string), c[spi.FieldID].(string), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.CreateLink(ctx, "BD", b[spi.FieldID].(string), d[spi.FieldID].(string), nil); err != nil {
+		t.Fatal(err)
+	}
+	return srv, struct{ a string }{a: a[spi.FieldID].(string)}
+}
+
 type seedIDs struct {
 	product, productNoLink, supplier, order, orderMissingFK, facility, inventory string
 }
@@ -384,6 +597,7 @@ type getLinksCounter struct {
 	spi.UnimplementedStorageProvider
 	inner spi.StorageProvider
 	n     int
+	t     int
 }
 
 func (c *getLinksCounter) ApplySchema(ctx spi.RequestContext, s spi.OntologySchema) (spi.MigrationResult, error) {
@@ -402,6 +616,10 @@ func (c *getLinksCounter) CreateLink(ctx spi.RequestContext, typ, fromID, toID s
 func (c *getLinksCounter) GetLinks(ctx spi.RequestContext, objectID, linkType, direction string, options *spi.QueryOptions) (spi.LinkPage, error) {
 	c.n++
 	return c.inner.GetLinks(ctx, objectID, linkType, direction, options)
+}
+func (c *getLinksCounter) Traverse(ctx spi.RequestContext, startID string, path spi.TraversalPath, options *spi.TraversalOptions) (spi.TraversalResult, error) {
+	c.t++
+	return c.inner.Traverse(ctx, startID, path, options)
 }
 func (c *getLinksCounter) QueryObjects(ctx spi.RequestContext, typ string, filter spi.FilterExpression, options *spi.QueryOptions) (spi.ObjectPage, error) {
 	return c.inner.QueryObjects(ctx, typ, filter, options)

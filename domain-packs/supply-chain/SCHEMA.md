@@ -19,10 +19,10 @@
 |------|------|----------|
 | **Supplier** | 供应商 | `code`（唯一）、`tier`、`country`、`leadTimeDays`、`onTimeDeliveryRate` |
 | **Product** | 产品 | `sku`（唯一）、`category`、`reorderPoint`、`reorderQuantity` |
-| **Facility** | 设施（工厂/仓库等） | `code`（唯一）、`type`、`status`、`capacity`；`currentUtilization` 为计算字段 |
+| **Facility** | 设施（工厂/仓库等） | `code`（唯一）、`type`、`status`、`capacity`；`currentUtilization` 为计算字段；`inventoryRecords` 为 `@link(InventoryAt, INBOUND)` |
 | **PurchaseOrder** | 采购订单 | `orderNumber`（唯一、不可变）、`status`、引用 `supplier` / `product` |
 | **Shipment** | 运输单 | `trackingNumber`、`status`、`transportMode`、引用 `order` / `origin` / `destination` |
-| **InventoryRecord** | 库存记录 | `quantity`、`reservedQuantity`、`stockLevel`、引用 `product` / `facility` |
+| **InventoryRecord** | 库存记录 | `quantity`、`reservedQuantity`、`stockLevel`、FK `product` / `facility`；`trackedProduct` 为 `@link(InventoryOf, OUTBOUND)` |
 
 `PurchaseOrder`、`Shipment`、`InventoryRecord` 上的引用字段为**隐式外键**，由 link-sync 管道同步为图链接。
 

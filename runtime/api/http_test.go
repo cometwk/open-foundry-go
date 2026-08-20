@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/openfoundry/runtime/storage/memory"
 )
 
 func TestHTTP_GraphQLAndRESTProduct(t *testing.T) {
@@ -98,6 +100,121 @@ func TestHTTP_RESTInventoryRecordAndFacilityComputed(t *testing.T) {
 	code, _ = restGET(t, ts.URL+"/api/v1/products/"+ids.product, "gold", "")
 	if code != 404 {
 		t.Fatalf("plural products path status = %d, want 404 (not mounted)", code)
+	}
+}
+
+func TestHTTP_FollowTwoHopAndOneHop(t *testing.T) {
+	rec := &getLinksCounter{inner: memory.New()}
+	s, ids := seedSupplyChainOn(t, rec)
+	if _, err := s.Engine().CreateLink(tenantRC("gold"), "InventoryOf", ids.inventory, ids.product, nil); err != nil {
+		t.Fatalf("CreateLink InventoryOf err = %v", err)
+	}
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+
+	gql := graphqlPOST(t, ts.URL, "gold", `{
+		facility(id: "`+ids.facility+`") {
+			inventoryRecords { trackedProduct { id } }
+		}
+	}`, "")
+	if len(gql.Errors) > 0 {
+		t.Fatalf("graphql errors = %v", gql.Errors)
+	}
+	gqlIDs := map[string]bool{}
+	recs := gql.Data["facility"].(map[string]any)["inventoryRecords"].([]any)
+	for _, r := range recs {
+		tp := r.(map[string]any)["trackedProduct"].(map[string]any)
+		gqlIDs[tp["id"].(string)] = true
+	}
+
+	rec.n, rec.t = 0, 0
+	code, body := restGET(t, ts.URL+"/api/v1/facility/"+ids.facility+"/follow?path=inventoryRecords,trackedProduct", "gold", "")
+	if code != 200 {
+		t.Fatalf("follow 2-hop status = %d body = %s", code, body)
+	}
+	var follow struct {
+		Nodes []map[string]any `json:"nodes"`
+	}
+	if err := json.Unmarshal(body, &follow); err != nil {
+		t.Fatalf("follow JSON: %v", err)
+	}
+	restIDs := map[string]bool{}
+	for _, n := range follow.Nodes {
+		restIDs[n["id"].(string)] = true
+		if _, ok := n["_id"]; ok {
+			t.Fatal("follow exposed _id")
+		}
+	}
+	if len(restIDs) != len(gqlIDs) {
+		t.Fatalf("follow ids = %v graphql ids = %v", restIDs, gqlIDs)
+	}
+	for id := range gqlIDs {
+		if !restIDs[id] {
+			t.Fatalf("missing graphql terminal %s in follow", id)
+		}
+	}
+
+	rec.n, rec.t = 0, 0
+	code, body = restGET(t, ts.URL+"/api/v1/product/"+ids.product+"/follow?path=suppliers", "gold", "")
+	if code != 200 {
+		t.Fatalf("follow 1-hop status = %d body = %s", code, body)
+	}
+	if rec.t < 1 || rec.n != 0 {
+		t.Fatalf("1-hop follow GetLinks/Traverse = %d/%d, want 0/>=1", rec.n, rec.t)
+	}
+	if err := json.Unmarshal(body, &follow); err != nil {
+		t.Fatalf("1-hop JSON: %v", err)
+	}
+	if len(follow.Nodes) != 1 || follow.Nodes[0]["name"] != "Acme" {
+		t.Fatalf("1-hop nodes = %v", follow.Nodes)
+	}
+}
+
+func TestHTTP_FollowIllegalPath_NoSPI(t *testing.T) {
+	rec := &getLinksCounter{inner: memory.New()}
+	s, ids := seedSupplyChainOn(t, rec)
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+
+	cases := []string{
+		ts.URL + "/api/v1/facility/" + ids.facility + "/follow?path=",
+		ts.URL + "/api/v1/inventoryRecord/" + ids.inventory + "/follow?path=product",
+		ts.URL + "/api/v1/facility/" + ids.facility + "/follow?path=InventoryAt",
+		ts.URL + "/api/v1/facility/" + ids.facility + "/follow?path=name",
+		ts.URL + "/api/v1/facility/" + ids.facility + "/follow?path=inventoryRecords,name",
+		ts.URL + "/api/v1/product/" + ids.product + "/follow?path=inventoryRecords",
+	}
+	for _, u := range cases {
+		rec.n, rec.t = 0, 0
+		code, body := restGET(t, u, "gold", "")
+		if code != 400 || !bytes.Contains(body, []byte("INVALID_FOLLOW_PATH")) {
+			t.Fatalf("%s status = %d body = %s", u, code, body)
+		}
+		if rec.n != 0 || rec.t != 0 {
+			t.Fatalf("%s called GetLinks/Traverse %d/%d, want 0", u, rec.n, rec.t)
+		}
+	}
+}
+
+func TestHTTP_FollowMissingStart(t *testing.T) {
+	s, ids := seedSupplyChain(t)
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+
+	code, body := restGET(t, ts.URL+"/api/v1/facility/missing/follow?path=inventoryRecords", "gold", "")
+	if code != 404 || !bytes.Contains(body, []byte("OBJECT_NOT_FOUND")) {
+		t.Fatalf("missing start status = %d body = %s", code, body)
+	}
+	code, _ = restGET(t, ts.URL+"/api/v1/facility/"+ids.facility+"/follow?path=inventoryRecords", "other", "")
+	if code != 404 {
+		t.Fatalf("cross-tenant follow status = %d, want 404", code)
+	}
+	if err := s.Engine().DeleteObject(tenantRC("gold"), "Facility", ids.facility, "soft"); err != nil {
+		t.Fatalf("soft delete err = %v", err)
+	}
+	code, body = restGET(t, ts.URL+"/api/v1/facility/"+ids.facility+"/follow?path=inventoryRecords", "gold", "")
+	if code != 404 || !bytes.Contains(body, []byte("OBJECT_NOT_FOUND")) {
+		t.Fatalf("soft-deleted start status = %d body = %s", code, body)
 	}
 }
 

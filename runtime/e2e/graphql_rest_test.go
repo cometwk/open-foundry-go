@@ -75,6 +75,59 @@ func TestGoldPath_GraphQLREST_HTTP(t *testing.T) {
 		}
 	})
 
+	t.Run("two hop inventoryRecords trackedProduct", func(t *testing.T) {
+		res := gql(t, ts.URL, "gold", `{
+			facility(id: "`+ids.facility+`") {
+				inventoryRecords { quantity trackedProduct { name id } }
+			}
+		}`)
+		if len(res.Errors) > 0 {
+			t.Fatalf("errors = %v", res.Errors)
+		}
+		recs := res.Data["facility"].(map[string]any)["inventoryRecords"].([]any)
+		if len(recs) != 1 {
+			t.Fatalf("inventoryRecords = %v", recs)
+		}
+		tp := recs[0].(map[string]any)["trackedProduct"].(map[string]any)
+		if tp["name"] != "Widget" {
+			t.Fatalf("trackedProduct = %v", tp)
+		}
+		gqlID := tp["id"].(string)
+
+		code, body := rest(t, ts.URL+"/api/v1/facility/"+ids.facility+"/follow?path=inventoryRecords,trackedProduct", "gold")
+		if code != 200 {
+			t.Fatalf("follow status = %d body = %s", code, body)
+		}
+		var follow struct {
+			Nodes []map[string]any `json:"nodes"`
+		}
+		if err := json.Unmarshal(body, &follow); err != nil {
+			t.Fatal(err)
+		}
+		if len(follow.Nodes) != 1 || follow.Nodes[0]["id"] != gqlID {
+			t.Fatalf("follow nodes = %v want id %s", follow.Nodes, gqlID)
+		}
+	})
+
+	t.Run("trackedProduct empty without InventoryOf", func(t *testing.T) {
+		res := gql(t, ts.URL, "gold", `{
+			inventoryRecord(id: "`+ids.inventoryNoOf+`") {
+				product { name }
+				trackedProduct { name }
+			}
+		}`)
+		if len(res.Errors) > 0 {
+			t.Fatalf("errors = %v", res.Errors)
+		}
+		inv := res.Data["inventoryRecord"].(map[string]any)
+		if inv["product"].(map[string]any)["name"] != "Widget" {
+			t.Fatalf("FK product = %v", inv["product"])
+		}
+		if inv["trackedProduct"] != nil {
+			t.Fatalf("trackedProduct = %v, want null", inv["trackedProduct"])
+		}
+	})
+
 	t.Run("list search aggregate", func(t *testing.T) {
 		list := gql(t, ts.URL, "gold", `{ products(first: 1) { totalCount edges { node { sku } } pageInfo { hasNextPage } } }`)
 		if len(list.Errors) > 0 {
@@ -179,7 +232,7 @@ func TestGoldPath_GraphQLREST_HTTP(t *testing.T) {
 }
 
 type goldIDs struct {
-	product, supplier, facility, order, shipment, inventory string
+	product, supplier, facility, order, shipment, inventory, inventoryNoOf string
 }
 
 func seedAll(t *testing.T, e *engine.Engine, ctx spi.RequestContext) goldIDs {
@@ -219,6 +272,16 @@ func seedAll(t *testing.T, e *engine.Engine, ctx spi.RequestContext) goldIDs {
 	if _, err := e.CreateLink(ctx, "InventoryAt", inv["_id"].(string), fac["_id"].(string), nil); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := e.CreateLink(ctx, "InventoryOf", inv["_id"].(string), product["_id"].(string), nil); err != nil {
+		t.Fatal(err)
+	}
+	invNo, err := e.CreateObject(ctx, "InventoryRecord", map[string]any{
+		"quantity": 3, "reservedQuantity": 0, "stockLevel": "ADEQUATE",
+		"product": product["_id"], "facility": fac["_id"],
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	order, err := e.CreateObject(ctx, "PurchaseOrder", map[string]any{
 		"orderNumber": "PO-1", "status": "SUBMITTED",
 		"supplier": supplier["_id"], "product": product["_id"],
@@ -236,12 +299,13 @@ func seedAll(t *testing.T, e *engine.Engine, ctx spi.RequestContext) goldIDs {
 		t.Fatal(err)
 	}
 	return goldIDs{
-		product:   product["_id"].(string),
-		supplier:  supplier["_id"].(string),
-		facility:  fac["_id"].(string),
-		order:     order["_id"].(string),
-		shipment:  ship["_id"].(string),
-		inventory: inv["_id"].(string),
+		product:       product["_id"].(string),
+		supplier:      supplier["_id"].(string),
+		facility:      fac["_id"].(string),
+		order:         order["_id"].(string),
+		shipment:      ship["_id"].(string),
+		inventory:     inv["_id"].(string),
+		inventoryNoOf: invNo["_id"].(string),
 	}
 }
 
