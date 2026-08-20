@@ -27,6 +27,12 @@ func (e *Engine) GetLinks(ctx spi.RequestContext, objectID, linkType, direction 
 	return e.storage.GetLinks(ctx, objectID, linkType, direction, options)
 }
 
+// Traverse passes through to storage. Classification and GraphQL tree
+// assembly live in the query package, not here.
+func (e *Engine) Traverse(ctx spi.RequestContext, startID string, path spi.TraversalPath, options *spi.TraversalOptions) (spi.TraversalResult, error) {
+	return e.storage.Traverse(ctx, startID, path, options)
+}
+
 // Ontology returns the TBox bound at construction. API projections read
 // types from here rather than keeping a second IR pointer.
 func (e *Engine) Ontology() *ir.Ontology {

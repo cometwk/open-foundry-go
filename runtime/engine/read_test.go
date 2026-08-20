@@ -3,6 +3,7 @@ package engine
 import (
 	"testing"
 
+	"github.com/openfoundry/runtime/ir"
 	"github.com/openfoundry/runtime/spi"
 	"github.com/openfoundry/runtime/storage/memory"
 )
@@ -124,6 +125,115 @@ func TestEngine_GetLinks_InboundOutbound(t *testing.T) {
 	}
 	if in.TotalCount != 1 {
 		t.Fatalf("inbound TotalCount = %d, want 1", in.TotalCount)
+	}
+}
+
+func TestEngine_Traverse_TwoHopVisitedAndCrossTenant(t *testing.T) {
+	rec := memory.New()
+	ont := traverseOntology(t)
+	e, err := New(rec, ont)
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+	a := tenantCtx("a")
+	b := tenantCtx("b")
+	if _, err := rec.ApplySchema(a, spi.OntologySchema{
+		Version: 1,
+		ObjectTypes: []spi.ObjectTypeDefinition{
+			{Name: "Supplier"}, {Name: "Part"}, {Name: "Assembly"},
+		},
+		LinkTypes: []spi.LinkTypeDefinition{
+			{Name: "Supplies", FromType: "Supplier", ToType: "Part", Cardinality: spi.CardinalityManyToMany},
+			{Name: "UsedIn", FromType: "Part", ToType: "Assembly", Cardinality: spi.CardinalityManyToMany},
+		},
+	}); err != nil {
+		t.Fatalf("ApplySchema err = %v", err)
+	}
+	s, err := e.CreateObject(a, "Supplier", map[string]any{"name": "Acme"})
+	if err != nil {
+		t.Fatalf("CreateObject Supplier err = %v", err)
+	}
+	pt, err := e.CreateObject(a, "Part", map[string]any{"sku": "P1"})
+	if err != nil {
+		t.Fatalf("CreateObject Part err = %v", err)
+	}
+	asm, err := e.CreateObject(a, "Assembly", map[string]any{"name": "A1"})
+	if err != nil {
+		t.Fatalf("CreateObject Assembly err = %v", err)
+	}
+	if _, err := e.CreateLink(a, "Supplies", s[spi.FieldID].(string), pt[spi.FieldID].(string), nil); err != nil {
+		t.Fatalf("CreateLink Supplies err = %v", err)
+	}
+	if _, err := e.CreateLink(a, "UsedIn", pt[spi.FieldID].(string), asm[spi.FieldID].(string), nil); err != nil {
+		t.Fatalf("CreateLink UsedIn err = %v", err)
+	}
+	if _, err := e.CreateObject(b, "Part", map[string]any{"sku": "OTHER"}); err != nil {
+		t.Fatalf("CreateObject other-tenant Part err = %v", err)
+	}
+
+	direct, err := rec.Traverse(a, s[spi.FieldID].(string), spi.TraversalPath{
+		Steps: []spi.TraversalStep{
+			{LinkType: "Supplies", Direction: "outbound"},
+			{LinkType: "UsedIn", Direction: "outbound"},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("storage Traverse err = %v", err)
+	}
+	got, err := e.Traverse(a, s[spi.FieldID].(string), spi.TraversalPath{
+		Steps: []spi.TraversalStep{
+			{LinkType: "Supplies", Direction: "outbound"},
+			{LinkType: "UsedIn", Direction: "outbound"},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Engine Traverse err = %v", err)
+	}
+	if len(got.Nodes) != 1 || got.Nodes[0][spi.FieldID] != asm[spi.FieldID] {
+		t.Fatalf("nodes = %+v, want Assembly %v", got.Nodes, asm[spi.FieldID])
+	}
+	if len(got.Visited) != 1 || got.Visited[0][spi.FieldID] != pt[spi.FieldID] {
+		t.Fatalf("visited = %+v, want Part %v", got.Visited, pt[spi.FieldID])
+	}
+	if len(got.Nodes) != len(direct.Nodes) || len(got.Visited) != len(direct.Visited) || len(got.Edges) != len(direct.Edges) {
+		t.Fatalf("engine result nodes/visited/edges = %d/%d/%d, storage = %d/%d/%d",
+			len(got.Nodes), len(got.Visited), len(got.Edges),
+			len(direct.Nodes), len(direct.Visited), len(direct.Edges))
+	}
+	for _, n := range got.Nodes {
+		if n[spi.FieldTenantID] != "a" {
+			t.Fatalf("leaked tenant %v in nodes", n[spi.FieldTenantID])
+		}
+	}
+	for _, n := range got.Visited {
+		if n[spi.FieldTenantID] != "a" {
+			t.Fatalf("leaked tenant %v in visited", n[spi.FieldTenantID])
+		}
+	}
+}
+
+func traverseOntology(t *testing.T) *ir.Ontology {
+	t.Helper()
+	return &ir.Ontology{
+		Namespace: &ir.Namespace{Name: "test"},
+		Objects: []ir.ObjectType{
+			{Name: "Supplier", Fields: []ir.Field{
+				{Name: "id", Type: ir.TypeRef{Name: "ID"}, Role: ir.RolePrimary},
+				{Name: "name", Type: ir.TypeRef{Name: "String"}, Role: ir.RoleProperty},
+			}},
+			{Name: "Part", Fields: []ir.Field{
+				{Name: "id", Type: ir.TypeRef{Name: "ID"}, Role: ir.RolePrimary},
+				{Name: "sku", Type: ir.TypeRef{Name: "String"}, Role: ir.RoleProperty},
+			}},
+			{Name: "Assembly", Fields: []ir.Field{
+				{Name: "id", Type: ir.TypeRef{Name: "ID"}, Role: ir.RolePrimary},
+				{Name: "name", Type: ir.TypeRef{Name: "String"}, Role: ir.RoleProperty},
+			}},
+		},
+		Links: []ir.LinkType{
+			{Name: "Supplies", From: "Supplier", To: "Part", Cardinality: ir.CardinalityManyToMany},
+			{Name: "UsedIn", From: "Part", To: "Assembly", Cardinality: ir.CardinalityManyToMany},
+		},
 	}
 }
 
