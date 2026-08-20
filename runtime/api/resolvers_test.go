@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -24,26 +23,53 @@ func TestNew_SupplyChainSchemaParses(t *testing.T) {
 }
 
 func TestNode_CoversSupplyChainFields(t *testing.T) {
+	s := newSupplyChainAPI(t)
 	o := loadSupplyChainIR(t)
-	nt := reflect.TypeOf((*node)(nil))
 	for _, obj := range o.Objects {
 		for _, f := range obj.Fields {
-			if !nodeResolves(nt, f.Name) {
-				t.Errorf("node missing resolver for %s.%s", obj.Name, f.Name)
+			if _, ok := s.objType.FieldByName(exportName(f.Name)); !ok {
+				t.Errorf("generated resolver missing field for %s.%s", obj.Name, f.Name)
 			}
 		}
 	}
 }
 
-func nodeResolves(t reflect.Type, gqlName string) bool {
-	want := strings.ReplaceAll(gqlName, "_", "")
-	for i := 0; i < t.NumMethod(); i++ {
-		got := strings.ReplaceAll(t.Method(i).Name, "_", "")
-		if strings.EqualFold(want, got) {
-			return true
-		}
+func TestExec_IROnlyField_NoHardcodedMethod(t *testing.T) {
+	ont := &ir.Ontology{
+		Namespace: &ir.Namespace{Name: "only"},
+		Objects: []ir.ObjectType{
+			{Name: "Widget", Fields: []ir.Field{
+				{Name: "id", Type: ir.TypeRef{Name: "ID", NonNull: true}, Role: ir.RolePrimary},
+				{Name: "widgetCode", Type: ir.TypeRef{Name: "String", NonNull: true}, Role: ir.RoleProperty},
+			}},
+		},
 	}
-	return false
+	store := memory.New()
+	ctx := tenantRC("only")
+	if _, err := store.ApplySchema(ctx, projection.ProjectStorage(ont)); err != nil {
+		t.Fatalf("ApplySchema err = %v", err)
+	}
+	e, err := engine.New(store, ont)
+	if err != nil {
+		t.Fatalf("engine.New err = %v", err)
+	}
+	s, err := New(e)
+	if err != nil {
+		t.Fatalf("api.New err = %v", err)
+	}
+	obj, err := e.CreateObject(ctx, "Widget", map[string]any{"widgetCode": "W-9"})
+	if err != nil {
+		t.Fatalf("CreateObject err = %v", err)
+	}
+	id := obj[spi.FieldID].(string)
+	res := s.Exec(context.Background(), ctx, `{ widget(id: "`+id+`") { widgetCode } }`, nil)
+	if len(res.Errors) > 0 {
+		t.Fatalf("errors = %v", res.Errors)
+	}
+	data := decodeData(t, res.Data)
+	if data["widget"].(map[string]any)["widgetCode"] != "W-9" {
+		t.Fatalf("widget = %v", data["widget"])
+	}
 }
 
 func TestExec_ProductGetAndMiss(t *testing.T) {

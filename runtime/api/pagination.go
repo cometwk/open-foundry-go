@@ -19,28 +19,6 @@ type pageInfo struct {
 	EndCursor       *string
 }
 
-type Connection struct {
-	Edges      []*Edge
-	PageInfo   pageInfo
-	TotalCount int32
-}
-
-type Edge struct {
-	Node   *node
-	Cursor string
-}
-
-type SearchHit struct {
-	Node  *node
-	Score float64
-}
-
-type SearchResult struct {
-	Hits        []*SearchHit
-	TotalCount  int32
-	HasNextPage bool
-}
-
 type AggregateGroup struct {
 	Keys   JSON
 	Values JSON
@@ -138,27 +116,4 @@ func resolvePagination(args listArgs) (offset, limit int, err error) {
 		limit = requestedLast
 	}
 	return offset, limit, nil
-}
-
-func buildConnection(nodes []*node, totalCount, offset int) *Connection {
-	edges := make([]*Edge, len(nodes))
-	for i, n := range nodes {
-		edges[i] = &Edge{Node: n, Cursor: encodeCursor(offset + i)}
-	}
-	var start, end *string
-	if len(edges) > 0 {
-		s := edges[0].Cursor
-		e := edges[len(edges)-1].Cursor
-		start, end = &s, &e
-	}
-	return &Connection{
-		Edges: edges,
-		PageInfo: pageInfo{
-			HasNextPage:     offset+len(nodes) < totalCount,
-			HasPreviousPage: offset > 0,
-			StartCursor:     start,
-			EndCursor:       end,
-		},
-		TotalCount: int32(totalCount),
-	}
 }

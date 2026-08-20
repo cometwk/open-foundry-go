@@ -26,6 +26,14 @@ const (
 type Server struct {
 	engine *engine.Engine
 	schema *graphql.Schema
+
+	objectNames               map[string]bool
+	objFields                 []objField
+	objType, objPtrType       reflect.Type
+	edgeType, edgePtrType     reflect.Type
+	connType, connPtrType     reflect.Type
+	hitType, hitPtrType       reflect.Type
+	searchType, searchPtrType reflect.Type
 }
 
 // New builds an executable GraphQL schema from the Engine's Ontology IR.
@@ -34,6 +42,9 @@ func New(eng *engine.Engine) (*Server, error) {
 		return nil, fmt.Errorf("api: engine must be non-nil")
 	}
 	s := &Server{engine: eng}
+	if err := s.buildResolverTypes(eng.Ontology()); err != nil {
+		return nil, err
+	}
 	sdl := projgql.Generate(eng.Ontology(), eng.Capabilities())
 	root, err := s.buildQueryRoot()
 	if err != nil {
@@ -74,10 +85,10 @@ type gqlGetArgs struct {
 func (s *Server) buildQueryRoot() (any, error) {
 	objects := s.engine.Ontology().Objects
 	fts := s.engine.Capabilities().SupportsFullTextSearch
-	getFn := reflect.TypeOf(func(context.Context, gqlGetArgs) (*node, error) { return nil, nil })
-	listFn := reflect.TypeOf(func(context.Context, listArgs) (*Connection, error) { return nil, nil })
+	getFn := reflect.FuncOf([]reflect.Type{ctxType, reflect.TypeOf(gqlGetArgs{})}, []reflect.Type{s.objPtrType, errType}, false)
+	listFn := reflect.FuncOf([]reflect.Type{ctxType, reflect.TypeOf(listArgs{})}, []reflect.Type{s.connPtrType, errType}, false)
 	aggFn := reflect.TypeOf(func(context.Context, aggregateArgs) (*AggregateResult, error) { return nil, nil })
-	searchFn := reflect.TypeOf(func(context.Context, searchArgs) (*SearchResult, error) { return nil, nil })
+	searchFn := reflect.FuncOf([]reflect.Type{ctxType, reflect.TypeOf(searchArgs{})}, []reflect.Type{s.searchPtrType, errType}, false)
 
 	var fields []reflect.StructField
 	for _, obj := range objects {
@@ -102,34 +113,40 @@ func (s *Server) buildQueryRoot() (any, error) {
 	for _, obj := range objects {
 		typ := obj.Name
 		lower := projgql.LowerFirst(typ)
-		root.FieldByName(exportName(lower)).Set(reflect.ValueOf(s.makeGet(typ)))
-		root.FieldByName(exportName(lower + "s")).Set(reflect.ValueOf(s.makeList(typ)))
+		root.FieldByName(exportName(lower)).Set(s.makeGet(typ))
+		root.FieldByName(exportName(lower + "s")).Set(s.makeList(typ))
 		root.FieldByName(exportName(lower + "Aggregate")).Set(reflect.ValueOf(s.makeAggregate(typ)))
 		if fts {
-			root.FieldByName(exportName("search" + typ + "s")).Set(reflect.ValueOf(s.makeSearch(typ)))
+			root.FieldByName(exportName("search" + typ + "s")).Set(s.makeSearch(typ))
 		}
 	}
 	return root.Addr().Interface(), nil
 }
 
-func (s *Server) makeGet(typ string) func(context.Context, gqlGetArgs) (*node, error) {
-	return func(ctx context.Context, args gqlGetArgs) (*node, error) {
+func (s *Server) makeGet(typ string) reflect.Value {
+	ft := reflect.FuncOf([]reflect.Type{ctxType, reflect.TypeOf(gqlGetArgs{})}, []reflect.Type{s.objPtrType, errType}, false)
+	return reflect.MakeFunc(ft, func(in []reflect.Value) []reflect.Value {
+		ctx := in[0].Interface().(context.Context)
+		args := in[1].Interface().(gqlGetArgs)
 		res, err := query.Execute(s.engine, rcFrom(ctx), query.Op{Get: &query.Get{Type: typ, ID: string(args.ID)}})
 		if err != nil {
 			if errors.Is(err, spi.ErrObjectNotFound) {
-				return nil, nil
+				return s.retPair(s.objPtrType, nil, nil)
 			}
-			return nil, err
+			return s.retPair(s.objPtrType, nil, err)
 		}
-		return s.wrap(typ, res.Object), nil
-	}
+		return s.retPair(s.objPtrType, s.wrap(typ, res.Object), nil)
+	})
 }
 
-func (s *Server) makeList(typ string) func(context.Context, listArgs) (*Connection, error) {
-	return func(ctx context.Context, args listArgs) (*Connection, error) {
+func (s *Server) makeList(typ string) reflect.Value {
+	ft := reflect.FuncOf([]reflect.Type{ctxType, reflect.TypeOf(listArgs{})}, []reflect.Type{s.connPtrType, errType}, false)
+	return reflect.MakeFunc(ft, func(in []reflect.Value) []reflect.Value {
+		ctx := in[0].Interface().(context.Context)
+		args := in[1].Interface().(listArgs)
 		offset, limit, err := resolvePagination(args)
 		if err != nil {
-			return nil, err
+			return s.retPair(s.connPtrType, nil, err)
 		}
 		opts := &spi.QueryOptions{Limit: limit, Offset: offset, OrderBy: convertOrderBy(args.OrderBy)}
 		res, err := query.Execute(s.engine, rcFrom(ctx), query.Op{List: &query.List{
@@ -138,14 +155,14 @@ func (s *Server) makeList(typ string) func(context.Context, listArgs) (*Connecti
 			Options: opts,
 		}})
 		if err != nil {
-			return nil, err
+			return s.retPair(s.connPtrType, nil, err)
 		}
-		nodes := make([]*node, 0, len(res.Page.Items))
+		nodes := make([]any, 0, len(res.Page.Items))
 		for _, item := range res.Page.Items {
 			nodes = append(nodes, s.wrap(typ, item))
 		}
-		return buildConnection(nodes, res.Page.TotalCount, offset), nil
-	}
+		return s.retPair(s.connPtrType, s.buildConnection(nodes, res.Page.TotalCount, offset), nil)
+	})
 }
 
 func (s *Server) makeAggregate(typ string) func(context.Context, aggregateArgs) (*AggregateResult, error) {
@@ -184,14 +201,17 @@ func (s *Server) makeAggregate(typ string) func(context.Context, aggregateArgs) 
 	}
 }
 
-func (s *Server) makeSearch(typ string) func(context.Context, searchArgs) (*SearchResult, error) {
-	return func(ctx context.Context, args searchArgs) (*SearchResult, error) {
+func (s *Server) makeSearch(typ string) reflect.Value {
+	ft := reflect.FuncOf([]reflect.Type{ctxType, reflect.TypeOf(searchArgs{})}, []reflect.Type{s.searchPtrType, errType}, false)
+	return reflect.MakeFunc(ft, func(in []reflect.Value) []reflect.Value {
+		ctx := in[0].Interface().(context.Context)
+		args := in[1].Interface().(searchArgs)
 		offset := 0
 		limit := defaultPageSize
 		if args.After != nil && *args.After != "" {
 			n, err := decodeCursor(*args.After)
 			if err != nil {
-				return nil, err
+				return s.retPair(s.searchPtrType, nil, err)
 			}
 			offset = n + 1
 		}
@@ -215,18 +235,16 @@ func (s *Server) makeSearch(typ string) func(context.Context, searchArgs) (*Sear
 		}
 		got, err := query.Execute(s.engine, rcFrom(ctx), query.Op{Search: &query.Search{Type: typ, Query: sq}})
 		if err != nil {
-			return nil, err
+			return s.retPair(s.searchPtrType, nil, err)
 		}
-		hits := make([]*SearchHit, 0, len(got.Search.Hits))
+		nodes := make([]any, 0, len(got.Search.Hits))
+		scores := make([]float64, 0, len(got.Search.Hits))
 		for _, h := range got.Search.Hits {
-			hits = append(hits, &SearchHit{Node: s.wrap(typ, h.Object), Score: h.Score})
+			nodes = append(nodes, s.wrap(typ, h.Object))
+			scores = append(scores, h.Score)
 		}
-		return &SearchResult{
-			Hits:        hits,
-			TotalCount:  int32(got.Search.TotalCount),
-			HasNextPage: got.Search.HasNextPage,
-		}, nil
-	}
+		return s.retPair(s.searchPtrType, s.buildSearchResult(nodes, scores, got.Search.TotalCount, got.Search.HasNextPage), nil)
+	})
 }
 
 func exportName(s string) string {
