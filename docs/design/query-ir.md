@@ -1,26 +1,26 @@
 # Query IR
 
-Query IR is the compile target for **all external reads** in the Go Runtime: GraphQL get / list / aggregate / search / nested `@link` / object-typed FK, REST GET by id, and REST follow. GraphQL SDL is a projection of Ontology IR, not the semantic core. Query IR sits between those projections and Engine.
+Query IR 是 Go Runtime **全部对外读** 的编译目标：GraphQL 的 get / list / aggregate / search / 嵌套 `@link` / 对象型外键、REST GET by id，以及 REST follow。GraphQL SDL 是 Ontology IR 的投影，不是语义核心。Query IR 位于这些投影与 Engine 之间。
 
-This document is the shape of that IR. Implementation sequencing lives in `docs/plans/2026-08-20-002-feat-go-phase6-query-ir-traverse-plan.md`. Product rules live in `docs/brainstorms/2026-08-20-go-phase6-query-ir-traverse-requirements.md`.
+本文描述该 IR 的形状。实现顺序见 `docs/plans/2026-08-20-002-feat-go-phase6-query-ir-traverse-plan.md`。产品规则见 `docs/brainstorms/2026-08-20-go-phase6-query-ir-traverse-requirements.md`。
 
 ---
 
-## Place in the Runtime
+## 在 Runtime 中的位置
 
-`docs/design/draft.md` names three core intermediate representations:
+`docs/design/draft.md` 列出三种核心中间表示：
 
-| IR | Answers | Status |
+| IR | 回答什么 | 现状 |
 |---|---|---|
-| Ontology IR | What types, links, and computed fields exist | `runtime/ir` (ODL lowered) |
-| Query IR | What read to run against those types | this document |
-| Action IR | What mutation to validate and apply | not this phase |
+| Ontology IR | 有哪些类型、链接、计算字段 | `runtime/ir`（ODL 下降） |
+| Query IR | 针对这些类型执行哪一次读 | 本文 |
+| Action IR | 校验并施加哪一次写 | 本阶段不做 |
 
 ```text
-ODL ──► Ontology IR ──► GraphQL SDL / REST routes
+ODL ──► Ontology IR ──► GraphQL SDL / REST 路由
                 │
                 ▼
-         GraphQL / REST request
+         GraphQL / REST 请求
                 │
                 ▼
             Query IR
@@ -32,22 +32,22 @@ ODL ──► Ontology IR ──► GraphQL SDL / REST routes
               Engine ──► SPI
 ```
 
-Projections construct Query IR. They do not call `StorageProvider`. Engine is the only persistence boundary.
+投影层只构造 Query IR，不调用 `StorageProvider`。持久化边界只有 Engine。
 
-Query IR is **not**:
+Query IR **不是**：
 
-- a GraphQL AST (schema still comes from Ontology IR)
-- SPI `TraversalPath` exposed to clients (path vocabulary is `@link` field names)
-- OBDA `SemanticQueryPlan` (`docs/design/open-foundry-obda-mapping-spec-v1.md` §71) — that compiles overlay SQL, a different artifact
-- a whole-document optimizer that shares prefixes across a GraphQL operation
+- GraphQL AST（schema 仍来自 Ontology IR）
+- 暴露给客户端的 SPI `TraversalPath`（路径词表是 `@link` 字段名）
+- OBDA `SemanticQueryPlan`（`docs/design/open-foundry-obda-mapping-spec-v1.md` §71 编译 overlay SQL，是另一套产物）
+- 整份 GraphQL 操作上的共享前缀优化器
 
-v1 constructs one tagged op per resolver (or per REST request) and runs `Execute`. Sharing a prefix across `a { b { c, d } }` is deferred.
+v1 为每个 resolver（或每个 REST 请求）构造一个 tagged op，再跑 `Execute`。`a { b { c, d } }` 的共享前缀规划延后。
 
 ---
 
-## Algebra
+## 代数
 
-A Query IR value is exactly one of the ops below. Go representation (struct with exclusive pointers vs interface) is an implementation choice; the discriminant is not.
+一个 Query IR 值恰好是下列 op 之一。Go 用「互斥指针的 struct」还是 interface，由实现选择；判别式不变。
 
 ```text
 Op =
@@ -58,86 +58,86 @@ Op =
   | Expand   { startType, startId, hops }
 ```
 
-- **Get** — one object. `computed` is the LAZY field set (GraphQL: selected computed fields; REST GET: all LAZY, matching Phase 6).
-- **List** — `QueryObjects` + Relay page. Filter/orderBy are already SPI types when they enter the op; GraphQL `FooFilter` conversion stays in the projection.
-- **Aggregate** / **Search** — pass-through of existing Engine verbs.
-- **Expand** — graph navigation from one start object along Ontology IR `RoleLinkNav` fields.
+- **Get** — 单个对象。`computed` 是 LAZY 字段集合（GraphQL：选中的计算字段；REST GET：全部 LAZY，与 Phase 6 一致）。
+- **List** — `QueryObjects` + Relay 分页。进入 op 时 filter/orderBy 已是 SPI 类型；GraphQL `FooFilter` 的转换留在投影层。
+- **Aggregate** / **Search** — 现有 Engine 动词透传。
+- **Expand** — 从单个起点对象出发，沿 Ontology IR 的 `RoleLinkNav` 字段走图。
 
-Object-typed properties (implicit FK, `RoleProperty` whose type is an ObjectType) are **Get**, not Expand. `PurchaseOrder.supplier` and `InventoryRecord.product` stay `GetObject` on the stored id.
+对象型属性（隐式外键：`RoleProperty` 且类型为 ObjectType）是 **Get**，不是 Expand。`PurchaseOrder.supplier`、`InventoryRecord.product` 仍按存着的 id 做 `GetObject`。
 
-Computed fields are not Expand. `Facility.currentUtilization` stays `ComputeField` / Get with computed options, even when selected next to nested `@link`.
+计算字段也不是 Expand。即使和嵌套 `@link` 写在一起，`Facility.currentUtilization` 仍走 `ComputeField` / 带 computed 选项的 Get。
 
 ---
 
 ## Expand
 
-Expand is the only op that chooses between `GetLinks` and `Traverse`.
+只有 Expand 会在 `GetLinks` 与 `Traverse` 之间做选择。
 
-### Hop classification (GraphQL)
+### 跳数分类（GraphQL）
 
-Classification is per `@link` field, using that field's child selection (graph-gophers `SelectedFieldNames` / `HasSelectedField`).
+按每个 `@link` 字段、用该字段的子选择集分类（graph-gophers 的 `SelectedFieldNames` / `HasSelectedField`）。
 
 ```text
-on object A, field f (@link):
-  if child selection of f contains no RoleLinkNav
-      → hop mode = GetLinks          # 1-hop leaf (siblings allowed)
-  else
-      → hop mode = Traverse
-        one TraversalPath per linear @link chain
-        rooted at A, starting with f
+对象 A 上的字段 f（@link）：
+  若 f 的子选择集不含 RoleLinkNav
+      → hop 模式 = GetLinks          # 1 跳叶子（允许兄弟字段）
+  否则
+      → hop 模式 = Traverse
+        每条线性 @link 链一条 TraversalPath
+        根在 A，从 f 起步
 ```
 
-Examples:
+示例：
 
-| Selection | Ops |
+| 选择集 | 生成的 op |
 |---|---|
-| `product { suppliers { name } }` | Expand GetLinks on `suppliers` |
-| `a { b { name } c { name } }` | two GetLinks (`b`, `c`) |
-| `facility { inventoryRecords { trackedProduct { name } } }` | one Traverse `inventoryRecords → trackedProduct` |
-| `a { b { c {…} d {…} } }` | two Traverses `a→b→c` and `a→b→d` (no shared prefix) |
-| `a { b { name } c { d { name } } }` | GetLinks on `b`; Traverse `a→c→d` |
+| `product { suppliers { name } }` | 对 `suppliers` 做 Expand GetLinks |
+| `a { b { name } c { name } }` | 两次 GetLinks（`b`、`c`） |
+| `facility { inventoryRecords { trackedProduct { name } } }` | 一次 Traverse：`inventoryRecords → trackedProduct` |
+| `a { b { c {…} d {…} } }` | 两次 Traverse：`a→b→c` 与 `a→b→d`（不共享前缀） |
+| `a { b { name } c { d { name } } }` | `b` 走 GetLinks；`a→c→d` 走 Traverse |
 
-REST follow does **not** use this table. Follow is always Traverse, including a one-step path.
+REST follow **不用**上表。follow 一律 Traverse，包括单步路径。
 
-### Path vocabulary
+### 路径词表
 
-Client-facing paths are **Ontology IR field names** with `RoleLinkNav`. Compiler resolves each name on the type at that hop:
+对外路径是带 `RoleLinkNav` 的 **Ontology IR 字段名**。编译器在当前跳的类型上解析每个名字：
 
 ```text
-field name ──► Field.Link.Type + Field.Link.Direction ──► spi.TraversalStep
+字段名 ──► Field.Link.Type + Field.Link.Direction ──► spi.TraversalStep
 ```
 
-Illegal at compile time (fail closed, do not call SPI):
+编译期非法（失败关闭，不调用 SPI）：
 
-- empty path
-- name is a scalar, computed field, or FK property
-- name is a LinkType (`InventoryAt`) rather than a nav field (`inventoryRecords`)
-- name exists on another type but not on the type at this hop
+- 空 path
+- 名字是标量、计算字段或外键属性
+- 名字是 LinkType（`InventoryAt`）而不是导航字段（`inventoryRecords`）
+- 名字在别的类型上存在，但当前跳的类型上没有
 
-Direction and link type never appear on the wire for follow. That keeps Query IR a semantic graph API, not a Graph Database API.
+follow 的线上契约不出现 direction 和 link type。这样 Query IR 仍是语义图 API，而不是图数据库 API。
 
-### Cardinality and caps
+### 基数与上限
 
-Many-side hops cap the frontier at **1000 per hop per start object** (same as Phase 6 `linkPageLimit`). SPI `TraversalOptions.Limit` only slices terminal `nodes`; Expand must truncate the frontier at each hop so intermediate MANY lists match GraphQL field caps.
+多端跳的 frontier 上限是 **每个起点、每跳 1000**（与 Phase 6 的 `linkPageLimit` 相同）。SPI `TraversalOptions.Limit` 只切终点 `nodes`；Expand 必须在每一跳截断 frontier，使中间 MANY 列表与 GraphQL 字段上限一致。
 
-ONE / MANY_TO_ONE nav fields assemble as a single object or null, not a list.
+ONE / MANY_TO_ONE 导航字段装配成单个对象或 null，不是列表。
 
-### Start existence
+### 起点必须存在
 
-`Traverse` at the SPI layer does not require the start object to exist. Query IR does:
+SPI 层的 `Traverse` 不要求起点对象存在。Query IR 要求：
 
-1. Get the start (same not-found as GraphQL get / REST GET: missing, soft-deleted, wrong tenant).
-2. Only then Expand.
+1. 先 Get 起点（与 GraphQL get / REST GET 相同的 not-found：缺失、软删、错租户）。
+2. 然后再 Expand。
 
-Otherwise follow could walk links of an object GraphQL already returns as `null`.
+否则 follow 可能走通 GraphQL 已经返回 `null` 的对象上的链接。
 
 ---
 
-## Compile
+## 编译
 
 ### GraphQL
 
-Each Engine-facing resolver builds an op and calls `Execute`:
+每个面向 Engine 的 resolver 构造一个 op 并调用 `Execute`：
 
 | Resolver | Op |
 |---|---|
@@ -145,35 +145,35 @@ Each Engine-facing resolver builds an op and calls `Execute`:
 | `foos(filter, …)` | List |
 | `fooAggregate` | Aggregate |
 | `searchFoos` | Search |
-| `@link` field | Expand (classified from child selection) |
-| object-typed FK field | Get of the stored id |
+| `@link` 字段 | Expand（按子选择集分类） |
+| 对象型外键字段 | 对存着的 id 做 Get |
 
-Results of Expand are memoized on the request by `(startId, fieldName)`. Child `@link` resolvers **only read the memo**. A second `GetLinks` / `Traverse` for the same key is a bug (double-execute). Tests count Engine calls.
+Expand 结果按 `(startId, fieldName)` 缓存在本次请求上。子 `@link` resolver **只读缓存**。同一 key 再打一次 `GetLinks` / `Traverse` 视为缺陷（双执行）。测试用 Engine 调用次数锁住。
 
-This is still Query IR: there is one executor. It is not a whole-operation plan. List items each Expand independently; this phase does not batch start ids.
+这仍是 Query IR：执行器只有一个。它不是整次操作的计划。列表里的每个根对象各自 Expand；本阶段不合并多个 startId。
 
-Public SDL does not grow `Query.traverse` or `Type.follow`. Nested `@link` remains the GraphQL graph UX.
+公开 SDL 不增加 `Query.traverse` 或 `Type.follow`。GraphQL 走图的方式仍是嵌套 `@link`。
 
 ### REST
 
-| Request | Op |
+| 请求 | Op |
 |---|---|
-| `GET /api/v1/{lowerFirst(type)}/{id}` | Get (all LAZY computed) |
-| `GET /api/v1/{lowerFirst(type)}/{id}/follow?path=f1,f2` | Get start, then Expand with a single Traverse path |
+| `GET /api/v1/{lowerFirst(type)}/{id}` | Get（全部 LAZY computed） |
+| `GET /api/v1/{lowerFirst(type)}/{id}/follow?path=f1,f2` | 先 Get 起点，再 Expand 为单条 Traverse 路径 |
 
-Follow response is the **terminal** public objects (`id`, not `_id`). Compare GraphQL 2-hop by **terminal id set**, not tree isomorphism: several inventory rows pointing at one product de-dupe in REST `nodes` and stay as multiple parents in GraphQL.
+follow 响应是 **终点** 的对外对象（`id`，不是 `_id`）。与 GraphQL 2 跳比较时比 **终点 id 集合**，不比树是否同构：多条库存指向同一产品时，REST `nodes` 去重，GraphQL 仍保留多个父层。
 
-Errors:
+错误：
 
-| Condition | HTTP |
+| 条件 | HTTP |
 |---|---|
-| missing / empty / wrong-tenant start | 404 `OBJECT_NOT_FOUND` |
-| illegal path (see Path vocabulary) | 400 `INVALID_FOLLOW_PATH`, no SPI call |
-| unknown type in the URL | 404 (existing GET behavior) |
+| 起点缺失 / 空 / 错租户 | 404 `OBJECT_NOT_FOUND` |
+| 非法 path（见「路径词表」） | 400 `INVALID_FOLLOW_PATH`，不调用 SPI |
+| URL 中类型未知 | 404（与现有 GET 一致） |
 
 ---
 
-## Execute
+## 执行
 
 ```text
 Execute(ctx, Op) → Result
@@ -181,43 +181,43 @@ Execute(ctx, Op) → Result
   List      → Engine.QueryObjects
   Aggregate → Engine.AggregateObjects
   Search    → Engine.SearchObjects
-  Expand    → Engine.GetLinks and/or Engine.Traverse
-              then assemble
+  Expand    → Engine.GetLinks 和/或 Engine.Traverse
+              然后装配
 ```
 
-`query` depends on Engine + Ontology IR. It does not import a storage provider.
+`query` 依赖 Engine 与 Ontology IR，不 import 存储提供者。
 
-Engine `Traverse` is a pass-through to SPI, same as `GetLinks`. Classification, path resolution, caps, start-existence, and tree assembly belong in Query IR Execute (and the GraphQL memo), not in Engine.
+Engine `Traverse` 与 `GetLinks` 一样透传到 SPI。分类、路径解析、上限、起点存在性、树装配属于 Query IR 的 Execute（以及 GraphQL memo），不属于 Engine。
 
 ---
 
-## Assemble
+## 装配
 
-SPI `TraversalResult` after the additive contract:
+加法契约之后的 SPI `TraversalResult`：
 
-| Field | Meaning |
+| 字段 | 含义 |
 |---|---|
-| `nodes` | objects at the **last** step only (unchanged) |
-| `edges` | every link walked |
-| `visited` | **strict intermediates**: not start, not terminals. Empty on a 1-hop traverse |
-| `totalCount` | unchanged (terminal count) |
+| `nodes` | **仅最后一步** 的对象（语义不变） |
+| `edges` | 走过的每一条链接 |
+| `visited` | **严格中间对象**：不含起点、不含终点。1 跳 traverse 时为空 |
+| `totalCount` | 不变（终点计数） |
 
-Today `nodes` = last step is documented only on memory implementations, not on the SPI type. The type comments must state all four fields so GraphQL assembly does not depend on a backend comment.
+今日 `nodes` = 最后一步只写在 memory 实现注释里，SPI 类型本身没有。类型注释必须写清这四个字段，GraphQL 装配不能依赖某个后端的注释。
 
-Assembly:
+装配步骤：
 
-1. Index `visited` and `nodes` by `_id`.
-2. Walk `edges` to attach children to parents for each hop in the path.
-3. If two Traverses share an intermediate id, keep one object.
-4. Do **not** collapse a later hop just because an id appeared earlier (`product { suppliers { products { sku } } }` must still show the second-layer `products`).
+1. 按 `_id` 索引 `visited` 与 `nodes`。
+2. 沿 `edges` 按路径中的每一跳把子对象挂到父对象上。
+3. 两次 Traverse 共享同一中间 id 时只保留一个对象。
+4. **不要**因为某 id 在更早一跳出现过就折叠后续跳（`product { suppliers { products { sku } } }` 仍须展示第二层 `products`）。
 
-GetLinks assembly stays “links → target GetObject”, with the 1000 cap and missing-target skip already used in `runtime/api/node.go`.
+GetLinks 装配仍是「链接 → 对目标 GetObject」，上限 1000、目标缺失则跳过，与 `runtime/api/node.go` 现行为一致。
 
 ---
 
-## Worked examples
+## 工作示例
 
-**1-hop GraphQL (must stay GetLinks)**
+**GraphQL 1 跳（必须仍走 GetLinks）**
 
 ```graphql
 { product(id: "p1") { suppliers { name } } }
@@ -227,7 +227,7 @@ GetLinks assembly stays “links → target GetObject”, with the 1000 cap and 
 Expand{ start: Product/p1, hops: [GetLinks suppliers] }
 ```
 
-**2-hop GraphQL (must Traverse)**
+**GraphQL 2 跳（必须走 Traverse）**
 
 ```graphql
 { facility(id: "f1") {
@@ -236,43 +236,43 @@ Expand{ start: Product/p1, hops: [GetLinks suppliers] }
 }
 ```
 
-`inventoryRecords` and `trackedProduct` are `@link` nav fields (FK `product` / `facility` remain Get). Path:
+`inventoryRecords` 与 `trackedProduct` 是 `@link` 导航字段（外键 `product` / `facility` 仍走 Get）。路径：
 
 ```text
 Facility --InventoryAt inbound--> InventoryRecord --InventoryOf outbound--> Product
-Expand{ Traverse [Admitted-style steps resolved from field names] }
+Expand{ Traverse [由字段名解析出的 TraversalStep] }
 ```
 
-If seed has the FK but no `InventoryOf` link, `trackedProduct` is null and `product { name }` still resolves via Get.
+若种子只有外键、没有 `InventoryOf` 链接，则 `trackedProduct` 为 null，`product { name }` 仍可通过 Get 解析。
 
-**REST follow (always Traverse)**
+**REST follow（一律 Traverse）**
 
 ```http
 GET /api/v1/facility/f1/follow?path=inventoryRecords,trackedProduct
 GET /api/v1/product/p1/follow?path=suppliers
 ```
 
-The second call is one-step Traverse, not GetLinks.
+第二条是单步 Traverse，不是 GetLinks。
 
 ---
 
-## Non-goals
+## 非目标
 
-- GraphQL root `traverse` / ObjectType `follow`
-- Whole-document Query IR, shared-prefix planning, DataLoader over many list roots
-- AuthZ / consent / field redaction inside Execute
-- SPARQL / Cypher front ends (they should compile to this IR later, not bypass it)
-- TS GraphQL planner (SPI `visited` still updates so the contract does not fork)
-- Capability-gated omission of follow when `supportsGraphTraversal` is false
+- GraphQL 根字段 `traverse` / ObjectType 上的 `follow`
+- 整份文档级 Query IR、共享前缀规划、对列表多个根做 DataLoader
+- 在 Execute 内做鉴权 / consent / 字段红线
+- SPARQL / Cypher 前端（以后应编译到本 IR，而不是绕过它）
+- TS GraphQL planner（SPI 仍更新 `visited`，避免契约分叉）
+- `supportsGraphTraversal` 为 false 时从 schema 省略 follow
 
 ---
 
-## Sources
+## 来源
 
 - `docs/design/draft.md` — Ontology IR + Query IR + Action IR
 - `docs/brainstorms/2026-08-20-go-phase6-query-ir-traverse-requirements.md`
 - `docs/plans/2026-08-20-002-feat-go-phase6-query-ir-traverse-plan.md`
-- `docs/open-foundry-spec-v2.md` §2.1.3 `@link`, §3.1 `traverse`, §8.1.1 generated Query
-- `runtime/ir/ontology.go` — `RoleLinkNav` vs `RoleProperty` vs `RoleComputed`
+- `docs/open-foundry-spec-v2.md` §2.1.3 `@link`、§3.1 `traverse`、§8.1.1 生成 Query
+- `runtime/ir/ontology.go` — `RoleLinkNav` / `RoleProperty` / `RoleComputed`
 - `runtime/spi/ontology.go` — `TraversalPath` / `TraversalResult`
-- `runtime/api/node.go` — current per-field `GetLinks` + `GetObject`
+- `runtime/api/node.go` — 当前逐字段 `GetLinks` + `GetObject`
