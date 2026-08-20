@@ -9,7 +9,10 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
-require github.com/google/uuid v1.6.0
+require (
+	github.com/google/uuid v1.6.0
+	github.com/graph-gophers/graphql-go v1.8.0
+)
 
 require (
 	cel.dev/expr v0.25.1 // indirect

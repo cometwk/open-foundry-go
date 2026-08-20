@@ -67,18 +67,8 @@ func (e *Engine) CreateObject(ctx spi.RequestContext, typ string, properties map
 	return obj, nil
 }
 
-// GetObject reads through to the SPI. The memory provider returns
-// spi.ErrObjectNotFound for both missing and cross-tenant (type, id) —
-// the Engine surfaces that as a typed not-found, never synthesizing a
-// value, mirroring TS ObjectManager.get's null-on-absent contract.
-func (e *Engine) GetObject(ctx spi.RequestContext, typ, id string) (spi.OntologyObject, error) {
-	obj, err := e.storage.GetObject(ctx, typ, id)
-	if err != nil {
-		return nil, err
-	}
-	// TODO(Phase 4): evaluate LAZY computed fields and merge.
-	return obj, nil
-}
+// GetObject is defined in computed.go (Phase 6). It reads through to
+// SPI with no LAZY computed enrichment; GetObjectOpts adds that path.
 
 // UpdateObject reads the existing object first (returning a typed
 // not-found before any write), merges the patch excluding system
