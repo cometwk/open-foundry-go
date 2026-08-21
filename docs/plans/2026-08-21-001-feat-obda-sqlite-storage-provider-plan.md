@@ -14,6 +14,32 @@ deepened: 2026-08-21
 
 源需求文档标题仍写 MySQL。本计划按确认范围把 v1 方言改为 SQLite；MySQL 适配器列为后续工作。行为仍以该需求文档为准，机制参考 `docs/design/obda-mapping-design-v1.md`，冲突时需求约束行为、设计约束分层。
 
+## Progress (2026-08-21)
+
+**Branch:** `feat/go-phase1-ontology-ir`  
+**Tests:** `cd runtime && go test ./obda/... ./storage/sqliteobda/` 当前绿。Provider 仍嵌入 `UnimplementedStorageProvider`；U8 完成前不得宣称可注入生产路径。
+
+| Unit | Status | Commit | Notes |
+|---|---|---|---|
+| U1 SPI sentinels + mapping parse | **done** | `00030c8` | `runtime/spi/errors.go` 加法 sentinel；`runtime/obda` parse/validate |
+| U2 Neutral AST + Dialect + planner | **done** | `d8d0629` | `sqlast`、`dialect.Dialect`、object/search/query 计划 |
+| U3 SQLite dialect | **done** | `5434225` | `modernc.org/sqlite`；quote/render/introspect/DDL；Core 不 import 驱动 |
+| U4 Sidecar + ApplySchema | **done** | `961e7fd` | `Open` 注入 mapping；CAS 激活；backfill 复制业务租户列；漂移 fail-closed |
+| U5 Object CRUD / query / OCC / delete | **done** | `4000852` | 真实文件库；软删 Get 可见；硬删级联 link meta 并保留 history |
+| U6 Links / cardinality / GetLinks / Traverse | **done** | `7a1bf08` | 部分唯一索引强制 cardinality；Traverse 为逐步 `GetLinks`（非 recursive CTE） |
+| U7 Transactions + remaining SPI | **partial** | `389a276` | 步骤 1 已落地：`BeginTransaction`、Rollback 原子性、打开 Tx 时并发 Get 不挂。Aggregate / Search / Bulk / Temporal / EnsureIndex / AE1 方法表 **未做**，这些方法仍返回 `ErrUnimplemented` |
+| U8 Engine smoke + origin-vs-memory | **not started** | — | 依赖 U7 收口 |
+
+**相对 Files 清单的实现取舍（不改行为锁定）：**
+
+- `options.go` / `health.go` 并入 `provider.go`；`registry.go` 未单列，compiled mapping 在 `obda.Compile` + `activation`。
+- SQLite render 在 `dialect/sqlite/dialect.go`，无独立 `render.go`。
+- sidecar 对象物理键唯一索引是全量 unique（支撑 R35 软删后再 Create 拒绝），不是 `WHERE deleted_at IS NULL` 的部分索引。
+- Query `AsOfTime` / `AsOfVersion` 返回 `ErrUnsupportedCapability`，不返回 live 行。
+- `sqlTxn.UpdateLink` / `DeleteLink` 仍走公开方法（各自开事务）；对象与 `CreateLink` 已走 pinned `*sql.Tx`。
+
+**U7 剩余（按原顺序）：** Aggregate → Search/FTS5 → Bulk 幂等 → Temporal/`of_*_history` → EnsureIndex KTD-17 → Health/Capabilities 收口与 AE1 方法表。然后 U8。
+
 ---
 
 ## Problem Frame
@@ -383,6 +409,7 @@ runtime/
 
 ### U1. SPI sentinels and mapping document
 
+- **Status:** done (`00030c8`)
 - **Goal:** 加法错误契约可 `errors.Is`；`*.obda.yaml` 能解析并在语义校验失败时给出 `ErrInvalidMapping`。
 - **Requirements:** R5–R11, R29, KTD-5, KTD-6
 - **Dependencies:** none
@@ -409,6 +436,7 @@ runtime/
 
 ### U2. Neutral SQL AST and Dialect interface
 
+- **Status:** done (`d8d0629`)
 - **Goal:** Core 规划产出封闭 AST；方言接口稳定，Core 测试用假方言即可断言计划形状。
 - **Requirements:** R1, R2, R4, R28
 - **Dependencies:** U1
@@ -429,6 +457,7 @@ runtime/
 
 ### U3. SQLite dialect
 
+- **Status:** done (`5434225`)
 - **Goal:** 把中立计划渲染成可在真实 SQLite 上执行的参数化 SQL，并提供 introspect、sidecar DDL、错误分类。
 - **Requirements:** R2, R3, R4, R28, R32, KTD-2, KTD-3, KTD-4, KTD-14, KTD-15
 - **Dependencies:** U2
@@ -458,6 +487,7 @@ runtime/
 
 ### U4. Sidecar, registry, and ApplySchema
 
+- **Status:** done (`961e7fd`)
 - **Goal:** schema+mapping 成对编译、sidecar 就绪、CAS 激活；`GetSchema` 读出版本快照。
 - **Requirements:** R12, R31, R32, R33, R37, R38, F1, KTD-6, KTD-7, KTD-8
 - **Dependencies:** U1, U3
@@ -488,6 +518,7 @@ runtime/
 
 ### U5. Object CRUD, query, tenant, OCC, delete
 
+- **Status:** done (`4000852`)
 - **Goal:** 对象读写在真实 SQLite 上满足租户、OCC、软删/硬删与系统字段稳定性。
 - **Requirements:** R8, R9, R14, R15, R17, R18, R25–R28, R34–R37, F2, F3
 - **Dependencies:** U4
@@ -519,6 +550,7 @@ runtime/
 
 ### U6. Links, cardinality, GetLinks, Traverse
 
+- **Status:** done (`7a1bf08`)
 - **Goal:** 独立 link id、写时 cardinality、图遍历。
 - **Requirements:** R10, R14, R15, R16, R18, F4, KTD-9, KTD-10, KTD-12
 - **Dependencies:** U5
@@ -546,6 +578,7 @@ runtime/
 
 ### U7. SQL transactions and remaining SPI surface
 
+- **Status:** partial (`389a276` = Approach 步骤 1). 步骤 2–7 与 AE1 方法表未做。
 - **Goal:** 本地 SQL 事务 + aggregate / search / bulk / temporal / index / health / capabilities，方法均有定义行为。
 - **Requirements:** R12, R13, R19–R24, R33, R34, F5, KTD-10, KTD-13, KTD-14, KTD-17
 - **Dependencies:** U6
@@ -596,6 +629,7 @@ runtime/
 
 ### U8. Engine injection smoke and origin-behavior suite
 
+- **Status:** not started
 - **Goal:** 证明 Engine 只依赖 SPI 即可对 SQLite provider 跑通对象/link 生命；origin 与 memory 的差异有独立套件，不改现有 memory conformance。
 - **Requirements:** R3, R12, R13, R30, AE1, AE10
 - **Dependencies:** U7
@@ -660,6 +694,7 @@ runtime/
 - 在 `runtime/obda` 包注释写清：两层定义、v1 方言是 SQLite、mapping 由构造注入。
 - 不修订 `docs/open-foundry-spec-v2.md`。
 - 不修订 origin 文件名。实现与评审以本计划的 R3 修正为准。
+- 不修改 `docs/design/open-foundry-obda-mapping-spec-v1.md`（历史 overlay 草案）。Go/SQLite 对齐的 mapping 语言写在 `docs/design/open-foundry-obda-mapping-spec-v2.md`。
 - 本地运行 SQLite 测试不需要额外服务。打开文件库时启用 WAL 与 `busy_timeout`。
 
 ---
@@ -679,7 +714,8 @@ runtime/
 
 - Origin: `docs/brainstorms/2026-08-21-obda-mysql-storage-provider-requirements.md`
 - Mechanism: `docs/design/obda-mapping-design-v1.md`（两层、sidecar、identity、错误清单；方言剖面按本计划换成 SQLite）
-- Superseded overlay draft: `docs/design/open-foundry-obda-mapping-spec-v1.md` — 不实现
+- Mapping language (historical overlay, do not implement): `docs/design/open-foundry-obda-mapping-spec-v1.md`
+- Mapping language (Go/SQLite, 2026-08-21): `docs/design/open-foundry-obda-mapping-spec-v2.md`
 - SPI: `runtime/spi/provider.go`, `runtime/spi/errors.go`, `runtime/spi/transaction.go`, `runtime/spi/ontology.go`
 - Engine Get-then-write: `runtime/engine/engine.go` `UpdateObject` / `DeleteObject`
 - Projection drops Primary: `runtime/projection/storage.go`
