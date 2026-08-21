@@ -180,7 +180,7 @@ func openProvider(t *testing.T, mapping []byte) (*sqliteobda.Provider, *sql.DB) 
 
 func openDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "t.db"))
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "t.db")+"?_busy_timeout=5000")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,9 +197,9 @@ func testdata(t *testing.T, name string) []byte {
 	return b
 }
 
-func mustExec(t *testing.T, db *sql.DB, q string) {
+func mustExec(t *testing.T, db *sql.DB, q string, args ...any) {
 	t.Helper()
-	if _, err := db.Exec(q); err != nil {
+	if _, err := db.Exec(q, args...); err != nil {
 		t.Fatal(err)
 	}
 }

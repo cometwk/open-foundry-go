@@ -161,20 +161,6 @@ func (p *Provider) GetSchema(ctx spi.RequestContext, version *int) (spi.Ontology
 	return act.schema, nil
 }
 
-func (p *Provider) CreateObject(ctx spi.RequestContext, typ string, properties map[string]any) (spi.OntologyObject, error) {
-	if _, err := p.pin(ctx); err != nil {
-		return nil, err
-	}
-	return p.UnimplementedStorageProvider.CreateObject(ctx, typ, properties)
-}
-
-func (p *Provider) GetObject(ctx spi.RequestContext, typ, id string) (spi.OntologyObject, error) {
-	if _, err := p.pin(ctx); err != nil {
-		return nil, err
-	}
-	return p.UnimplementedStorageProvider.GetObject(ctx, typ, id)
-}
-
 func (p *Provider) HealthCheck() (spi.HealthStatus, error) {
 	start := time.Now()
 	err := p.db.Ping()
