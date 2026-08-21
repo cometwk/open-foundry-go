@@ -51,4 +51,41 @@ var (
 	// ErrCelEval signals a CEL compile or runtime error (including
 	// missing-field access on dyn maps). It is not a false precondition.
 	ErrCelEval = errors.New("openfoundry: cel eval")
+
+	// ErrReadOnlyMapping signals a mutation against a compiled binding
+	// whose access is read-only. Queries may still succeed.
+	ErrReadOnlyMapping = errors.New("openfoundry: read-only mapping")
+
+	// ErrUnsupportedCapability signals a request the dialect or compiled
+	// binding cannot execute (search without FTS, GIN index, temporal
+	// without history). It is not an empty-result success.
+	ErrUnsupportedCapability = errors.New("openfoundry: unsupported capability")
+
+	// ErrInvalidMapping signals a mapping document that fails parse or
+	// semantic validation before activation.
+	ErrInvalidMapping = errors.New("openfoundry: invalid mapping")
+
+	// ErrMappingNotActive signals SPI methods other than HealthCheck and
+	// Capabilities called before a schema/mapping pair is activated.
+	ErrMappingNotActive = errors.New("openfoundry: mapping not active")
+
+	// ErrTenantRequired signals a RequestContext with an empty TenantID.
+	ErrTenantRequired = errors.New("openfoundry: tenant required")
+
+	// ErrUnsupportedIndexType signals EnsureIndex/DropIndex for a physical
+	// index type this provider will not create (HASH, GIN, GIST, or a
+	// BTREE on a business table in SQLite v1).
+	ErrUnsupportedIndexType = errors.New("openfoundry: unsupported index type")
+
+	// ErrSourceSchemaDrift signals the live source fingerprint no longer
+	// matches the activated mapping.
+	ErrSourceSchemaDrift = errors.New("openfoundry: source schema drift")
+
+	// ErrIdempotencyConflict signals BulkMutate reused a tenant-scoped
+	// idempotency key with a different payload hash.
+	ErrIdempotencyConflict = errors.New("openfoundry: idempotency conflict")
+
+	// ErrTransactionDomain signals a write that would cross the provider's
+	// single local transaction domain.
+	ErrTransactionDomain = errors.New("openfoundry: transaction domain")
 )
