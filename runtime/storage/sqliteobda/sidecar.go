@@ -2,12 +2,14 @@ package sqliteobda
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/openfoundry/runtime/internal/uuidv7"
 	"github.com/openfoundry/runtime/obda"
 	sqlitedialect "github.com/openfoundry/runtime/obda/dialect/sqlite"
 	"github.com/openfoundry/runtime/obda/sqlast"
+	"github.com/openfoundry/runtime/spi"
 )
 
 // backfill inserts sidecar meta for business rows that have no matching meta.
@@ -86,6 +88,41 @@ func (p *Provider) backfill(db DBTX, compiled *obda.Compiled) error {
 		}()
 		if err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func (p *Provider) ensureCardinalityIndexes(compiled *obda.Compiled) error {
+	for name, l := range compiled.Links {
+		var cols []string
+		switch l.Cardinality {
+		case spi.CardinalityManyToOne:
+			cols = []string{"from_id"}
+		case spi.CardinalityOneToMany:
+			cols = []string{"to_id"}
+		case spi.CardinalityOneToOne:
+			cols = []string{"from_id", "to_id"}
+		default:
+			continue
+		}
+		for _, col := range cols {
+			idx := "of_link_" + name + "_" + col
+			q, err := p.dialect.QuoteIdentifier(sqlast.Identifier{Name: idx})
+			if err != nil {
+				return err
+			}
+			c, err := p.dialect.QuoteIdentifier(sqlast.Identifier{Name: col})
+			if err != nil {
+				return err
+			}
+			if strings.ContainsAny(name, "'") {
+				return spi.ErrInvalidMapping
+			}
+			stmt := `CREATE UNIQUE INDEX IF NOT EXISTS ` + q + ` ON "of_link_meta" ("tenant_id", ` + c + `) WHERE "deleted_at" IS NULL AND "link_type" = '` + name + `'`
+			if _, err := p.db.Exec(stmt); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

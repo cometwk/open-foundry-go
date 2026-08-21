@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -102,6 +103,9 @@ func (p *Provider) ApplySchema(ctx spi.RequestContext, schema spi.OntologySchema
 		}
 	}
 	if err := p.backfill(p.db, compiled); err != nil {
+		return spi.MigrationResult{}, err
+	}
+	if err := p.ensureCardinalityIndexes(compiled); err != nil {
 		return spi.MigrationResult{}, err
 	}
 	snap, err := json.Marshal(schema)
@@ -224,9 +228,20 @@ func (p *Provider) pin(ctx spi.RequestContext) (*activation, error) {
 }
 
 func (p *Provider) fingerprint() (string, error) {
+	names := make([]string, 0, len(p.doc.Models)+len(p.doc.Links))
+	tables := map[string]string{}
+	for name, m := range p.doc.Models {
+		names = append(names, "m:"+name)
+		tables["m:"+name] = m.Relation.Name
+	}
+	for name, l := range p.doc.Links {
+		names = append(names, "l:"+name)
+		tables["l:"+name] = l.Relation.Name
+	}
+	sort.Strings(names)
 	h := ""
-	for _, m := range p.doc.Models {
-		snap, err := sqlitedialect.InspectTable(context.Background(), p.db, sqlast.Identifier{Name: m.Relation.Name})
+	for _, name := range names {
+		snap, err := sqlitedialect.InspectTable(context.Background(), p.db, sqlast.Identifier{Name: tables[name]})
 		if err != nil {
 			return "", err
 		}

@@ -144,6 +144,23 @@ func PlanQuery(b ObjectBinding, tenant string, filter spi.FilterExpression) (*sq
 	}, args, nil
 }
 
+// PlanGetLinks selects links for one endpoint under tenant.
+func PlanGetLinks(table, tenantCol, endpointCol, tenant, objectID string) (*sqlast.Select, []any, error) {
+	if tenant == "" {
+		return nil, nil, spi.ErrTenantRequired
+	}
+	if table == "" || tenantCol == "" || endpointCol == "" {
+		return nil, nil, spi.ErrInvalidMapping
+	}
+	return &sqlast.Select{
+		From: ident(table),
+		Where: and(
+			eq(ident(tenantCol), 1),
+			eq(ident(endpointCol), 2),
+		),
+	}, []any{tenant, objectID}, nil
+}
+
 func compileFilter(f spi.FilterExpression, known map[string]struct{}, next int) (*sqlast.Predicate, []any, error) {
 	empty := f.Field == "" && f.Operator == "" && len(f.And) == 0 && len(f.Or) == 0 && f.Not == nil
 	if empty {

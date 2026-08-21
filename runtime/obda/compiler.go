@@ -45,6 +45,7 @@ type CompiledLink struct {
 	Table            string
 	Access           string
 	IdentityStrategy string
+	IdentityInsert   string
 	IdentityColumns  []string
 	FromObject       string
 	FromColumns      []string
@@ -55,7 +56,14 @@ type CompiledLink struct {
 	TenantValue      string
 	SystemStrategy   string
 	Cardinality      spi.Cardinality
+	Fields           []CompiledField
+	FieldByLogical   map[string]CompiledField
+	FieldByColumn    map[string]CompiledField
+	PropertyTypes    map[string]string
 }
+
+// Writable reports whether mutations are allowed.
+func (l *CompiledLink) Writable() bool { return l.Access == "readWrite" }
 
 // Writable reports whether mutations are allowed.
 func (m *CompiledModel) Writable() bool { return m.Access == "readWrite" }
@@ -133,6 +141,7 @@ func Compile(schema spi.OntologySchema, doc *Document) (*Compiled, error) {
 			Table:            l.Relation.Name,
 			Access:           l.Access,
 			IdentityStrategy: l.Identity.Strategy,
+			IdentityInsert:   l.Identity.Insert,
 			IdentityColumns:  append([]string(nil), l.Identity.Columns...),
 			FromObject:       l.From.Object,
 			FromColumns:      append([]string(nil), l.From.Columns...),
@@ -143,6 +152,26 @@ func Compile(schema spi.OntologySchema, doc *Document) (*Compiled, error) {
 			TenantValue:      l.Tenant.Value,
 			SystemStrategy:   l.System.Strategy,
 			Cardinality:      def.Cardinality,
+			FieldByLogical:   map[string]CompiledField{},
+			FieldByColumn:    map[string]CompiledField{},
+			PropertyTypes:    map[string]string{},
+		}
+		for _, p := range def.Properties {
+			cl.PropertyTypes[p.Name] = p.Type
+		}
+		for logical, f := range l.Fields {
+			cf := CompiledField{Logical: logical, Column: f.Column}
+			cl.Fields = append(cl.Fields, cf)
+			cl.FieldByLogical[logical] = cf
+			cl.FieldByColumn[f.Column] = cf
+		}
+		sort.Slice(cl.Fields, func(i, j int) bool { return cl.Fields[i].Logical < cl.Fields[j].Logical })
+		if l.Identity.Insert != "generated" {
+			for _, col := range l.Identity.Columns {
+				if _, ok := cl.FieldByColumn[col]; !ok {
+					return nil, fmt.Errorf("%w: link %q identity column %q is not a payload field", spi.ErrInvalidMapping, name, col)
+				}
+			}
 		}
 		out.Links[name] = cl
 	}

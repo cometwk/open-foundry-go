@@ -138,6 +138,23 @@ func TestPlanQueryUnknownField(t *testing.T) {
 	}
 }
 
+func TestPlanGetLinksUsesParams(t *testing.T) {
+	sel, args, err := obda.PlanGetLinks("of_link_meta", "tenant_id", "from_id", "t1", "o1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(args) != 2 || args[0] != "t1" {
+		t.Fatalf("args=%v", args)
+	}
+	out, err := fakeDialect{}.Render(sel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.SQL, "t1") || strings.Contains(out.SQL, "o1") {
+		t.Fatalf("values leaked: %s", out.SQL)
+	}
+}
+
 func TestPlanCreateReadOnly(t *testing.T) {
 	b := patientBinding()
 	b.Writable = false
