@@ -56,6 +56,12 @@ func (p *Provider) CreateObject(ctx spi.RequestContext, typ string, properties m
 	if err != nil {
 		return nil, err
 	}
+	return withTx(p, func(tx DBTX) (spi.OntologyObject, error) {
+		return p.createObjectTx(tx, act, ctx, typ, properties)
+	})
+}
+
+func (p *Provider) createObjectTx(tx DBTX, act *activation, ctx spi.RequestContext, typ string, properties map[string]any) (spi.OntologyObject, error) {
 	m, err := act.model(typ)
 	if err != nil {
 		return nil, err
@@ -74,12 +80,6 @@ func (p *Provider) CreateObject(ctx spi.RequestContext, typ string, properties m
 		engineID = obda.EncodeDirect(m.Name, stringify(keys))
 	}
 	now := nowRFC3339()
-	tx, conn, err := p.begin()
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = conn.Close() }()
-	defer func() { _ = tx.Rollback() }()
 	var existing string
 	err = tx.QueryRow(
 		`SELECT engine_id FROM "of_object_meta" WHERE tenant_id = ? AND object_type = ? AND physical_key = ?`,
@@ -107,10 +107,25 @@ func (p *Provider) CreateObject(ctx spi.RequestContext, typ string, properties m
 	if err := writeObjectHistory(tx, engineID, ctx.TenantID, 1, obj, now); err != nil {
 		return nil, err
 	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
 	return obj, nil
+}
+
+func withTx[T any](p *Provider, fn func(DBTX) (T, error)) (T, error) {
+	var zero T
+	tx, conn, err := p.begin()
+	if err != nil {
+		return zero, err
+	}
+	defer func() { _ = conn.Close() }()
+	defer func() { _ = tx.Rollback() }()
+	v, err := fn(tx)
+	if err != nil {
+		return zero, err
+	}
+	if err := tx.Commit(); err != nil {
+		return zero, err
+	}
+	return v, nil
 }
 
 func (p *Provider) GetObject(ctx spi.RequestContext, typ, id string) (spi.OntologyObject, error) {
@@ -130,6 +145,12 @@ func (p *Provider) UpdateObject(ctx spi.RequestContext, typ, id string, properti
 	if err != nil {
 		return nil, err
 	}
+	return withTx(p, func(tx DBTX) (spi.OntologyObject, error) {
+		return p.updateObjectTx(tx, act, ctx, typ, id, properties, expectedVersion)
+	})
+}
+
+func (p *Provider) updateObjectTx(tx DBTX, act *activation, ctx spi.RequestContext, typ, id string, properties map[string]any, expectedVersion *int) (spi.OntologyObject, error) {
 	m, err := act.model(typ)
 	if err != nil {
 		return nil, spi.ErrObjectNotFound
@@ -138,12 +159,6 @@ func (p *Provider) UpdateObject(ctx spi.RequestContext, typ, id string, properti
 		return nil, spi.ErrReadOnlyMapping
 	}
 	props := copyUserProps(properties)
-	tx, conn, err := p.begin()
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = conn.Close() }()
-	defer func() { _ = tx.Rollback() }()
 	meta, err := p.loadMeta(tx, m, ctx.TenantID, id)
 	if err != nil {
 		return nil, err
@@ -193,9 +208,6 @@ func (p *Provider) UpdateObject(ctx spi.RequestContext, typ, id string, properti
 	if err := writeObjectHistory(tx, meta.EngineID, ctx.TenantID, ver, obj, now); err != nil {
 		return nil, err
 	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
 	return obj, nil
 }
 
@@ -204,6 +216,13 @@ func (p *Provider) DeleteObject(ctx spi.RequestContext, typ, id, mode string) er
 	if err != nil {
 		return err
 	}
+	_, err = withTx(p, func(tx DBTX) (struct{}, error) {
+		return struct{}{}, p.deleteObjectTx(tx, act, ctx, typ, id, mode)
+	})
+	return err
+}
+
+func (p *Provider) deleteObjectTx(tx DBTX, act *activation, ctx spi.RequestContext, typ, id, mode string) error {
 	m, err := act.model(typ)
 	if err != nil {
 		return nil
@@ -211,12 +230,6 @@ func (p *Provider) DeleteObject(ctx spi.RequestContext, typ, id, mode string) er
 	if !m.Writable() {
 		return spi.ErrReadOnlyMapping
 	}
-	tx, conn, err := p.begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = conn.Close() }()
-	defer func() { _ = tx.Rollback() }()
 	meta, err := p.loadMeta(tx, m, ctx.TenantID, id)
 	if err != nil {
 		return err
@@ -226,7 +239,7 @@ func (p *Provider) DeleteObject(ctx spi.RequestContext, typ, id, mode string) er
 	}
 	if mode != "hard" {
 		if meta.DeletedAt.Valid {
-			return tx.Commit()
+			return nil
 		}
 		now := nowRFC3339()
 		if _, err := tx.Exec(
@@ -240,10 +253,7 @@ func (p *Provider) DeleteObject(ctx spi.RequestContext, typ, id, mode string) er
 			return err
 		}
 		ver, _ := obj[spi.FieldVersion].(int)
-		if err := writeObjectHistory(tx, meta.EngineID, ctx.TenantID, ver, obj, now); err != nil {
-			return err
-		}
-		return tx.Commit()
+		return writeObjectHistory(tx, meta.EngineID, ctx.TenantID, ver, obj, now)
 	}
 	keys, err := decodePhysicalKey(m, meta.Key)
 	if err != nil {
@@ -269,7 +279,7 @@ func (p *Provider) DeleteObject(ctx spi.RequestContext, typ, id, mode string) er
 	if _, err := tx.Exec(`DELETE FROM "of_object_meta" WHERE engine_id = ? AND tenant_id = ?`, meta.EngineID, ctx.TenantID); err != nil {
 		return sqlitedialect.Classify(err)
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (p *Provider) insertBusiness(tx DBTX, m *obda.CompiledModel, tenant string, props map[string]any, keys []any) error {

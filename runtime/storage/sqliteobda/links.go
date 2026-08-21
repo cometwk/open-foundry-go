@@ -37,6 +37,12 @@ func (p *Provider) CreateLink(ctx spi.RequestContext, typ, fromID, toID string, 
 	if err != nil {
 		return nil, err
 	}
+	return withTx(p, func(tx DBTX) (spi.OntologyLink, error) {
+		return p.createLinkTx(tx, act, ctx, typ, fromID, toID, properties)
+	})
+}
+
+func (p *Provider) createLinkTx(tx DBTX, act *activation, ctx spi.RequestContext, typ, fromID, toID string, properties map[string]any) (spi.OntologyLink, error) {
 	l, err := act.link(typ)
 	if err != nil {
 		return nil, err
@@ -44,12 +50,6 @@ func (p *Provider) CreateLink(ctx spi.RequestContext, typ, fromID, toID string, 
 	if !l.Writable() {
 		return nil, spi.ErrReadOnlyMapping
 	}
-	tx, conn, err := p.begin()
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = conn.Close() }()
-	defer func() { _ = tx.Rollback() }()
 	fromMeta, err := p.requireLiveEndpoint(tx, act, ctx.TenantID, l.FromObject, fromID)
 	if err != nil {
 		return nil, err
@@ -92,9 +92,6 @@ func (p *Provider) CreateLink(ctx spi.RequestContext, typ, fromID, toID string, 
 		return nil, err
 	}
 	if err := writeLinkHistory(tx, engineID, ctx.TenantID, 1, link, now); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return link, nil
