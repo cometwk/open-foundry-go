@@ -92,7 +92,7 @@ func (d *Dialect) NormalizeValue(odlType string, v any) (any, error) {
 }
 
 func (d *Dialect) renderSelect(s *sqlast.Select) (dialect.SQLStatement, error) {
-	from, err := quote(s.From)
+	from, err := quoteTable(s.From, s.As)
 	if err != nil {
 		return dialect.SQLStatement{}, err
 	}
@@ -113,6 +113,24 @@ func (d *Dialect) renderSelect(s *sqlast.Select) (dialect.SQLStatement, error) {
 		cols = strings.Join(parts, ", ")
 	}
 	sql := "SELECT " + cols + " FROM " + from
+	for _, j := range s.Joins {
+		kind := strings.ToUpper(j.Kind)
+		if kind == "" {
+			kind = "INNER"
+		}
+		tbl, err := quoteTable(j.Table, j.As)
+		if err != nil {
+			return dialect.SQLStatement{}, err
+		}
+		sql += " " + kind + " JOIN " + tbl
+		if j.On != nil {
+			w, err := d.renderPred(j.On)
+			if err != nil {
+				return dialect.SQLStatement{}, err
+			}
+			sql += " ON " + w
+		}
+	}
 	if s.Search != nil {
 		src, err := quote(s.Search.Source)
 		if err != nil {
@@ -134,6 +152,21 @@ func (d *Dialect) renderSelect(s *sqlast.Select) (dialect.SQLStatement, error) {
 			return dialect.SQLStatement{}, err
 		}
 		sql += " WHERE " + w
+	}
+	if len(s.Order) > 0 {
+		parts := make([]string, 0, len(s.Order))
+		for _, o := range s.Order {
+			q, err := quote(o.Field)
+			if err != nil {
+				return dialect.SQLStatement{}, err
+			}
+			dir := "ASC"
+			if o.Desc {
+				dir = "DESC"
+			}
+			parts = append(parts, q+" "+dir)
+		}
+		sql += " ORDER BY " + strings.Join(parts, ", ")
 	}
 	if s.Limit != nil {
 		sql += " LIMIT ? OFFSET ?"
@@ -157,6 +190,17 @@ func (d *Dialect) renderInsert(s *sqlast.Insert) (dialect.SQLStatement, error) {
 		ph[i] = "?"
 	}
 	sql := "INSERT INTO " + tbl + " (" + strings.Join(cols, ", ") + ") VALUES (" + strings.Join(ph, ", ") + ")"
+	if len(s.Returning) > 0 {
+		ret := make([]string, len(s.Returning))
+		for i, c := range s.Returning {
+			q, err := quote(c)
+			if err != nil {
+				return dialect.SQLStatement{}, err
+			}
+			ret[i] = q
+		}
+		sql += " RETURNING " + strings.Join(ret, ", ")
+	}
 	return dialect.SQLStatement{SQL: sql}, nil
 }
 
@@ -226,6 +270,28 @@ func (d *Dialect) renderPred(p *sqlast.Predicate) (string, error) {
 			return "", err
 		}
 		return q + " = ?", nil
+	case "col_eq":
+		if p.Field == nil || p.Other == nil {
+			return "", fmt.Errorf("sqlite: col_eq without fields")
+		}
+		a, err := quote(*p.Field)
+		if err != nil {
+			return "", err
+		}
+		b, err := quote(*p.Other)
+		if err != nil {
+			return "", err
+		}
+		return a + " = " + b, nil
+	case "is_null":
+		if p.Field == nil {
+			return "", fmt.Errorf("sqlite: is_null without field")
+		}
+		q, err := quote(*p.Field)
+		if err != nil {
+			return "", err
+		}
+		return q + " IS NULL", nil
 	default:
 		return "", fmt.Errorf("%w: predicate %s", spi.ErrUnsupportedCapability, p.Op)
 	}

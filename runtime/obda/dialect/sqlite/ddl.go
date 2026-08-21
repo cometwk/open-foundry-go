@@ -82,7 +82,7 @@ func SidecarStatements(prefix string) ([]string, error) {
   index_type TEXT NOT NULL,
   PRIMARY KEY (object_type, field)
 ) STRICT`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS of_object_meta_active_key
-  ON of_object_meta (tenant_id, object_type, physical_key) WHERE deleted_at IS NULL`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS of_object_meta_key
+  ON of_object_meta (tenant_id, object_type, physical_key)`,
 	}, nil
 }

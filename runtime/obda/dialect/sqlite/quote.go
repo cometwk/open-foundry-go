@@ -10,13 +10,43 @@ import (
 var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 func quote(id sqlast.Identifier) (string, error) {
-	if !identRe.MatchString(id.Name) {
-		return "", fmt.Errorf("sqlite: invalid identifier %q", id.Name)
+	name, err := quoteName(id.Name)
+	if err != nil {
+		return "", err
 	}
-	if containsQuote(id.Name) {
-		return "", fmt.Errorf("sqlite: identifier contains quote %q", id.Name)
+	if id.Qualifier == "" {
+		return name, nil
 	}
-	return `"` + id.Name + `"`, nil
+	q, err := quoteName(id.Qualifier)
+	if err != nil {
+		return "", err
+	}
+	return q + "." + name, nil
+}
+
+func quoteName(name string) (string, error) {
+	if !identRe.MatchString(name) {
+		return "", fmt.Errorf("sqlite: invalid identifier %q", name)
+	}
+	if containsQuote(name) {
+		return "", fmt.Errorf("sqlite: identifier contains quote %q", name)
+	}
+	return `"` + name + `"`, nil
+}
+
+func quoteTable(id sqlast.Identifier, alias string) (string, error) {
+	tbl, err := quote(id)
+	if err != nil {
+		return "", err
+	}
+	if alias == "" {
+		return tbl, nil
+	}
+	a, err := quoteName(alias)
+	if err != nil {
+		return "", err
+	}
+	return tbl + " AS " + a, nil
 }
 
 func containsQuote(s string) bool {

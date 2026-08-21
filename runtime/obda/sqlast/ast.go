@@ -2,7 +2,8 @@ package sqlast
 
 // Identifier is a compiled physical name. Runtime values never live here.
 type Identifier struct {
-	Name string
+	Name      string
+	Qualifier string
 }
 
 // Param is a bound argument slot. Position is 1-based.
@@ -26,6 +27,7 @@ type Statement interface {
 // Select is a read plan.
 type Select struct {
 	From    Identifier
+	As      string
 	Columns []Expr
 	Joins   []Join
 	Where   *Predicate
@@ -39,9 +41,10 @@ func (Select) isStmt() {}
 
 // Insert writes one row.
 type Insert struct {
-	Table   Identifier
-	Columns []Identifier
-	Values  []Expr
+	Table     Identifier
+	Columns   []Identifier
+	Values    []Expr
+	Returning []Identifier
 }
 
 func (Insert) isStmt() {}
@@ -67,6 +70,7 @@ func (Delete) isStmt() {}
 type Join struct {
 	Kind  string
 	Table Identifier
+	As    string
 	On    *Predicate
 }
 
@@ -74,6 +78,7 @@ type Join struct {
 type Predicate struct {
 	Op       string
 	Field    *Identifier
+	Other    *Identifier
 	Value    Expr
 	Children []*Predicate
 }
