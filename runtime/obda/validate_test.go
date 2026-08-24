@@ -25,7 +25,22 @@ func TestValidateMissingSourceRef(t *testing.T) {
 }
 
 func TestValidateEmptyIdentityColumns(t *testing.T) {
-	raw := strings.Replace(validYAML, "strategy: sidecar\n      columns: [patient_id]", "strategy: sidecar\n      columns: []", 1)
+	raw := strings.Replace(validYAML, "strategy: direct\n      columns: [id]\n      insert: generated", "strategy: direct\n      columns: []", 1)
+	mustInvalid(t, raw)
+}
+
+func TestValidateRejectsSidecarIdentity(t *testing.T) {
+	raw := strings.Replace(validYAML, "strategy: direct\n      columns: [id]\n      insert: generated", "strategy: sidecar\n      columns: [id]\n      insert: generated", 1)
+	mustInvalid(t, raw)
+}
+
+func TestValidateRejectsSidecarSystem(t *testing.T) {
+	raw := strings.Replace(validYAML, "strategy: native", "strategy: sidecar", 1)
+	mustInvalid(t, raw)
+}
+
+func TestValidateUnknownOmit(t *testing.T) {
+	raw := strings.Replace(validYAML, "strategy: native", "strategy: native\n      omit: [tenantId]", 1)
 	mustInvalid(t, raw)
 }
 
@@ -43,8 +58,8 @@ models:
     sourceRef: primary
     relation: {kind: view, name: patient_v}
     access: read
-    identity: {strategy: sidecar, columns: [id]}
-    system: {strategy: sidecar}
+    identity: {strategy: direct, columns: [id], insert: generated}
+    system: {strategy: native}
 `
 	mustInvalid(t, raw)
 }

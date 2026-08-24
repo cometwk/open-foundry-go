@@ -1,5 +1,7 @@
 package obda
 
+import "fmt"
+
 // Document is a parsed *.obda.yaml mapping. Dialect is an opaque
 // identifier here; a provider binds a concrete adapter at Open time.
 type Document struct {
@@ -69,7 +71,7 @@ type Relation struct {
 	Name    string `yaml:"name"`
 }
 
-// Identity selects direct encoding or sidecar UUIDv7.
+// Identity is always a reversible typed encoding of the physical key.
 type Identity struct {
 	Strategy string   `yaml:"strategy"`
 	Columns  []string `yaml:"columns"`
@@ -83,9 +85,39 @@ type Tenant struct {
 	Value    string `yaml:"value"`
 }
 
-// System says whether engine fields live on the relation or in sidecar.
+// System places engine fields on the mapped relation.
+// Omit lists system columns that must not be read or written:
+// version, createdAt, updatedAt, deletedAt.
 type System struct {
-	Strategy string `yaml:"strategy"`
+	Strategy string   `yaml:"strategy"`
+	Omit     []string `yaml:"omit"`
+}
+
+// OmitFlags records which native system columns the mapping skips.
+type OmitFlags struct {
+	Version    bool
+	CreatedAt  bool
+	UpdatedAt  bool
+	DeletedAt  bool
+}
+
+func parseOmit(omit []string) (OmitFlags, error) {
+	var f OmitFlags
+	for _, name := range omit {
+		switch name {
+		case "version":
+			f.Version = true
+		case "createdAt":
+			f.CreatedAt = true
+		case "updatedAt":
+			f.UpdatedAt = true
+		case "deletedAt":
+			f.DeletedAt = true
+		default:
+			return OmitFlags{}, fmt.Errorf("unknown omit %q", name)
+		}
+	}
+	return f, nil
 }
 
 // Field maps a logical property onto a column and optional transform.

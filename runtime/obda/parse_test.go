@@ -9,7 +9,7 @@ import (
 	"github.com/openfoundry/runtime/spi"
 )
 
-func TestParseValidSidecarAndDirect(t *testing.T) {
+func TestParseValidDirectNative(t *testing.T) {
 	doc, err := obda.Parse([]byte(validYAML))
 	if err != nil {
 		t.Fatal(err)
@@ -98,13 +98,14 @@ models:
       name: patient
     access: readWrite
     identity:
-      strategy: sidecar
-      columns: [patient_id]
+      strategy: direct
+      columns: [id]
+      insert: generated
     tenant:
       strategy: column
       column: tenant_id
     system:
-      strategy: sidecar
+      strategy: native
     fields:
       name:
         column: patient_name
@@ -117,7 +118,8 @@ links:
     access: readWrite
     identity:
       strategy: direct
-      columns: [admission_id]
+      columns: [id]
+      insert: generated
     from:
       object: Patient
       columns: [patient_id]
@@ -128,5 +130,5 @@ links:
       strategy: column
       column: tenant_id
     system:
-      strategy: sidecar
+      strategy: native
 `

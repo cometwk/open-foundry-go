@@ -97,8 +97,8 @@ func validateBinding(doc *Document, name, sourceRef string, rel Relation, access
 	if access == "readWrite" && kind == "view" {
 		return fmt.Errorf("%w: %q view cannot be readWrite", spi.ErrInvalidMapping, name)
 	}
-	if id.Strategy != "direct" && id.Strategy != "sidecar" {
-		return fmt.Errorf("%w: %q identity.strategy %q", spi.ErrInvalidMapping, name, id.Strategy)
+	if id.Strategy != "direct" {
+		return fmt.Errorf("%w: %q identity.strategy %q (direct only)", spi.ErrInvalidMapping, name, id.Strategy)
 	}
 	if len(id.Columns) == 0 && id.Insert != "generated" {
 		return fmt.Errorf("%w: %q identity.columns empty", spi.ErrInvalidMapping, name)
@@ -106,8 +106,11 @@ func validateBinding(doc *Document, name, sourceRef string, rel Relation, access
 	if err := validateTenant(name, tenant); err != nil {
 		return err
 	}
-	if system.Strategy != "sidecar" && system.Strategy != "native" {
-		return fmt.Errorf("%w: %q system.strategy %q", spi.ErrInvalidMapping, name, system.Strategy)
+	if system.Strategy != "native" {
+		return fmt.Errorf("%w: %q system.strategy %q (native only)", spi.ErrInvalidMapping, name, system.Strategy)
+	}
+	if _, err := parseOmit(system.Omit); err != nil {
+		return fmt.Errorf("%w: %q system.omit: %v", spi.ErrInvalidMapping, name, err)
 	}
 	writable := access == "readWrite"
 	for fname, f := range fields {

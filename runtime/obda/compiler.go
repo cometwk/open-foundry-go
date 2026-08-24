@@ -25,6 +25,7 @@ type CompiledModel struct {
 	TenantColumn     string
 	TenantValue      string
 	SystemStrategy   string
+	Omit             OmitFlags
 	Fields           []CompiledField
 	FieldByLogical   map[string]CompiledField
 	FieldByColumn    map[string]CompiledField
@@ -56,6 +57,7 @@ type CompiledLink struct {
 	TenantValue      string
 	SystemStrategy   string
 	Cardinality      spi.Cardinality
+	Omit             OmitFlags
 	Fields           []CompiledField
 	FieldByLogical   map[string]CompiledField
 	FieldByColumn    map[string]CompiledField
@@ -156,6 +158,11 @@ func Compile(schema spi.OntologySchema, doc *Document) (*Compiled, error) {
 			FieldByColumn:    map[string]CompiledField{},
 			PropertyTypes:    map[string]string{},
 		}
+		omit, err := parseOmit(l.System.Omit)
+		if err != nil {
+			return nil, fmt.Errorf("%w: link %q: %v", spi.ErrInvalidMapping, name, err)
+		}
+		cl.Omit = omit
 		for _, p := range def.Properties {
 			cl.PropertyTypes[p.Name] = p.Type
 		}
@@ -198,6 +205,11 @@ func compileModel(name string, m Model, def spi.ObjectTypeDefinition) (*Compiled
 		FieldByColumn:    map[string]CompiledField{},
 		PropertyTypes:    types,
 	}
+	omit, err := parseOmit(m.System.Omit)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %q: %v", spi.ErrInvalidMapping, name, err)
+	}
+	cm.Omit = omit
 	for logical, f := range m.Fields {
 		if f.Column == "" {
 			return nil, fmt.Errorf("%w: %q field %q missing column", spi.ErrInvalidMapping, name, logical)
