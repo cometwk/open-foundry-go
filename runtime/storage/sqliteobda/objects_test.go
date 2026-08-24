@@ -42,10 +42,11 @@ func TestCreateGetSystemFieldsStable(t *testing.T) {
 }
 
 func TestBooleanIsGoBool(t *testing.T) {
-	p, db := openProvider(t, testdata(t, "patient_bool.obda.yaml"))
-	mustExec(t, db, `CREATE TABLE patient (patient_id TEXT, tenant_id TEXT, patient_name TEXT, is_active INTEGER)`)
+	raw := testdata(t, "patient_bool.obda.yaml")
+	p, db := openProvider(t, raw)
 	schema := patientSchema()
 	schema.ObjectTypes[0].Properties = append(schema.ObjectTypes[0].Properties, spi.PropertyDefinition{Name: "active", Type: "Boolean"})
+	mustInit(t, db, raw, schema)
 	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, schema); err != nil {
 		t.Fatal(err)
 	}
@@ -121,9 +122,10 @@ func TestCrossTenantGetIsNotFound(t *testing.T) {
 }
 
 func TestReadOnlyMapping(t *testing.T) {
-	p, db := openProvider(t, testdata(t, "patient_read.obda.yaml"))
-	mustExec(t, db, `CREATE TABLE patient (patient_id TEXT, tenant_id TEXT, patient_name TEXT)`)
-	mustExec(t, db, `INSERT INTO patient VALUES ('p1','t1','Ada')`)
+	raw := testdata(t, "patient_read.obda.yaml")
+	p, db := openProvider(t, raw)
+	mustInit(t, db, raw, patientSchema())
+	mustExec(t, db, `INSERT INTO patient (id, tenant_id, patient_name, version, created_at, updated_at) VALUES ('p1','t1','Ada', 1, 't', 't')`)
 	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, patientSchema()); err != nil {
 		t.Fatal(err)
 	}
@@ -310,11 +312,7 @@ func TestSoftDeletedUpdateNotFound(t *testing.T) {
 }
 
 func TestDirectIdentityRoundTrip(t *testing.T) {
-	p, db := openProvider(t, testdata(t, "patient_direct.obda.yaml"))
-	mustExec(t, db, `CREATE TABLE patient (patient_id TEXT, tenant_id TEXT, patient_name TEXT)`)
-	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, patientSchema()); err != nil {
-		t.Fatal(err)
-	}
+	p, _ := activatePatient(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
 	created, err := p.CreateObject(ctx, "Patient", map[string]any{"patientId": "p1", "name": "Ada"})
 	if err != nil {
@@ -342,8 +340,9 @@ func pGetErr(t *testing.T, p *sqliteobda.Provider, tenant, id string) error {
 
 func activatePatient(t *testing.T) (*sqliteobda.Provider, *sql.DB) {
 	t.Helper()
-	p, db := openProvider(t, testdata(t, "patient.obda.yaml"))
-	mustExec(t, db, `CREATE TABLE patient (patient_id TEXT, tenant_id TEXT, patient_name TEXT)`)
+	raw := testdata(t, "patient.obda.yaml")
+	p, db := openProvider(t, raw)
+	mustInit(t, db, raw, patientSchema())
 	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, patientSchema()); err != nil {
 		t.Fatal(err)
 	}

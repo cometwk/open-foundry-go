@@ -3,7 +3,6 @@ package sqliteobda
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"sync"
@@ -89,26 +88,10 @@ func (p *Provider) ApplySchema(ctx spi.RequestContext, schema spi.OntologySchema
 	if err != nil {
 		return spi.MigrationResult{}, err
 	}
+	if err := p.verifyMappedSchema(compiled); err != nil {
+		return spi.MigrationResult{}, err
+	}
 	fp, err := p.fingerprint()
-	if err != nil {
-		return spi.MigrationResult{}, err
-	}
-	stmts, err := sqlitedialect.SidecarStatements("of_")
-	if err != nil {
-		return spi.MigrationResult{}, err
-	}
-	for _, s := range stmts {
-		if _, err := p.db.Exec(s); err != nil {
-			return spi.MigrationResult{}, err
-		}
-	}
-	if err := p.backfill(p.db, compiled); err != nil {
-		return spi.MigrationResult{}, err
-	}
-	if err := p.ensureCardinalityIndexes(compiled); err != nil {
-		return spi.MigrationResult{}, err
-	}
-	snap, err := json.Marshal(schema)
 	if err != nil {
 		return spi.MigrationResult{}, err
 	}
@@ -122,24 +105,6 @@ func (p *Provider) ApplySchema(ctx spi.RequestContext, schema spi.OntologySchema
 	if to == 0 {
 		to = from + 1
 	}
-	if _, err := p.db.Exec(`INSERT OR REPLACE INTO of_schema_versions (version, snapshot) VALUES (?, ?)`, to, string(snap)); err != nil {
-		return spi.MigrationResult{}, err
-	}
-	mapBytes, _ := json.Marshal(p.doc.Metadata)
-	if _, err := p.db.Exec(`INSERT OR REPLACE INTO of_mapping_versions (version, document, dsn_ref) VALUES (?, ?, ?)`, to, string(mapBytes), dsnRefName(p.doc)); err != nil {
-		return spi.MigrationResult{}, err
-	}
-	res, err := p.db.Exec(`INSERT INTO of_mapping_activation (id, mapping_version, schema_version, fingerprint) VALUES (1, ?, ?, ?)`, to, to, fp)
-	if err != nil {
-		res, err = p.db.Exec(`UPDATE of_mapping_activation SET mapping_version = ?, schema_version = ?, fingerprint = ? WHERE id = 1 AND mapping_version = ?`, to, to, fp, from)
-		if err != nil {
-			return spi.MigrationResult{}, err
-		}
-		n, _ := res.RowsAffected()
-		if n != 1 {
-			return spi.MigrationResult{}, fmt.Errorf("%w: activation cas lost", spi.ErrMappingNotActive)
-		}
-	}
 	p.active = &activation{schema: schema, compiled: compiled, version: to, fingerprint: fp}
 	p.failClosed = false
 	return spi.MigrationResult{Success: true, FromVersion: from, ToVersion: to, AppliedAt: time.Now().UTC()}, nil
@@ -151,16 +116,7 @@ func (p *Provider) GetSchema(ctx spi.RequestContext, version *int) (spi.Ontology
 		return spi.OntologySchema{}, err
 	}
 	if version != nil && *version != act.version {
-		var snap string
-		err := p.db.QueryRow(`SELECT snapshot FROM of_schema_versions WHERE version = ?`, *version).Scan(&snap)
-		if err != nil {
-			return spi.OntologySchema{}, spi.ErrMappingNotActive
-		}
-		var s spi.OntologySchema
-		if err := json.Unmarshal([]byte(snap), &s); err != nil {
-			return spi.OntologySchema{}, err
-		}
-		return s, nil
+		return spi.OntologySchema{}, spi.ErrMappingNotActive
 	}
 	return act.schema, nil
 }
@@ -248,11 +204,4 @@ func (p *Provider) fingerprint() (string, error) {
 		h += snap.Hash
 	}
 	return h, nil
-}
-
-func dsnRefName(doc *obda.Document) string {
-	for _, s := range doc.Sources {
-		return s.Connection.DSNRef
-	}
-	return ""
 }

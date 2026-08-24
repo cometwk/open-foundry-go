@@ -21,16 +21,15 @@ models:
       name: patient
     access: readWrite
     identity:
-      strategy: sidecar
-      columns: [patient_id]
+      strategy: direct
+      columns: [id]
+      insert: generated
     tenant:
       strategy: column
       column: tenant_id
     system:
-      strategy: sidecar
+      strategy: native
     fields:
-      patientId:
-        column: patient_id
       name:
         column: patient_name
       active:

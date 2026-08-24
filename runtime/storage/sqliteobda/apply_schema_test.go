@@ -10,35 +10,83 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/openfoundry/runtime/obda"
+	sqlitedialect "github.com/openfoundry/runtime/obda/dialect/sqlite"
 	"github.com/openfoundry/runtime/spi"
 	"github.com/openfoundry/runtime/storage/sqliteobda"
 )
 
-func TestApplySchemaActivates(t *testing.T) {
+func TestApplySchemaEmptyDatabaseFails(t *testing.T) {
 	p, db := openProvider(t, testdata(t, "patient.obda.yaml"))
-	mustExec(t, db, `CREATE TABLE patient (patient_id TEXT, tenant_id TEXT, patient_name TEXT)`)
-	schema := patientSchema()
-	ctx := spi.RequestContext{TenantID: "t1"}
-	res, err := p.ApplySchema(ctx, schema)
+	_, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, patientSchema())
+	if !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("err=%v want ErrInvalidMapping", err)
+	}
+	_, err = p.GetObject(spi.RequestContext{TenantID: "t1"}, "Patient", "x")
+	if !errors.Is(err, spi.ErrMappingNotActive) {
+		t.Fatalf("err=%v want ErrMappingNotActive", err)
+	}
+	assertNoOfTables(t, db)
+}
+
+func TestApplySchemaGeneratedDDLNotExecutedFails(t *testing.T) {
+	p, _ := openProvider(t, testdata(t, "patient.obda.yaml"))
+	compiled := compileMapping(t, testdata(t, "patient.obda.yaml"), patientSchema())
+	stmts, err := sqlitedialect.MappedTableStatements(compiled)
+	if err != nil || len(stmts) == 0 {
+		t.Fatalf("stmts=%v err=%v", stmts, err)
+	}
+	_, err = p.ApplySchema(spi.RequestContext{TenantID: "t1"}, patientSchema())
+	if !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("err=%v want ErrInvalidMapping", err)
+	}
+}
+
+func TestApplySchemaAfterHelperSucceeds(t *testing.T) {
+	p, db := openProvider(t, testdata(t, "patient.obda.yaml"))
+	mustInit(t, db, testdata(t, "patient.obda.yaml"), patientSchema())
+	res, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, patientSchema())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !res.Success || res.ToVersion != 1 {
 		t.Fatalf("%+v", res)
 	}
-	got, err := p.GetSchema(ctx, nil)
+	got, err := p.GetSchema(spi.RequestContext{TenantID: "t1"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got.ObjectTypes) != 1 || got.ObjectTypes[0].Name != "Patient" {
 		t.Fatalf("%+v", got)
 	}
-	var cols int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('patient')`).Scan(&cols); err != nil {
-		t.Fatal(err)
+	other := 999
+	if _, err := p.GetSchema(spi.RequestContext{TenantID: "t1"}, &other); !errors.Is(err, spi.ErrMappingNotActive) {
+		t.Fatalf("err=%v", err)
 	}
-	if cols != 3 {
-		t.Fatalf("business table altered: cols=%d", cols)
+	assertNoOfTables(t, db)
+}
+
+func TestApplySchemaMissingUniqueFails(t *testing.T) {
+	p, db := openProvider(t, testdata(t, "hospital.obda.yaml"))
+	mustExec(t, db, `CREATE TABLE patient (id TEXT PRIMARY KEY, tenant_id TEXT, patient_name TEXT, version INTEGER, created_at TEXT, updated_at TEXT, deleted_at TEXT)`)
+	mustExec(t, db, `CREATE TABLE ward (id TEXT PRIMARY KEY, tenant_id TEXT, ward_name TEXT, version INTEGER, created_at TEXT, updated_at TEXT, deleted_at TEXT)`)
+	mustExec(t, db, `CREATE TABLE admission (id TEXT PRIMARY KEY, tenant_id TEXT, from_id TEXT, to_id TEXT, version INTEGER, created_at TEXT, updated_at TEXT, deleted_at TEXT)`)
+	_, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, hospitalSchema(spi.CardinalityManyToOne))
+	if !errors.Is(err, spi.ErrSourceSchemaDrift) {
+		t.Fatalf("err=%v want ErrSourceSchemaDrift", err)
+	}
+	_, err = p.GetObject(spi.RequestContext{TenantID: "t1"}, "Patient", "x")
+	if !errors.Is(err, spi.ErrMappingNotActive) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestApplySchemaMissingColumnIsDrift(t *testing.T) {
+	p, db := openProvider(t, testdata(t, "patient.obda.yaml"))
+	mustExec(t, db, `CREATE TABLE patient (id TEXT PRIMARY KEY, tenant_id TEXT)`)
+	_, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, patientSchema())
+	if !errors.Is(err, spi.ErrSourceSchemaDrift) {
+		t.Fatalf("err=%v want ErrSourceSchemaDrift", err)
 	}
 }
 
@@ -56,8 +104,8 @@ func TestCreateBeforeActivate(t *testing.T) {
 
 func TestApplySchemaRequiresTenant(t *testing.T) {
 	p, db := openProvider(t, testdata(t, "patient.obda.yaml"))
-	mustExec(t, db, `CREATE TABLE patient (patient_id TEXT, tenant_id TEXT, patient_name TEXT)`)
-	_, err := p.ApplySchema(spi.RequestContext{}, spi.OntologySchema{Version: 1, ObjectTypes: []spi.ObjectTypeDefinition{{Name: "Patient"}}})
+	mustInit(t, db, testdata(t, "patient.obda.yaml"), patientSchema())
+	_, err := p.ApplySchema(spi.RequestContext{}, patientSchema())
 	if !errors.Is(err, spi.ErrTenantRequired) {
 		t.Fatalf("err=%v", err)
 	}
@@ -87,56 +135,9 @@ func TestHealthCheckOmitsPath(t *testing.T) {
 	}
 }
 
-func TestBackfillCopiesBusinessTenant(t *testing.T) {
-	p, db := openProvider(t, testdata(t, "patient.obda.yaml"))
-	mustExec(t, db, `CREATE TABLE patient (patient_id TEXT, tenant_id TEXT, patient_name TEXT)`)
-	mustExec(t, db, `INSERT INTO patient VALUES ('p1','alpha','Ada'),('p2','beta','Bob')`)
-	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "intruder"}, patientSchema()); err != nil {
-		t.Fatal(err)
-	}
-	rows, err := db.Query(`SELECT tenant_id FROM of_object_meta ORDER BY physical_key`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	var tenants []string
-	for rows.Next() {
-		var tnt string
-		if err := rows.Scan(&tnt); err != nil {
-			t.Fatal(err)
-		}
-		tenants = append(tenants, tnt)
-	}
-	if len(tenants) != 2 || tenants[0] != "alpha" || tenants[1] != "beta" {
-		t.Fatalf("tenants=%v", tenants)
-	}
-}
-
-func TestApplySchemaCASConflict(t *testing.T) {
-	db := openDB(t)
-	mustExec(t, db, `CREATE TABLE patient (patient_id TEXT, tenant_id TEXT, patient_name TEXT)`)
-	raw := testdata(t, "patient.obda.yaml")
-	opts := sqliteobda.Options{DSNRefs: map[string]string{"secret://hospital/sqlite-dsn": "ignored"}}
-	p1, err := sqliteobda.Open(db, raw, opts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	p2, err := sqliteobda.Open(db, raw, opts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := p1.ApplySchema(spi.RequestContext{TenantID: "t1"}, patientSchema()); err != nil {
-		t.Fatal(err)
-	}
-	_, err = p2.ApplySchema(spi.RequestContext{TenantID: "t1"}, patientSchema())
-	if !errors.Is(err, spi.ErrMappingNotActive) {
-		t.Fatalf("loser err=%v", err)
-	}
-}
-
 func TestHealthCheckDriftFailClosed(t *testing.T) {
 	p, db := openProvider(t, testdata(t, "patient.obda.yaml"))
-	mustExec(t, db, `CREATE TABLE patient (patient_id TEXT, tenant_id TEXT, patient_name TEXT)`)
+	mustInit(t, db, testdata(t, "patient.obda.yaml"), patientSchema())
 	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, patientSchema()); err != nil {
 		t.Fatal(err)
 	}
@@ -159,10 +160,62 @@ func patientSchema() spi.OntologySchema {
 		Version: 1,
 		ObjectTypes: []spi.ObjectTypeDefinition{
 			{Name: "Patient", Properties: []spi.PropertyDefinition{
-				{Name: "patientId", Type: "String"},
 				{Name: "name", Type: "String"},
 			}},
 		},
+	}
+}
+
+func hospitalSchema(card spi.Cardinality) spi.OntologySchema {
+	return spi.OntologySchema{
+		Version: 1,
+		ObjectTypes: []spi.ObjectTypeDefinition{
+			{Name: "Patient", Properties: []spi.PropertyDefinition{{Name: "name", Type: "String"}}},
+			{Name: "Ward", Properties: []spi.PropertyDefinition{{Name: "name", Type: "String"}}},
+		},
+		LinkTypes: []spi.LinkTypeDefinition{{
+			Name: "AdmittedTo", FromType: "Patient", ToType: "Ward", Cardinality: card,
+		}},
+	}
+}
+
+func compileMapping(t *testing.T, mapping []byte, schema spi.OntologySchema) *obda.Compiled {
+	t.Helper()
+	doc, err := obda.Parse(mapping)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := obda.Compile(schema, doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return compiled
+}
+
+func mustInit(t *testing.T, db *sql.DB, mapping []byte, schema spi.OntologySchema) {
+	t.Helper()
+	if err := sqliteobda.InitMappedSchema(db, compileMapping(t, mapping, schema)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertNoOfTables(t *testing.T, db *sql.DB) {
+	t.Helper()
+	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type IN ('table','index','view') AND name LIKE 'of_%'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		names = append(names, n)
+	}
+	if len(names) != 0 {
+		t.Fatalf("sidecar objects present: %v", names)
 	}
 }
 

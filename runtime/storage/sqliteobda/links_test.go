@@ -207,30 +207,19 @@ func TestSidecarLinkAdoptsEngineLinkID(t *testing.T) {
 
 func activateHospital(t *testing.T, card spi.Cardinality) (*sqliteobda.Provider, *sql.DB, string, string) {
 	t.Helper()
-	p, db := openProvider(t, testdata(t, "hospital.obda.yaml"))
-	mustExec(t, db, `CREATE TABLE patient (patient_id TEXT, tenant_id TEXT, patient_name TEXT)`)
-	mustExec(t, db, `CREATE TABLE ward (ward_id TEXT, tenant_id TEXT, ward_name TEXT)`)
-	mustExec(t, db, `CREATE TABLE admission (admission_id TEXT, patient_id TEXT, ward_id TEXT, tenant_id TEXT)`)
-	schema := spi.OntologySchema{
-		Version: 1,
-		ObjectTypes: []spi.ObjectTypeDefinition{
-			{Name: "Patient", Properties: []spi.PropertyDefinition{{Name: "patientId", Type: "String"}, {Name: "name", Type: "String"}}},
-			{Name: "Ward", Properties: []spi.PropertyDefinition{{Name: "wardId", Type: "String"}, {Name: "name", Type: "String"}}},
-		},
-		LinkTypes: []spi.LinkTypeDefinition{{
-			Name: "AdmittedTo", FromType: "Patient", ToType: "Ward", Cardinality: card,
-			Properties: []spi.PropertyDefinition{{Name: "admissionId", Type: "String"}},
-		}},
-	}
+	raw := testdata(t, "hospital.obda.yaml")
+	p, db := openProvider(t, raw)
+	schema := hospitalSchema(card)
+	mustInit(t, db, raw, schema)
 	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, schema); err != nil {
 		t.Fatal(err)
 	}
 	ctx := spi.RequestContext{TenantID: "t1"}
-	pat, err := p.CreateObject(ctx, "Patient", map[string]any{"patientId": "p1", "name": "Ada"})
+	pat, err := p.CreateObject(ctx, "Patient", map[string]any{"name": "Ada"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ward, err := p.CreateObject(ctx, "Ward", map[string]any{"wardId": "w1", "name": "A"})
+	ward, err := p.CreateObject(ctx, "Ward", map[string]any{"name": "A"})
 	if err != nil {
 		t.Fatal(err)
 	}

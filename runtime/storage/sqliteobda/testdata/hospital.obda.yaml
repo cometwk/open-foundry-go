@@ -21,16 +21,15 @@ models:
       name: patient
     access: readWrite
     identity:
-      strategy: sidecar
-      columns: [patient_id]
+      strategy: direct
+      columns: [id]
+      insert: generated
     tenant:
       strategy: column
       column: tenant_id
     system:
-      strategy: sidecar
+      strategy: native
     fields:
-      patientId:
-        column: patient_id
       name:
         column: patient_name
   Ward:
@@ -40,16 +39,15 @@ models:
       name: ward
     access: readWrite
     identity:
-      strategy: sidecar
-      columns: [ward_id]
+      strategy: direct
+      columns: [id]
+      insert: generated
     tenant:
       strategy: column
       column: tenant_id
     system:
-      strategy: sidecar
+      strategy: native
     fields:
-      wardId:
-        column: ward_id
       name:
         column: ward_name
 links:
@@ -60,19 +58,17 @@ links:
       name: admission
     access: readWrite
     identity:
-      strategy: sidecar
-      columns: [admission_id]
+      strategy: direct
+      columns: [id]
+      insert: generated
     from:
       object: Patient
-      columns: [patient_id]
+      columns: [from_id]
     to:
       object: Ward
-      columns: [ward_id]
+      columns: [to_id]
     tenant:
       strategy: column
       column: tenant_id
     system:
-      strategy: sidecar
-    fields:
-      admissionId:
-        column: admission_id
+      strategy: native
