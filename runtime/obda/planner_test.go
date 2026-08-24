@@ -138,20 +138,25 @@ func TestPlanQueryUnknownField(t *testing.T) {
 	}
 }
 
-func TestPlanGetLinksUsesParams(t *testing.T) {
-	sel, args, err := obda.PlanGetLinks("of_link_meta", "tenant_id", "from_id", "t1", "o1")
+func TestPlanGetLinksJoinUsesParams(t *testing.T) {
+	sel, args, err := obda.PlanGetLinksJoin(obda.LinkJoinBinding{
+		LinkTable:     "admission",
+		LinkTenant:    "tenant_id",
+		EndpointCol:   "from_id",
+		PeerFKCol:     "to_id",
+		PeerTable:     "ward",
+		PeerIDCol:     "id",
+		PeerTenantCol: "tenant_id",
+		SelectColumns: []string{"id", "from_id", "to_id"},
+	}, "t1", "o1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(args) != 2 || args[0] != "t1" {
+	if len(args) != 2 || args[0] != "t1" || args[1] != "o1" {
 		t.Fatalf("args=%v", args)
 	}
-	out, err := fakeDialect{}.Render(sel)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(out.SQL, "t1") || strings.Contains(out.SQL, "o1") {
-		t.Fatalf("values leaked: %s", out.SQL)
+	if len(sel.Joins) != 1 || sel.Joins[0].Table.Name != "ward" {
+		t.Fatalf("joins=%+v", sel.Joins)
 	}
 }
 

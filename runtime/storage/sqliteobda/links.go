@@ -2,7 +2,6 @@ package sqliteobda
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 
 	"github.com/openfoundry/runtime/internal/uuidv7"
@@ -11,18 +10,6 @@ import (
 	"github.com/openfoundry/runtime/obda/sqlast"
 	"github.com/openfoundry/runtime/spi"
 )
-
-type linkMeta struct {
-	EngineID  string
-	TenantID  string
-	Type      string
-	FromID    string
-	ToID      string
-	Version   int
-	CreatedAt string
-	UpdatedAt string
-	DeletedAt sql.NullString
-}
 
 func (a *activation) link(typ string) (*obda.CompiledLink, error) {
 	l, ok := a.compiled.Links[typ]
@@ -58,43 +45,16 @@ func (p *Provider) createLinkTx(tx DBTX, act *activation, ctx spi.RequestContext
 	if err != nil {
 		return nil, err
 	}
-	props := copyUserProps(properties)
-	admID := uuidv7.New()
-	if len(l.IdentityColumns) > 0 {
-		if f, ok := l.FieldByColumn[l.IdentityColumns[0]]; ok {
-			if v, ok := props[f.Logical]; ok && v != nil {
-				admID = fmt.Sprint(v)
-			} else {
-				props[f.Logical] = admID
-			}
-		}
+	k := uuidv7.New()
+	if v, ok := properties[spi.LinkFieldEngineLinkID].(string); ok && v != "" {
+		k = v
 	}
-	engineID := uuidv7.New()
-	if l.IdentityStrategy == "sidecar" {
-		if v, ok := properties[spi.LinkFieldEngineLinkID].(string); ok && v != "" {
-			engineID = v
-		}
-	} else {
-		engineID = obda.EncodeDirect(l.Name, []string{admID})
-	}
+	id := obda.EncodeDirect(l.Name, []string{k})
 	now := nowRFC3339()
-	if err := p.insertLinkBusiness(tx, l, ctx.TenantID, admID, fromMeta.EngineID, toMeta.EngineID); err != nil {
+	if err := p.insertLinkRow(tx, l, ctx.TenantID, id, fromMeta.EngineID, toMeta.EngineID, copyLinkProps(properties), now); err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec(
-		`INSERT INTO "of_link_meta" (engine_id, tenant_id, link_type, from_id, to_id, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
-		engineID, ctx.TenantID, l.Name, fromMeta.EngineID, toMeta.EngineID, now, now,
-	); err != nil {
-		return nil, sqlitedialect.Classify(err)
-	}
-	link, err := p.loadLink(tx, l, ctx.TenantID, engineID)
-	if err != nil {
-		return nil, err
-	}
-	if err := writeLinkHistory(tx, engineID, ctx.TenantID, 1, link, now); err != nil {
-		return nil, err
-	}
-	return link, nil
+	return p.loadLink(tx, l, ctx.TenantID, id)
 }
 
 func (p *Provider) GetLink(ctx spi.RequestContext, typ, linkID string) (spi.OntologyLink, error) {
@@ -121,58 +81,109 @@ func (p *Provider) UpdateLink(ctx spi.RequestContext, typ, linkID string, proper
 	if !l.Writable() {
 		return nil, spi.ErrReadOnlyMapping
 	}
+	if l.Omit.Version && expectedVersion != nil {
+		return nil, spi.ErrUnsupportedCapability
+	}
 	tx, conn, err := p.begin()
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = conn.Close() }()
 	defer func() { _ = tx.Rollback() }()
-	meta, err := p.loadLinkMeta(tx, l, ctx.TenantID, linkID)
+	link, err := p.loadLink(tx, l, ctx.TenantID, linkID)
 	if err != nil {
 		return nil, err
 	}
-	if meta == nil || meta.DeletedAt.Valid {
+	if _, del := link[spi.FieldDeletedAt]; del {
 		return nil, spi.ErrLinkNotFound
 	}
 	now := nowRFC3339()
-	var res sql.Result
-	if expectedVersion != nil {
-		res, err = tx.Exec(
-			`UPDATE "of_link_meta" SET version = version + 1, updated_at = ? WHERE engine_id = ? AND tenant_id = ? AND version = ? AND deleted_at IS NULL`,
-			now, meta.EngineID, ctx.TenantID, *expectedVersion,
-		)
-	} else {
-		res, err = tx.Exec(
-			`UPDATE "of_link_meta" SET version = version + 1, updated_at = ? WHERE engine_id = ? AND tenant_id = ? AND deleted_at IS NULL`,
-			now, meta.EngineID, ctx.TenantID,
-		)
+	cols := make([]string, 0, 4)
+	vals := make([]any, 0, 4)
+	props := copyLinkProps(properties)
+	idCols := map[string]struct{}{}
+	for _, c := range l.IdentityColumns {
+		idCols[c] = struct{}{}
 	}
+	for _, c := range l.FromColumns {
+		idCols[c] = struct{}{}
+	}
+	for _, c := range l.ToColumns {
+		idCols[c] = struct{}{}
+	}
+	if l.TenantColumn != "" {
+		idCols[l.TenantColumn] = struct{}{}
+	}
+	for _, f := range l.Fields {
+		if _, skip := idCols[f.Column]; skip {
+			continue
+		}
+		v, ok := props[f.Logical]
+		if !ok {
+			continue
+		}
+		cols = append(cols, f.Column)
+		vals = append(vals, writeValue(l.PropertyTypes[f.Logical], v))
+	}
+	if !l.Omit.UpdatedAt {
+		cols = append(cols, "updated_at")
+		vals = append(vals, now)
+	}
+	curVer := asInt(link[spi.FieldVersion])
+	if !l.Omit.Version {
+		cols = append(cols, "version")
+		vals = append(vals, curVer+1)
+	}
+	if len(cols) == 0 {
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		return link, nil
+	}
+	upd, args, err := obda.PlanUpdateObject(l.Binding(), ctx.TenantID, []any{linkID}, cols, vals)
+	if err != nil {
+		return nil, err
+	}
+	if expectedVersion != nil {
+		upd.Where = andPred(upd.Where, &sqlast.Predicate{
+			Op:    "eq",
+			Field: &sqlast.Identifier{Name: "version"},
+		})
+		args = append(args, *expectedVersion)
+	}
+	if !l.Omit.DeletedAt {
+		upd.Where = andPred(upd.Where, &sqlast.Predicate{
+			Op:    "is_null",
+			Field: &sqlast.Identifier{Name: "deleted_at"},
+		})
+	}
+	stmt, err := p.dialect.Render(upd)
+	if err != nil {
+		return nil, err
+	}
+	res, err := tx.Exec(stmt.SQL, args...)
 	if err != nil {
 		return nil, sqlitedialect.Classify(err)
 	}
 	n, _ := res.RowsAffected()
 	if n != 1 {
-		cur, rerr := p.loadLinkMeta(tx, l, ctx.TenantID, meta.EngineID)
+		cur, rerr := p.loadLink(tx, l, ctx.TenantID, linkID)
 		if rerr != nil {
-			return nil, rerr
+			return nil, spi.ErrLinkNotFound
 		}
-		if cur == nil || cur.DeletedAt.Valid {
+		if _, del := cur[spi.FieldDeletedAt]; del {
 			return nil, spi.ErrLinkNotFound
 		}
 		return nil, spi.ErrVersionConflict
 	}
-	link, err := p.loadLink(tx, l, ctx.TenantID, meta.EngineID)
+	out, err := p.loadLink(tx, l, ctx.TenantID, linkID)
 	if err != nil {
-		return nil, err
-	}
-	ver, _ := link[spi.FieldVersion].(int)
-	if err := writeLinkHistory(tx, meta.EngineID, ctx.TenantID, ver, link, now); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	return link, nil
+	return out, nil
 }
 
 func (p *Provider) DeleteLink(ctx spi.RequestContext, typ, linkID string) error {
@@ -193,18 +204,39 @@ func (p *Provider) DeleteLink(ctx spi.RequestContext, typ, linkID string) error 
 	}
 	defer func() { _ = conn.Close() }()
 	defer func() { _ = tx.Rollback() }()
-	meta, err := p.loadLinkMeta(tx, l, ctx.TenantID, linkID)
+	link, err := p.loadLink(tx, l, ctx.TenantID, linkID)
+	if err != nil {
+		if err == spi.ErrLinkNotFound {
+			return tx.Commit()
+		}
+		return err
+	}
+	if _, del := link[spi.FieldDeletedAt]; del {
+		return tx.Commit()
+	}
+	if l.Omit.DeletedAt {
+		return spi.ErrUnsupportedCapability
+	}
+	now := nowRFC3339()
+	cols := []string{"deleted_at"}
+	vals := []any{now}
+	if !l.Omit.UpdatedAt {
+		cols = append(cols, "updated_at")
+		vals = append(vals, now)
+	}
+	if !l.Omit.Version {
+		cols = append(cols, "version")
+		vals = append(vals, asInt(link[spi.FieldVersion])+1)
+	}
+	upd, args, err := obda.PlanUpdateObject(l.Binding(), ctx.TenantID, []any{linkID}, cols, vals)
 	if err != nil {
 		return err
 	}
-	if meta == nil || meta.DeletedAt.Valid {
-		return tx.Commit()
+	stmt, err := p.dialect.Render(upd)
+	if err != nil {
+		return err
 	}
-	now := nowRFC3339()
-	if _, err := tx.Exec(
-		`UPDATE "of_link_meta" SET deleted_at = ?, updated_at = ?, version = version + 1 WHERE engine_id = ? AND tenant_id = ? AND deleted_at IS NULL`,
-		now, now, meta.EngineID, ctx.TenantID,
-	); err != nil {
+	if _, err := tx.Exec(stmt.SQL, args...); err != nil {
 		return sqlitedialect.Classify(err)
 	}
 	return tx.Commit()
@@ -219,38 +251,35 @@ func (p *Provider) GetLinks(ctx spi.RequestContext, objectID, linkType, directio
 	if err != nil {
 		return spi.LinkPage{}, spi.ErrLinkNotFound
 	}
-	endCol := "from_id"
+	peerName := l.ToObject
+	endCol := firstCol(l.FromColumns)
+	peerFK := firstCol(l.ToColumns)
 	if direction == "inbound" {
-		endCol = "to_id"
+		peerName = l.FromObject
+		endCol = firstCol(l.ToColumns)
+		peerFK = firstCol(l.FromColumns)
 	}
-	sel, args, err := obda.PlanGetLinks("of_link_meta", "tenant_id", endCol, ctx.TenantID, objectID)
+	peer, err := act.model(peerName)
+	if err != nil {
+		return spi.LinkPage{}, spi.ErrObjectNotFound
+	}
+	includeDeleted := options != nil && options.IncludeDeleted
+	sel, args, err := obda.PlanGetLinksJoin(obda.LinkJoinBinding{
+		LinkTable:       l.Table,
+		LinkTenant:      l.TenantColumn,
+		EndpointCol:     endCol,
+		PeerFKCol:       peerFK,
+		PeerTable:       peer.Table,
+		PeerIDCol:       firstCol(peer.IdentityColumns),
+		PeerTenantCol:   peer.TenantColumn,
+		SelectColumns:   l.Binding().SelectColumns,
+		OmitLinkDeleted: l.Omit.DeletedAt || includeDeleted,
+		OmitPeerDeleted: peer.Omit.DeletedAt,
+	}, ctx.TenantID, objectID)
 	if err != nil {
 		return spi.LinkPage{}, err
 	}
-	sel.Columns = []sqlast.Expr{
-		sqlast.Identifier{Name: "engine_id"},
-		sqlast.Identifier{Name: "tenant_id"},
-		sqlast.Identifier{Name: "link_type"},
-		sqlast.Identifier{Name: "from_id"},
-		sqlast.Identifier{Name: "to_id"},
-		sqlast.Identifier{Name: "version"},
-		sqlast.Identifier{Name: "created_at"},
-		sqlast.Identifier{Name: "updated_at"},
-		sqlast.Identifier{Name: "deleted_at"},
-	}
-	sel.Where = andPred(sel.Where, &sqlast.Predicate{
-		Op:    "eq",
-		Field: &sqlast.Identifier{Name: "link_type"},
-		Value: sqlast.Param{Position: 3},
-	})
-	args = append(args, linkType)
-	if options == nil || !options.IncludeDeleted {
-		sel.Where = andPred(sel.Where, &sqlast.Predicate{
-			Op:    "is_null",
-			Field: &sqlast.Identifier{Name: "deleted_at"},
-		})
-	}
-	sel.Order = []sqlast.Order{{Field: sqlast.Identifier{Name: "engine_id"}}}
+	sel.Order = []sqlast.Order{{Field: sqlast.Identifier{Qualifier: "l", Name: firstCol(l.IdentityColumns)}}}
 	limit := 100
 	offset := 0
 	if options != nil {
@@ -265,6 +294,7 @@ func (p *Provider) GetLinks(ctx spi.RequestContext, objectID, linkType, directio
 		}
 	}
 	countSel := *sel
+	countSel.Limit = nil
 	countStmt, err := p.dialect.Render(&countSel)
 	if err != nil {
 		return spi.LinkPage{}, err
@@ -283,13 +313,22 @@ func (p *Provider) GetLinks(ctx spi.RequestContext, objectID, linkType, directio
 		return spi.LinkPage{}, sqlitedialect.Classify(err)
 	}
 	defer rows.Close()
+	bizCols := l.Binding().SelectColumns
 	var items []spi.OntologyLink
 	for rows.Next() {
-		meta, err := scanLinkMetaRow(rows)
-		if err != nil {
+		dest := make([]any, len(bizCols))
+		ptrs := make([]any, len(dest))
+		for i := range dest {
+			ptrs[i] = &dest[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
 			return spi.LinkPage{}, err
 		}
-		link, err := p.assembleLink(l, meta)
+		biz := map[string]any{}
+		for i, col := range bizCols {
+			biz[col] = unwrap(dest[i])
+		}
+		link, err := p.assembleLink(l, ctx.TenantID, biz)
 		if err != nil {
 			return spi.LinkPage{}, err
 		}
@@ -395,18 +434,53 @@ func (p *Provider) lookupAnyObject(tx DBTX, act *activation, tenant, id string) 
 	return nil, spi.ErrObjectNotFound
 }
 
-func (p *Provider) insertLinkBusiness(tx DBTX, l *obda.CompiledLink, tenant, ident, fromKey, toKey string) error {
-	cols := append([]string(nil), l.IdentityColumns...)
-	vals := []any{ident}
-	cols = append(cols, l.FromColumns...)
-	vals = append(vals, fromKey)
-	cols = append(cols, l.ToColumns...)
-	vals = append(vals, toKey)
-	if l.TenantColumn != "" {
-		cols = append(cols, l.TenantColumn)
-		vals = append(vals, tenant)
+func (p *Provider) insertLinkRow(tx DBTX, l *obda.CompiledLink, tenant, id, fromID, toID string, props map[string]any, now string) error {
+	b := l.Binding()
+	cols := make([]string, 0, len(b.SelectColumns))
+	vals := make([]any, 0, len(b.SelectColumns))
+	seen := map[string]struct{}{}
+	add := func(col string, v any) {
+		if col == "" {
+			return
+		}
+		if _, ok := seen[col]; ok {
+			return
+		}
+		seen[col] = struct{}{}
+		cols = append(cols, col)
+		vals = append(vals, v)
 	}
-	b := obda.ObjectBinding{Table: l.Table, TenantColumn: l.TenantColumn, IdentityColumns: l.IdentityColumns, Writable: true}
+	for _, col := range l.IdentityColumns {
+		add(col, id)
+	}
+	if l.TenantColumn != "" {
+		add(l.TenantColumn, tenant)
+	}
+	for _, col := range l.FromColumns {
+		add(col, fromID)
+	}
+	for _, col := range l.ToColumns {
+		add(col, toID)
+	}
+	for _, f := range l.Fields {
+		if _, ok := seen[f.Column]; ok {
+			continue
+		}
+		v, ok := props[f.Logical]
+		if !ok {
+			continue
+		}
+		add(f.Column, writeValue(l.PropertyTypes[f.Logical], v))
+	}
+	if !l.Omit.Version {
+		add("version", 1)
+	}
+	if !l.Omit.CreatedAt {
+		add("created_at", now)
+	}
+	if !l.Omit.UpdatedAt {
+		add("updated_at", now)
+	}
 	ins, args, err := obda.PlanCreateObject(b, cols, vals)
 	if err != nil {
 		return err
@@ -422,70 +496,95 @@ func (p *Provider) insertLinkBusiness(tx DBTX, l *obda.CompiledLink, tenant, ide
 }
 
 func (p *Provider) loadLink(tx DBTX, l *obda.CompiledLink, tenant, id string) (spi.OntologyLink, error) {
-	meta, err := p.loadLinkMeta(tx, l, tenant, id)
-	if err != nil {
-		return nil, err
-	}
-	if meta == nil {
+	if err := matchDirectID(l.Name, id); err != nil {
 		return nil, spi.ErrLinkNotFound
 	}
-	return p.assembleLink(l, meta)
-}
-
-func (p *Provider) loadLinkMeta(tx DBTX, l *obda.CompiledLink, tenant, id string) (*linkMeta, error) {
-	row := &linkMeta{}
-	var ver int64
-	err := tx.QueryRow(
-		`SELECT engine_id, tenant_id, link_type, from_id, to_id, version, created_at, updated_at, deleted_at FROM "of_link_meta" WHERE engine_id = ? AND tenant_id = ? AND link_type = ?`,
-		id, tenant, l.Name,
-	).Scan(&row.EngineID, &row.TenantID, &row.Type, &row.FromID, &row.ToID, &ver, &row.CreatedAt, &row.UpdatedAt, &row.DeletedAt)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
+	b := l.Binding()
+	sel, args, err := obda.PlanGetObject(b, tenant, []any{id})
 	if err != nil {
 		return nil, err
 	}
-	row.Version = int(ver)
-	return row, nil
-}
-
-func scanLinkMetaRow(rows *sql.Rows) (*linkMeta, error) {
-	row := &linkMeta{}
-	var ver int64
-	if err := rows.Scan(&row.EngineID, &row.TenantID, &row.Type, &row.FromID, &row.ToID, &ver, &row.CreatedAt, &row.UpdatedAt, &row.DeletedAt); err != nil {
+	stmt, err := p.dialect.Render(sel)
+	if err != nil {
 		return nil, err
 	}
-	row.Version = int(ver)
-	return row, nil
+	dest := make([]any, len(b.SelectColumns))
+	ptrs := make([]any, len(dest))
+	for i := range dest {
+		ptrs[i] = &dest[i]
+	}
+	if err := tx.QueryRow(stmt.SQL, args...).Scan(ptrs...); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, spi.ErrLinkNotFound
+		}
+		return nil, sqlitedialect.Classify(err)
+	}
+	biz := map[string]any{}
+	for i, col := range b.SelectColumns {
+		biz[col] = unwrap(dest[i])
+	}
+	return p.assembleLink(l, tenant, biz)
 }
 
-func (p *Provider) assembleLink(l *obda.CompiledLink, meta *linkMeta) (spi.OntologyLink, error) {
+func (p *Provider) assembleLink(l *obda.CompiledLink, tenant string, biz map[string]any) (spi.OntologyLink, error) {
+	id := ""
+	if len(l.IdentityColumns) > 0 {
+		id = fmt.Sprint(biz[l.IdentityColumns[0]])
+	}
 	link := spi.OntologyLink{
-		spi.FieldID:           meta.EngineID,
+		spi.FieldID:           id,
 		spi.FieldType:         l.Name,
-		spi.FieldTenantID:     meta.TenantID,
-		spi.FieldVersion:      meta.Version,
-		spi.FieldCreatedAt:    meta.CreatedAt,
-		spi.FieldUpdatedAt:    meta.UpdatedAt,
-		spi.LinkFieldFromID:   meta.FromID,
-		spi.LinkFieldToID:     meta.ToID,
+		spi.FieldTenantID:     tenant,
+		spi.LinkFieldFromID:   fmt.Sprint(biz[firstCol(l.FromColumns)]),
+		spi.LinkFieldToID:     fmt.Sprint(biz[firstCol(l.ToColumns)]),
 		spi.LinkFieldFromType: l.FromObject,
 		spi.LinkFieldToType:   l.ToObject,
 	}
-	if meta.DeletedAt.Valid {
-		link[spi.FieldDeletedAt] = meta.DeletedAt.String
+	if l.Omit.Version {
+		link[spi.FieldVersion] = 0
+	} else {
+		link[spi.FieldVersion] = asInt(biz["version"])
+	}
+	if !l.Omit.CreatedAt {
+		if v := biz["created_at"]; v != nil {
+			link[spi.FieldCreatedAt] = fmt.Sprint(v)
+		}
+	}
+	if !l.Omit.UpdatedAt {
+		if v := biz["updated_at"]; v != nil {
+			link[spi.FieldUpdatedAt] = fmt.Sprint(v)
+		}
+	}
+	if !l.Omit.DeletedAt {
+		if v := biz["deleted_at"]; v != nil && fmt.Sprint(v) != "" {
+			link[spi.FieldDeletedAt] = fmt.Sprint(v)
+		}
+	}
+	for _, f := range l.Fields {
+		raw := biz[f.Column]
+		v, err := p.dialect.NormalizeValue(l.PropertyTypes[f.Logical], raw)
+		if err != nil {
+			return nil, err
+		}
+		link[f.Logical] = v
 	}
 	return link, nil
 }
 
-func writeLinkHistory(tx DBTX, engineID, tenant string, version int, link spi.OntologyLink, at string) error {
-	snap, err := json.Marshal(link)
-	if err != nil {
-		return err
+func copyLinkProps(in map[string]any) map[string]any {
+	out := map[string]any{}
+	for k, v := range in {
+		if spi.IsLinkSystemField(k) {
+			continue
+		}
+		out[k] = v
 	}
-	_, err = tx.Exec(
-		`INSERT INTO "of_link_history" (engine_id, version, tenant_id, snapshot, updated_at) VALUES (?, ?, ?, ?, ?)`,
-		engineID, version, tenant, string(snap), at,
-	)
-	return err
+	return out
+}
+
+func firstCol(cols []string) string {
+	if len(cols) == 0 {
+		return ""
+	}
+	return cols[0]
 }

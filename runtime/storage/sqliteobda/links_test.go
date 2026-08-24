@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/openfoundry/runtime/obda"
 	"github.com/openfoundry/runtime/spi"
 	"github.com/openfoundry/runtime/storage/sqliteobda"
 )
@@ -41,7 +42,7 @@ func TestCardinalityManyToOne(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM of_link_meta WHERE deleted_at IS NULL`).Scan(&n); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM admission WHERE deleted_at IS NULL`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {
@@ -92,7 +93,7 @@ func TestCreateLinkSoftDeletedEndpoint(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM of_link_meta`).Scan(&n); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM admission`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 0 {
@@ -191,7 +192,7 @@ func TestGetLinksAndTraverse(t *testing.T) {
 	}
 }
 
-func TestSidecarLinkAdoptsEngineLinkID(t *testing.T) {
+func TestEngineLinkIDInDecodeK(t *testing.T) {
 	p, _, patientID, wardID := activateHospital(t, spi.CardinalityManyToMany)
 	ctx := spi.RequestContext{TenantID: "t1"}
 	link, err := p.CreateLink(ctx, "AdmittedTo", patientID, wardID, map[string]any{
@@ -200,8 +201,36 @@ func TestSidecarLinkAdoptsEngineLinkID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if link[spi.FieldID] != "engine-link-1" {
-		t.Fatalf("got %v", link[spi.FieldID])
+	id, _ := link[spi.FieldID].(string)
+	typ, keys, err := obda.DecodeDirect(id)
+	if err != nil || typ != "AdmittedTo" || len(keys) != 1 || keys[0] != "engine-link-1" {
+		t.Fatalf("id=%q typ=%q keys=%v err=%v", id, typ, keys, err)
+	}
+}
+
+func TestGetLinksHidesDeletedPeer(t *testing.T) {
+	p, _, patientID, wardID := activateHospital(t, spi.CardinalityManyToMany)
+	ctx := spi.RequestContext{TenantID: "t1"}
+	link, err := p.CreateLink(ctx, "AdmittedTo", patientID, wardID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.DeleteObject(ctx, "Ward", wardID, "soft"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := p.GetLinks(ctx, patientID, "AdmittedTo", "outbound", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Items) != 0 {
+		t.Fatalf("outbound included deleted peer: %+v", out.Items)
+	}
+	got, err := p.GetLink(ctx, "AdmittedTo", link[spi.FieldID].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[spi.LinkFieldToID] != wardID {
+		t.Fatalf("%#v", got)
 	}
 }
 

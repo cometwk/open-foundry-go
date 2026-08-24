@@ -161,6 +161,66 @@ func PlanGetLinks(table, tenantCol, endpointCol, tenant, objectID string) (*sqla
 	}, []any{tenant, objectID}, nil
 }
 
+// LinkJoinBinding is the physical shape of GetLinks INNER JOIN peer object.
+type LinkJoinBinding struct {
+	LinkTable       string
+	LinkTenant      string
+	EndpointCol     string
+	PeerFKCol       string
+	PeerTable       string
+	PeerIDCol       string
+	PeerTenantCol   string
+	SelectColumns   []string
+	OmitLinkDeleted bool
+	OmitPeerDeleted bool
+}
+
+// PlanGetLinksJoin selects link rows INNER JOINed to the live peer object.
+func PlanGetLinksJoin(b LinkJoinBinding, tenant, objectID string) (*sqlast.Select, []any, error) {
+	if tenant == "" {
+		return nil, nil, spi.ErrTenantRequired
+	}
+	if b.LinkTable == "" || b.PeerTable == "" || b.EndpointCol == "" || b.PeerFKCol == "" {
+		return nil, nil, spi.ErrInvalidMapping
+	}
+	lTenant := sqlast.Identifier{Qualifier: "l", Name: b.LinkTenant}
+	on := and(
+		&sqlast.Predicate{
+			Op:    "col_eq",
+			Field: &sqlast.Identifier{Qualifier: "l", Name: b.PeerFKCol},
+			Other: &sqlast.Identifier{Qualifier: "p", Name: b.PeerIDCol},
+		},
+		&sqlast.Predicate{
+			Op:    "col_eq",
+			Field: &lTenant,
+			Other: &sqlast.Identifier{Qualifier: "p", Name: b.PeerTenantCol},
+		},
+	)
+	where := and(eq(lTenant, 1), eq(sqlast.Identifier{Qualifier: "l", Name: b.EndpointCol}, 2))
+	if !b.OmitLinkDeleted {
+		where = and(where, &sqlast.Predicate{Op: "is_null", Field: &sqlast.Identifier{Qualifier: "l", Name: "deleted_at"}})
+	}
+	if !b.OmitPeerDeleted {
+		where = and(where, &sqlast.Predicate{Op: "is_null", Field: &sqlast.Identifier{Qualifier: "p", Name: "deleted_at"}})
+	}
+	cols := make([]sqlast.Expr, len(b.SelectColumns))
+	for i, c := range b.SelectColumns {
+		cols[i] = sqlast.Identifier{Qualifier: "l", Name: c}
+	}
+	return &sqlast.Select{
+		From:    ident(b.LinkTable),
+		As:      "l",
+		Columns: cols,
+		Joins: []sqlast.Join{{
+			Kind:  "INNER",
+			Table: ident(b.PeerTable),
+			As:    "p",
+			On:    on,
+		}},
+		Where: where,
+	}, []any{tenant, objectID}, nil
+}
+
 func compileFilter(f spi.FilterExpression, known map[string]struct{}, next int) (*sqlast.Predicate, []any, error) {
 	empty := f.Field == "" && f.Operator == "" && len(f.And) == 0 && len(f.Or) == 0 && f.Not == nil
 	if empty {

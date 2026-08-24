@@ -116,6 +116,56 @@ func (m *CompiledModel) Binding() ObjectBinding {
 	}
 }
 
+// Binding returns the planner view of this link relation.
+func (l *CompiledLink) Binding() ObjectBinding {
+	seen := map[string]struct{}{}
+	cols := make([]string, 0, 8)
+	add := func(c string) {
+		if c == "" {
+			return
+		}
+		if _, ok := seen[c]; ok {
+			return
+		}
+		seen[c] = struct{}{}
+		cols = append(cols, c)
+	}
+	for _, c := range l.IdentityColumns {
+		add(c)
+	}
+	if l.TenantColumn != "" {
+		add(l.TenantColumn)
+	}
+	for _, c := range l.FromColumns {
+		add(c)
+	}
+	for _, c := range l.ToColumns {
+		add(c)
+	}
+	for _, f := range l.Fields {
+		add(f.Column)
+	}
+	if !l.Omit.Version {
+		add("version")
+	}
+	if !l.Omit.CreatedAt {
+		add("created_at")
+	}
+	if !l.Omit.UpdatedAt {
+		add("updated_at")
+	}
+	if !l.Omit.DeletedAt {
+		add("deleted_at")
+	}
+	return ObjectBinding{
+		Table:           l.Table,
+		TenantColumn:    l.TenantColumn,
+		IdentityColumns: append([]string(nil), l.IdentityColumns...),
+		SelectColumns:   cols,
+		Writable:        l.Writable(),
+	}
+}
+
 // Compile checks a mapping document against an ontology schema and
 // returns an immutable compiled form.
 func Compile(schema spi.OntologySchema, doc *Document) (*Compiled, error) {
