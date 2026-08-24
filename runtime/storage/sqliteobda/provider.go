@@ -159,13 +159,25 @@ func (p *Provider) Capabilities() spi.StorageCapabilities {
 	caps := p.dialect.Capabilities()
 	return spi.StorageCapabilities{
 		SupportsTransactions:    caps.Transactions,
-		SupportsTemporalQueries: true,
+		SupportsTemporalQueries: false,
 		SupportsFullTextSearch:  caps.FullTextSearch,
 		SupportsGraphTraversal:  true,
-		SupportsBulkMutations:   true,
+		SupportsBulkMutations:   false,
 		MaxTraversalDepth:       8,
 		ReplicationSupport:      spi.ReplicationNone,
 	}
+}
+
+func (p *Provider) GetObjectAtVersion(spi.RequestContext, string, string, int) (spi.OntologyObject, error) {
+	return nil, spi.ErrUnsupportedCapability
+}
+
+func (p *Provider) GetObjectAtTime(spi.RequestContext, string, string, time.Time) (spi.OntologyObject, error) {
+	return nil, spi.ErrUnsupportedCapability
+}
+
+func (p *Provider) BulkMutate(spi.RequestContext, spi.BulkMutationRequest) (spi.BulkMutationResult, error) {
+	return spi.BulkMutationResult{}, spi.ErrUnsupportedCapability
 }
 
 func (p *Provider) pin(ctx spi.RequestContext) (*activation, error) {
