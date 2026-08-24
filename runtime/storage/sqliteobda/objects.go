@@ -3,7 +3,7 @@ package sqliteobda
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,6 +11,7 @@ import (
 	"github.com/openfoundry/runtime/internal/uuidv7"
 	"github.com/openfoundry/runtime/obda"
 	sqlitedialect "github.com/openfoundry/runtime/obda/dialect/sqlite"
+	"github.com/openfoundry/runtime/obda/sqlast"
 	"github.com/openfoundry/runtime/spi"
 )
 
@@ -18,7 +19,6 @@ type metaRow struct {
 	EngineID  string
 	TenantID  string
 	Type      string
-	Key       string
 	Version   int
 	CreatedAt string
 	UpdatedAt string
@@ -70,44 +70,18 @@ func (p *Provider) createObjectTx(tx DBTX, act *activation, ctx spi.RequestConte
 		return nil, spi.ErrReadOnlyMapping
 	}
 	props := copyUserProps(properties)
-	keys, err := identityFromProps(m, props)
+	id, err := objectIdentity(m, props)
 	if err != nil {
 		return nil, err
-	}
-	pk := obda.EncodePhysicalKey(keys)
-	engineID := uuidv7.New()
-	if m.IdentityStrategy == "direct" {
-		engineID = obda.EncodeDirect(m.Name, stringify(keys))
 	}
 	now := nowRFC3339()
-	var existing string
-	err = tx.QueryRow(
-		`SELECT engine_id FROM "of_object_meta" WHERE tenant_id = ? AND object_type = ? AND physical_key = ?`,
-		ctx.TenantID, m.Name, pk,
-	).Scan(&existing)
-	if err == nil {
-		return nil, fmt.Errorf("%w: physical key exists", spi.ErrInvalidMapping)
-	}
-	if err != nil && err != sql.ErrNoRows {
-		return nil, sqlitedialect.Classify(err)
-	}
-	if err := p.insertBusiness(tx, m, ctx.TenantID, props, keys); err != nil {
+	if err := p.insertBusiness(tx, m, ctx.TenantID, props, id, now); err != nil {
+		if errors.Is(err, spi.ErrCardinalityViolation) {
+			return nil, fmt.Errorf("%w: identity exists", spi.ErrInvalidMapping)
+		}
 		return nil, err
 	}
-	if _, err := tx.Exec(
-		`INSERT INTO "of_object_meta" (engine_id, tenant_id, object_type, physical_key, version, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)`,
-		engineID, ctx.TenantID, m.Name, pk, now, now,
-	); err != nil {
-		return nil, sqlitedialect.Classify(err)
-	}
-	obj, err := p.loadObject(tx, m, ctx.TenantID, engineID)
-	if err != nil {
-		return nil, err
-	}
-	if err := writeObjectHistory(tx, engineID, ctx.TenantID, 1, obj, now); err != nil {
-		return nil, err
-	}
-	return obj, nil
+	return p.loadObject(tx, m, ctx.TenantID, id)
 }
 
 func withTx[T any](p *Provider, fn func(DBTX) (T, error)) (T, error) {
@@ -158,57 +132,87 @@ func (p *Provider) updateObjectTx(tx DBTX, act *activation, ctx spi.RequestConte
 	if !m.Writable() {
 		return nil, spi.ErrReadOnlyMapping
 	}
-	props := copyUserProps(properties)
-	meta, err := p.loadMeta(tx, m, ctx.TenantID, id)
+	if m.Omit.Version && expectedVersion != nil {
+		return nil, spi.ErrUnsupportedCapability
+	}
+	obj, err := p.loadObject(tx, m, ctx.TenantID, id)
 	if err != nil {
 		return nil, err
 	}
-	if meta == nil || meta.DeletedAt.Valid {
+	if _, del := obj[spi.FieldDeletedAt]; del {
 		return nil, spi.ErrObjectNotFound
 	}
+	props := copyUserProps(properties)
 	now := nowRFC3339()
-	var res sql.Result
-	if expectedVersion != nil {
-		res, err = tx.Exec(
-			`UPDATE "of_object_meta" SET version = version + 1, updated_at = ? WHERE engine_id = ? AND tenant_id = ? AND version = ? AND deleted_at IS NULL`,
-			now, meta.EngineID, ctx.TenantID, *expectedVersion,
-		)
-	} else {
-		res, err = tx.Exec(
-			`UPDATE "of_object_meta" SET version = version + 1, updated_at = ? WHERE engine_id = ? AND tenant_id = ? AND deleted_at IS NULL`,
-			now, meta.EngineID, ctx.TenantID,
-		)
+	cols := make([]string, 0, len(m.Fields)+2)
+	vals := make([]any, 0, len(m.Fields)+2)
+	idCols := map[string]struct{}{}
+	for _, c := range m.IdentityColumns {
+		idCols[c] = struct{}{}
 	}
+	if m.TenantColumn != "" {
+		idCols[m.TenantColumn] = struct{}{}
+	}
+	for _, f := range m.Fields {
+		if _, skip := idCols[f.Column]; skip {
+			continue
+		}
+		v, ok := props[f.Logical]
+		if !ok {
+			continue
+		}
+		cols = append(cols, f.Column)
+		vals = append(vals, writeValue(m.PropertyTypes[f.Logical], v))
+	}
+	if !m.Omit.UpdatedAt {
+		cols = append(cols, "updated_at")
+		vals = append(vals, now)
+	}
+	curVer := asInt(obj[spi.FieldVersion])
+	if !m.Omit.Version {
+		cols = append(cols, "version")
+		vals = append(vals, curVer+1)
+	}
+	if len(cols) == 0 {
+		return obj, nil
+	}
+	upd, args, err := obda.PlanUpdateObject(m.Binding(), ctx.TenantID, []any{id}, cols, vals)
+	if err != nil {
+		return nil, err
+	}
+	if expectedVersion != nil {
+		upd.Where = andPred(upd.Where, &sqlast.Predicate{
+			Op:    "eq",
+			Field: &sqlast.Identifier{Name: "version"},
+		})
+		args = append(args, *expectedVersion)
+	}
+	if !m.Omit.DeletedAt {
+		upd.Where = andPred(upd.Where, &sqlast.Predicate{
+			Op:    "is_null",
+			Field: &sqlast.Identifier{Name: "deleted_at"},
+		})
+	}
+	stmt, err := p.dialect.Render(upd)
+	if err != nil {
+		return nil, err
+	}
+	res, err := tx.Exec(stmt.SQL, args...)
 	if err != nil {
 		return nil, sqlitedialect.Classify(err)
 	}
 	n, _ := res.RowsAffected()
 	if n != 1 {
-		cur, rerr := p.loadMeta(tx, m, ctx.TenantID, meta.EngineID)
+		cur, rerr := p.loadObject(tx, m, ctx.TenantID, id)
 		if rerr != nil {
-			return nil, rerr
+			return nil, spi.ErrObjectNotFound
 		}
-		if cur == nil || cur.DeletedAt.Valid {
+		if _, del := cur[spi.FieldDeletedAt]; del {
 			return nil, spi.ErrObjectNotFound
 		}
 		return nil, spi.ErrVersionConflict
 	}
-	keys, err := decodePhysicalKey(m, meta.Key)
-	if err != nil {
-		return nil, spi.ErrObjectNotFound
-	}
-	if err := p.updateBusiness(tx, m, ctx.TenantID, keys, props); err != nil {
-		return nil, err
-	}
-	obj, err := p.loadObject(tx, m, ctx.TenantID, meta.EngineID)
-	if err != nil {
-		return nil, err
-	}
-	ver, _ := obj[spi.FieldVersion].(int)
-	if err := writeObjectHistory(tx, meta.EngineID, ctx.TenantID, ver, obj, now); err != nil {
-		return nil, err
-	}
-	return obj, nil
+	return p.loadObject(tx, m, ctx.TenantID, id)
 }
 
 func (p *Provider) DeleteObject(ctx spi.RequestContext, typ, id, mode string) error {
@@ -230,42 +234,47 @@ func (p *Provider) deleteObjectTx(tx DBTX, act *activation, ctx spi.RequestConte
 	if !m.Writable() {
 		return spi.ErrReadOnlyMapping
 	}
-	meta, err := p.loadMeta(tx, m, ctx.TenantID, id)
+	obj, err := p.loadObject(tx, m, ctx.TenantID, id)
 	if err != nil {
+		if errors.Is(err, spi.ErrObjectNotFound) {
+			return nil
+		}
 		return err
 	}
-	if meta == nil {
-		return nil
-	}
 	if mode != "hard" {
-		if meta.DeletedAt.Valid {
+		if m.Omit.DeletedAt {
+			return spi.ErrUnsupportedCapability
+		}
+		if _, del := obj[spi.FieldDeletedAt]; del {
 			return nil
 		}
 		now := nowRFC3339()
-		if _, err := tx.Exec(
-			`UPDATE "of_object_meta" SET deleted_at = ?, updated_at = ?, version = version + 1 WHERE engine_id = ? AND tenant_id = ? AND deleted_at IS NULL`,
-			now, now, meta.EngineID, ctx.TenantID,
-		); err != nil {
-			return sqlitedialect.Classify(err)
+		cols := []string{"deleted_at"}
+		vals := []any{now}
+		if !m.Omit.UpdatedAt {
+			cols = append(cols, "updated_at")
+			vals = append(vals, now)
 		}
-		obj, err := p.loadObject(tx, m, ctx.TenantID, meta.EngineID)
+		if !m.Omit.Version {
+			cols = append(cols, "version")
+			vals = append(vals, asInt(obj[spi.FieldVersion])+1)
+		}
+		upd, args, err := obda.PlanUpdateObject(m.Binding(), ctx.TenantID, []any{id}, cols, vals)
 		if err != nil {
 			return err
 		}
-		ver, _ := obj[spi.FieldVersion].(int)
-		return writeObjectHistory(tx, meta.EngineID, ctx.TenantID, ver, obj, now)
-	}
-	keys, err := decodePhysicalKey(m, meta.Key)
-	if err != nil {
-		return spi.ErrObjectNotFound
-	}
-	if _, err := tx.Exec(
-		`DELETE FROM "of_link_meta" WHERE tenant_id = ? AND (from_id = ? OR to_id = ?)`,
-		ctx.TenantID, meta.EngineID, meta.EngineID,
-	); err != nil {
+		upd.Where = andPred(upd.Where, &sqlast.Predicate{
+			Op:    "is_null",
+			Field: &sqlast.Identifier{Name: "deleted_at"},
+		})
+		stmt, err := p.dialect.Render(upd)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(stmt.SQL, args...)
 		return sqlitedialect.Classify(err)
 	}
-	del, args, err := obda.PlanDeleteObject(m.Binding(), ctx.TenantID, keys)
+	del, args, err := obda.PlanDeleteObject(m.Binding(), ctx.TenantID, []any{id})
 	if err != nil {
 		return err
 	}
@@ -273,22 +282,17 @@ func (p *Provider) deleteObjectTx(tx DBTX, act *activation, ctx spi.RequestConte
 	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(stmt.SQL, args...); err != nil {
-		return sqlitedialect.Classify(err)
-	}
-	if _, err := tx.Exec(`DELETE FROM "of_object_meta" WHERE engine_id = ? AND tenant_id = ?`, meta.EngineID, ctx.TenantID); err != nil {
-		return sqlitedialect.Classify(err)
-	}
-	return nil
+	_, err = tx.Exec(stmt.SQL, args...)
+	return sqlitedialect.Classify(err)
 }
 
-func (p *Provider) insertBusiness(tx DBTX, m *obda.CompiledModel, tenant string, props map[string]any, keys []any) error {
-	cols := make([]string, 0, len(m.Fields)+2)
-	vals := make([]any, 0, len(m.Fields)+2)
+func (p *Provider) insertBusiness(tx DBTX, m *obda.CompiledModel, tenant string, props map[string]any, id, now string) error {
+	cols := make([]string, 0, len(m.Fields)+6)
+	vals := make([]any, 0, len(m.Fields)+6)
 	seen := map[string]struct{}{}
-	for i, col := range m.IdentityColumns {
+	for _, col := range m.IdentityColumns {
 		cols = append(cols, col)
-		vals = append(vals, keys[i])
+		vals = append(vals, id)
 		seen[col] = struct{}{}
 	}
 	if m.TenantColumn != "" {
@@ -308,6 +312,18 @@ func (p *Provider) insertBusiness(tx DBTX, m *obda.CompiledModel, tenant string,
 		vals = append(vals, writeValue(m.PropertyTypes[f.Logical], v))
 		seen[f.Column] = struct{}{}
 	}
+	if !m.Omit.Version {
+		cols = append(cols, "version")
+		vals = append(vals, 1)
+	}
+	if !m.Omit.CreatedAt {
+		cols = append(cols, "created_at")
+		vals = append(vals, now)
+	}
+	if !m.Omit.UpdatedAt {
+		cols = append(cols, "updated_at")
+		vals = append(vals, now)
+	}
 	ins, args, err := obda.PlanCreateObject(m.Binding(), cols, vals)
 	if err != nil {
 		return err
@@ -322,103 +338,18 @@ func (p *Provider) insertBusiness(tx DBTX, m *obda.CompiledModel, tenant string,
 	return nil
 }
 
-func (p *Provider) updateBusiness(tx DBTX, m *obda.CompiledModel, tenant string, keys []any, props map[string]any) error {
-	cols := make([]string, 0, len(props))
-	vals := make([]any, 0, len(props))
-	idCols := map[string]struct{}{}
-	for _, c := range m.IdentityColumns {
-		idCols[c] = struct{}{}
-	}
-	if m.TenantColumn != "" {
-		idCols[m.TenantColumn] = struct{}{}
-	}
-	for _, f := range m.Fields {
-		if _, skip := idCols[f.Column]; skip {
-			continue
-		}
-		v, ok := props[f.Logical]
-		if !ok {
-			continue
-		}
-		cols = append(cols, f.Column)
-		vals = append(vals, writeValue(m.PropertyTypes[f.Logical], v))
-	}
-	if len(cols) == 0 {
-		return nil
-	}
-	upd, args, err := obda.PlanUpdateObject(m.Binding(), tenant, keys, cols, vals)
-	if err != nil {
-		return err
-	}
-	stmt, err := p.dialect.Render(upd)
-	if err != nil {
-		return err
-	}
-	if _, err := tx.Exec(stmt.SQL, args...); err != nil {
-		return sqlitedialect.Classify(err)
-	}
-	return nil
-}
-
 func (p *Provider) loadObject(tx DBTX, m *obda.CompiledModel, tenant, id string) (spi.OntologyObject, error) {
-	meta, err := p.loadMeta(tx, m, tenant, id)
-	if err != nil {
+	if err := matchDirectID(m.Name, id); err != nil {
 		return nil, err
 	}
-	if meta == nil {
-		return nil, spi.ErrObjectNotFound
-	}
-	keys, err := decodePhysicalKey(m, meta.Key)
-	if err != nil {
-		return nil, spi.ErrObjectNotFound
-	}
-	biz, err := p.loadBusiness(tx, m, tenant, keys)
+	biz, err := p.loadBusiness(tx, m, tenant, []any{id})
 	if err != nil {
 		return nil, err
 	}
 	if biz == nil {
 		return nil, spi.ErrObjectNotFound
 	}
-	return p.assemble(m, meta, biz)
-}
-
-func (p *Provider) loadMeta(tx DBTX, m *obda.CompiledModel, tenant, id string) (*metaRow, error) {
-	row, err := scanMeta(tx,
-		`SELECT engine_id, tenant_id, object_type, physical_key, version, created_at, updated_at, deleted_at FROM "of_object_meta" WHERE engine_id = ? AND tenant_id = ? AND object_type = ?`,
-		id, tenant, m.Name,
-	)
-	if err != nil {
-		return nil, err
-	}
-	if row != nil {
-		return row, nil
-	}
-	if m.IdentityStrategy != "direct" {
-		return nil, nil
-	}
-	typ, keys, derr := obda.DecodeDirect(id)
-	if derr != nil || typ != m.Name {
-		return nil, nil
-	}
-	pk := obda.EncodePhysicalKey(stringsToAny(keys))
-	return scanMeta(tx,
-		`SELECT engine_id, tenant_id, object_type, physical_key, version, created_at, updated_at, deleted_at FROM "of_object_meta" WHERE tenant_id = ? AND object_type = ? AND physical_key = ?`,
-		tenant, m.Name, pk,
-	)
-}
-
-func scanMeta(tx DBTX, q string, args ...any) (*metaRow, error) {
-	row := &metaRow{}
-	var ver int64
-	err := tx.QueryRow(q, args...).Scan(&row.EngineID, &row.TenantID, &row.Type, &row.Key, &ver, &row.CreatedAt, &row.UpdatedAt, &row.DeletedAt)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	row.Version = int(ver)
-	return row, nil
+	return p.assemble(m, tenant, biz)
 }
 
 func (p *Provider) loadBusiness(tx DBTX, m *obda.CompiledModel, tenant string, keys []any) (map[string]any, error) {
@@ -452,17 +383,35 @@ func (p *Provider) loadBusiness(tx DBTX, m *obda.CompiledModel, tenant string, k
 	return out, nil
 }
 
-func (p *Provider) assemble(m *obda.CompiledModel, meta *metaRow, biz map[string]any) (spi.OntologyObject, error) {
-	obj := spi.OntologyObject{
-		spi.FieldID:        meta.EngineID,
-		spi.FieldType:      m.Name,
-		spi.FieldTenantID:  meta.TenantID,
-		spi.FieldVersion:   meta.Version,
-		spi.FieldCreatedAt: meta.CreatedAt,
-		spi.FieldUpdatedAt: meta.UpdatedAt,
+func (p *Provider) assemble(m *obda.CompiledModel, tenant string, biz map[string]any) (spi.OntologyObject, error) {
+	id := ""
+	if len(m.IdentityColumns) > 0 {
+		id = fmt.Sprint(biz[m.IdentityColumns[0]])
 	}
-	if meta.DeletedAt.Valid {
-		obj[spi.FieldDeletedAt] = meta.DeletedAt.String
+	obj := spi.OntologyObject{
+		spi.FieldID:       id,
+		spi.FieldType:     m.Name,
+		spi.FieldTenantID: tenant,
+	}
+	if m.Omit.Version {
+		obj[spi.FieldVersion] = 0
+	} else {
+		obj[spi.FieldVersion] = asInt(biz["version"])
+	}
+	if !m.Omit.CreatedAt {
+		if v := biz["created_at"]; v != nil {
+			obj[spi.FieldCreatedAt] = fmt.Sprint(v)
+		}
+	}
+	if !m.Omit.UpdatedAt {
+		if v := biz["updated_at"]; v != nil {
+			obj[spi.FieldUpdatedAt] = fmt.Sprint(v)
+		}
+	}
+	if !m.Omit.DeletedAt {
+		if v := biz["deleted_at"]; v != nil && fmt.Sprint(v) != "" {
+			obj[spi.FieldDeletedAt] = fmt.Sprint(v)
+		}
 	}
 	for _, f := range m.Fields {
 		raw := biz[f.Column]
@@ -475,43 +424,38 @@ func (p *Provider) assemble(m *obda.CompiledModel, meta *metaRow, biz map[string
 	return obj, nil
 }
 
-func writeObjectHistory(tx DBTX, engineID, tenant string, version int, obj spi.OntologyObject, at string) error {
-	snap, err := json.Marshal(obj)
-	if err != nil {
-		return err
+func objectIdentity(m *obda.CompiledModel, props map[string]any) (string, error) {
+	if m.IdentityInsert == "generated" {
+		for _, col := range m.IdentityColumns {
+			if f, ok := m.FieldByColumn[col]; ok {
+				if _, exists := props[f.Logical]; exists {
+					return "", fmt.Errorf("%w: generated identity cannot be supplied", spi.ErrInvalidMapping)
+				}
+			}
+		}
+		return obda.EncodeDirect(m.Name, []string{uuidv7.New()}), nil
 	}
-	_, err = tx.Exec(
-		`INSERT INTO "of_object_history" (engine_id, version, tenant_id, snapshot, updated_at) VALUES (?, ?, ?, ?, ?)`,
-		engineID, version, tenant, string(snap), at,
-	)
-	return err
-}
-
-func identityFromProps(m *obda.CompiledModel, props map[string]any) ([]any, error) {
-	out := make([]any, len(m.IdentityColumns))
+	keys := make([]string, len(m.IdentityColumns))
 	for i, col := range m.IdentityColumns {
 		f, ok := m.FieldByColumn[col]
 		if !ok {
-			return nil, spi.ErrInvalidMapping
+			return "", spi.ErrInvalidMapping
 		}
 		v, ok := props[f.Logical]
 		if !ok || v == nil {
-			return nil, fmt.Errorf("%w: missing identity field", spi.ErrInvalidMapping)
+			return "", fmt.Errorf("%w: missing identity field", spi.ErrInvalidMapping)
 		}
-		out[i] = v
+		keys[i] = fmt.Sprint(v)
 	}
-	return out, nil
+	return obda.EncodeDirect(m.Name, keys), nil
 }
 
-func decodePhysicalKey(m *obda.CompiledModel, pk string) ([]any, error) {
-	if len(m.IdentityColumns) == 1 {
-		return []any{pk}, nil
+func matchDirectID(typ, id string) error {
+	got, _, err := obda.DecodeDirect(id)
+	if err != nil || got != typ {
+		return spi.ErrObjectNotFound
 	}
-	var keys []string
-	if err := json.Unmarshal([]byte(pk), &keys); err != nil {
-		return nil, err
-	}
-	return stringsToAny(keys), nil
+	return nil
 }
 
 func copyUserProps(in map[string]any) map[string]any {
@@ -566,22 +510,6 @@ func unwrap(v any) any {
 	default:
 		return v
 	}
-}
-
-func stringify(vals []any) []string {
-	out := make([]string, len(vals))
-	for i, v := range vals {
-		out[i] = fmt.Sprint(v)
-	}
-	return out
-}
-
-func stringsToAny(keys []string) []any {
-	out := make([]any, len(keys))
-	for i, k := range keys {
-		out[i] = k
-	}
-	return out
 }
 
 func nowRFC3339() string {

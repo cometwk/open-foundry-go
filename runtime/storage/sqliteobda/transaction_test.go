@@ -41,7 +41,7 @@ func TestTransactionRollbackHidesWrites(t *testing.T) {
 	if len(page.Items) != 0 {
 		t.Fatalf("link leaked after rollback: %d", len(page.Items))
 	}
-	if _, err := tx.CreateObject("Patient", map[string]any{"patientId": "px", "name": "X"}); err == nil {
+	if _, err := tx.CreateObject("Patient", map[string]any{"name": "X"}); err == nil {
 		t.Fatal("expected closed tx to fail")
 	}
 }
@@ -78,7 +78,7 @@ func TestTransactionCommitVisible(t *testing.T) {
 func TestConcurrentGetDuringTx(t *testing.T) {
 	p, _ := activatePatient(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	created, err := p.CreateObject(ctx, "Patient", map[string]any{"patientId": "p1", "name": "Ada"})
+	created, err := p.CreateObject(ctx, "Patient", map[string]any{"name": "Ada"})
 	if err != nil {
 		t.Fatal(err)
 	}

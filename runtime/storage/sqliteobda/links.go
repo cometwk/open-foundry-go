@@ -78,7 +78,7 @@ func (p *Provider) createLinkTx(tx DBTX, act *activation, ctx spi.RequestContext
 		engineID = obda.EncodeDirect(l.Name, []string{admID})
 	}
 	now := nowRFC3339()
-	if err := p.insertLinkBusiness(tx, l, ctx.TenantID, admID, fromMeta.Key, toMeta.Key); err != nil {
+	if err := p.insertLinkBusiness(tx, l, ctx.TenantID, admID, fromMeta.EngineID, toMeta.EngineID); err != nil {
 		return nil, err
 	}
 	if _, err := tx.Exec(
@@ -371,22 +371,15 @@ func (p *Provider) requireLiveEndpoint(tx DBTX, act *activation, tenant, typ, id
 	if err != nil {
 		return nil, spi.ErrObjectNotFound
 	}
-	meta, err := p.loadMeta(tx, m, tenant, id)
-	if err != nil {
-		return nil, err
-	}
-	if meta == nil || meta.DeletedAt.Valid {
-		return nil, spi.ErrObjectNotFound
-	}
-	keys, err := decodePhysicalKey(m, meta.Key)
+	obj, err := p.loadObject(tx, m, tenant, id)
 	if err != nil {
 		return nil, spi.ErrObjectNotFound
 	}
-	biz, err := p.loadBusiness(tx, m, tenant, keys)
-	if err != nil || biz == nil {
+	if _, del := obj[spi.FieldDeletedAt]; del {
 		return nil, spi.ErrObjectNotFound
 	}
-	return meta, nil
+	idStr, _ := obj[spi.FieldID].(string)
+	return &metaRow{EngineID: idStr, TenantID: tenant, Type: typ}, nil
 }
 
 func (p *Provider) lookupAnyObject(tx DBTX, act *activation, tenant, id string) (spi.OntologyObject, error) {

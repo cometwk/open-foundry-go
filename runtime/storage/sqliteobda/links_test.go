@@ -52,7 +52,7 @@ func TestCardinalityManyToOne(t *testing.T) {
 func TestCardinalityOneToOne(t *testing.T) {
 	p, _, p1, w1 := activateHospital(t, spi.CardinalityOneToOne)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	p2obj, err := p.CreateObject(ctx, "Patient", map[string]any{"patientId": "p2", "name": "Bob"})
+	p2obj, err := p.CreateObject(ctx, "Patient", map[string]any{"name": "Bob"})
 	if err != nil {
 		t.Fatal(err)
 	}

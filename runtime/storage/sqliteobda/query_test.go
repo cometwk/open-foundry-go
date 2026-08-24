@@ -13,7 +13,7 @@ func TestQueryLimitZeroMeansHundred(t *testing.T) {
 	ctx := spi.RequestContext{TenantID: "t1"}
 	for i := 0; i < 3; i++ {
 		id := string(rune('a' + i))
-		if _, err := p.CreateObject(ctx, "Patient", map[string]any{"patientId": id, "name": id}); err != nil {
+		if _, err := p.CreateObject(ctx, "Patient", map[string]any{"name": id}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -46,7 +46,7 @@ func TestOrderByInvalidRejected(t *testing.T) {
 func TestAsOfTimeNotLiveRow(t *testing.T) {
 	p, _ := activatePatient(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	if _, err := p.CreateObject(ctx, "Patient", map[string]any{"patientId": "p1", "name": "Ada"}); err != nil {
+	if _, err := p.CreateObject(ctx, "Patient", map[string]any{"name": "Ada"}); err != nil {
 		t.Fatal(err)
 	}
 	asOf := time.Now().UTC()

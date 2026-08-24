@@ -93,6 +93,18 @@ func (m *CompiledModel) Binding() ObjectBinding {
 	for _, f := range m.Fields {
 		add(f.Column)
 	}
+	if !m.Omit.Version {
+		add("version")
+	}
+	if !m.Omit.CreatedAt {
+		add("created_at")
+	}
+	if !m.Omit.UpdatedAt {
+		add("updated_at")
+	}
+	if !m.Omit.DeletedAt {
+		add("deleted_at")
+	}
 	return ObjectBinding{
 		Table:            m.Table,
 		TenantColumn:     m.TenantColumn,
