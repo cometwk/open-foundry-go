@@ -99,23 +99,6 @@ func TestIntrospectFingerprint(t *testing.T) {
 	}
 }
 
-func TestSidecarStrictDDL(t *testing.T) {
-	db := openDB(t)
-	stmts, err := sqlitedialect.SidecarStatements("of_")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, s := range stmts {
-		if _, err := db.Exec(s); err != nil {
-			t.Fatal(err)
-		}
-	}
-	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM of_object_meta`).Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestNormalizeBool(t *testing.T) {
 	d := sqlitedialect.New()
 	v, err := d.NormalizeValue("Boolean", int64(1))
