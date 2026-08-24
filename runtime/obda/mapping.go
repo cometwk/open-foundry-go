@@ -95,10 +95,10 @@ type System struct {
 
 // OmitFlags records which native system columns the mapping skips.
 type OmitFlags struct {
-	Version    bool
-	CreatedAt  bool
-	UpdatedAt  bool
-	DeletedAt  bool
+	Version   bool
+	CreatedAt bool
+	UpdatedAt bool
+	DeletedAt bool
 }
 
 func parseOmit(omit []string) (OmitFlags, error) {
