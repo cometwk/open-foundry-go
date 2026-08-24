@@ -182,6 +182,18 @@ func TestGetLinksAndTraverse(t *testing.T) {
 	if tr.Nodes[0][spi.FieldID] != wardID {
 		t.Fatalf("node=%v", tr.Nodes[0][spi.FieldID])
 	}
+	_, err = p.Traverse(ctx, wardID, spi.TraversalPath{Steps: []spi.TraversalStep{{LinkType: "AdmittedTo", Direction: "outbound"}}}, nil)
+	if !errors.Is(err, spi.ErrObjectNotFound) {
+		t.Fatalf("wrong start type err=%v", err)
+	}
+	tooDeep := make([]spi.TraversalStep, 9)
+	for i := range tooDeep {
+		tooDeep[i] = spi.TraversalStep{LinkType: "AdmittedTo"}
+	}
+	_, err = p.Traverse(ctx, patientID, spi.TraversalPath{Steps: tooDeep}, nil)
+	if !errors.Is(err, spi.ErrUnsupportedCapability) {
+		t.Fatalf("depth err=%v", err)
+	}
 	_, err = p.Traverse(ctx, "missing", spi.TraversalPath{Steps: []spi.TraversalStep{{LinkType: "AdmittedTo"}}}, nil)
 	if !errors.Is(err, spi.ErrObjectNotFound) {
 		t.Fatalf("err=%v", err)
@@ -189,6 +201,31 @@ func TestGetLinksAndTraverse(t *testing.T) {
 	_, err = p.Traverse(spi.RequestContext{TenantID: "t2"}, patientID, spi.TraversalPath{Steps: []spi.TraversalStep{{LinkType: "AdmittedTo"}}}, nil)
 	if !errors.Is(err, spi.ErrObjectNotFound) {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestHardDeleteCascadesLinks(t *testing.T) {
+	p, db, patientID, wardID := activateHospital(t, spi.CardinalityManyToMany)
+	ctx := spi.RequestContext{TenantID: "t1"}
+	if _, err := p.CreateLink(ctx, "AdmittedTo", patientID, wardID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.DeleteObject(ctx, "Patient", patientID, "hard"); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM admission`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("admission leftover=%d", n)
+	}
+	out, err := p.GetLinks(ctx, wardID, "AdmittedTo", "inbound", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Items) != 0 {
+		t.Fatalf("inbound leftover=%d", len(out.Items))
 	}
 }
 

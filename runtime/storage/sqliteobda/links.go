@@ -355,10 +355,18 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 	if len(path.Steps) > 8 {
 		return spi.TraversalResult{}, spi.ErrUnsupportedCapability
 	}
-	if _, err := p.lookupAnyObject(p.db, act, ctx.TenantID, startID); err != nil {
+	startType, err := startTypeForPath(act, startID, path.Steps[0])
+	if err != nil {
+		return spi.TraversalResult{}, err
+	}
+	startModel, err := act.model(startType)
+	if err != nil {
 		return spi.TraversalResult{}, spi.ErrObjectNotFound
 	}
-	frontier := []string{startID}
+	if _, err := p.loadObject(p.db, startModel, ctx.TenantID, startID); err != nil {
+		return spi.TraversalResult{}, spi.ErrObjectNotFound
+	}
+	frontier := []typedID{{typ: startType, id: startID}}
 	seen := map[string]struct{}{startID: {}}
 	var edges []spi.OntologyLink
 	var visited []spi.OntologyObject
@@ -368,9 +376,21 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 		if dir == "" {
 			dir = "outbound"
 		}
-		var next []string
-		for _, id := range frontier {
-			page, err := p.GetLinks(ctx, id, step.LinkType, dir, &spi.QueryOptions{Limit: 1000})
+		l, err := act.link(step.LinkType)
+		if err != nil {
+			return spi.TraversalResult{}, err
+		}
+		peerType := l.ToObject
+		if dir == "inbound" {
+			peerType = l.FromObject
+		}
+		peerModel, err := act.model(peerType)
+		if err != nil {
+			return spi.TraversalResult{}, spi.ErrObjectNotFound
+		}
+		var next []typedID
+		for _, cur := range frontier {
+			page, err := p.GetLinks(ctx, cur.id, step.LinkType, dir, &spi.QueryOptions{Limit: 1000})
 			if err != nil {
 				return spi.TraversalResult{}, err
 			}
@@ -387,11 +407,11 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 					continue
 				}
 				seen[other] = struct{}{}
-				obj, err := p.lookupAnyObject(p.db, act, ctx.TenantID, other)
+				obj, err := p.loadObject(p.db, peerModel, ctx.TenantID, other)
 				if err != nil {
 					continue
 				}
-				next = append(next, other)
+				next = append(next, typedID{typ: peerType, id: other})
 				if i == len(path.Steps)-1 {
 					nodes = append(nodes, obj)
 				} else {
@@ -403,6 +423,34 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 	}
 	_ = options
 	return spi.TraversalResult{Nodes: nodes, Edges: edges, Visited: visited, TotalCount: len(nodes)}, nil
+}
+
+type typedID struct {
+	typ string
+	id  string
+}
+
+func startTypeForPath(act *activation, startID string, step spi.TraversalStep) (string, error) {
+	got, _, err := obda.DecodeDirect(startID)
+	if err != nil {
+		return "", spi.ErrObjectNotFound
+	}
+	l, err := act.link(step.LinkType)
+	if err != nil {
+		return "", err
+	}
+	dir := step.Direction
+	if dir == "" {
+		dir = "outbound"
+	}
+	want := l.FromObject
+	if dir == "inbound" {
+		want = l.ToObject
+	}
+	if got != want {
+		return "", spi.ErrObjectNotFound
+	}
+	return got, nil
 }
 
 func (p *Provider) requireLiveEndpoint(tx DBTX, act *activation, tenant, typ, id string) (*metaRow, error) {
@@ -419,19 +467,6 @@ func (p *Provider) requireLiveEndpoint(tx DBTX, act *activation, tenant, typ, id
 	}
 	idStr, _ := obj[spi.FieldID].(string)
 	return &metaRow{EngineID: idStr, TenantID: tenant, Type: typ}, nil
-}
-
-func (p *Provider) lookupAnyObject(tx DBTX, act *activation, tenant, id string) (spi.OntologyObject, error) {
-	for _, m := range act.compiled.Models {
-		obj, err := p.loadObject(tx, m, tenant, id)
-		if err == nil {
-			return obj, nil
-		}
-		if err != spi.ErrObjectNotFound {
-			return nil, err
-		}
-	}
-	return nil, spi.ErrObjectNotFound
 }
 
 func (p *Provider) insertLinkRow(tx DBTX, l *obda.CompiledLink, tenant, id, fromID, toID string, props map[string]any, now string) error {

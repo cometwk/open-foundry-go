@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -274,6 +275,9 @@ func (p *Provider) deleteObjectTx(tx DBTX, act *activation, ctx spi.RequestConte
 		_, err = tx.Exec(stmt.SQL, args...)
 		return sqlitedialect.Classify(err)
 	}
+	if err := p.deleteLinksForObject(tx, act, ctx.TenantID, id); err != nil {
+		return err
+	}
 	del, args, err := obda.PlanDeleteObject(m.Binding(), ctx.TenantID, []any{id})
 	if err != nil {
 		return err
@@ -284,6 +288,38 @@ func (p *Provider) deleteObjectTx(tx DBTX, act *activation, ctx spi.RequestConte
 	}
 	_, err = tx.Exec(stmt.SQL, args...)
 	return sqlitedialect.Classify(err)
+}
+
+func (p *Provider) deleteLinksForObject(tx DBTX, act *activation, tenant, objectID string) error {
+	names := make([]string, 0, len(act.compiled.Links))
+	for name := range act.compiled.Links {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		l := act.compiled.Links[name]
+		tbl, err := p.dialect.QuoteIdentifier(sqlast.Identifier{Name: l.Table})
+		if err != nil {
+			return err
+		}
+		tenantCol, err := p.dialect.QuoteIdentifier(sqlast.Identifier{Name: l.TenantColumn})
+		if err != nil {
+			return err
+		}
+		fromCol, err := p.dialect.QuoteIdentifier(sqlast.Identifier{Name: firstCol(l.FromColumns)})
+		if err != nil {
+			return err
+		}
+		toCol, err := p.dialect.QuoteIdentifier(sqlast.Identifier{Name: firstCol(l.ToColumns)})
+		if err != nil {
+			return err
+		}
+		q := "DELETE FROM " + tbl + " WHERE " + tenantCol + " = ? AND (" + fromCol + " = ? OR " + toCol + " = ?)"
+		if _, err := tx.Exec(q, tenant, objectID, objectID); err != nil {
+			return sqlitedialect.Classify(err)
+		}
+	}
+	return nil
 }
 
 func (p *Provider) insertBusiness(tx DBTX, m *obda.CompiledModel, tenant string, props map[string]any, id, now string) error {
