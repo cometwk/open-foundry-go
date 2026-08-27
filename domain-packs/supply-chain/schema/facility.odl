@@ -12,4 +12,5 @@ type Facility @objectType {
   country: String! @indexed
   capacity: Int! @constraint(expr: "value > 0")
   currentUtilization: Int @computed(fn: "countLinks", args: { type: "InventoryAt" }, cache: LAZY)
+  inventoryRecords: [InventoryRecord!]! @link(type: "InventoryAt", direction: INBOUND)
 }

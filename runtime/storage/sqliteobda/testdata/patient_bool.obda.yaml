@@ -1,0 +1,36 @@
+apiVersion: openfoundry.io/obda/v1
+kind: OBDAConfig
+metadata:
+  name: hospital
+  namespace: nhs.acute
+  version: 1
+schema:
+  namespace: nhs.acute
+  version: 1
+sources:
+  primary:
+    kind: sql
+    dialect: sqlite
+    connection:
+      dsnRef: secret://hospital/sqlite-dsn
+models:
+  Patient:
+    sourceRef: primary
+    relation:
+      kind: table
+      name: patient
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+    fields:
+      name:
+        column: patient_name
+      active:
+        column: is_active

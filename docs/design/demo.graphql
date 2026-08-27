@@ -1,0 +1,745 @@
+scalar Date
+scalar DateTime
+scalar JSON
+
+enum PatientStatus {
+  ACTIVE
+  DISCHARGED
+  DECEASED
+  TRANSFERRED
+}
+
+enum TriageCategory {
+  P1_IMMEDIATE
+  P2_URGENT
+  P3_DELAYED
+  P4_EXPECTANT
+}
+
+enum BedType {
+  STANDARD
+  ICU
+  HDU
+  ISOLATION
+  TROLLEY
+}
+
+enum BedStatus {
+  AVAILABLE
+  OCCUPIED
+  CLEANING
+  OUT_OF_SERVICE
+}
+
+enum DischargeDestination {
+  HOME
+  CARE_HOME
+  VIRTUAL_WARD
+  TRANSFER
+  DECEASED
+}
+
+enum CareRole {
+  PRIMARY
+  SECONDARY
+  ON_CALL
+}
+
+# ─── Shared types ───
+
+type PageInfo {
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+  endCursor: String
+}
+
+enum SortDirection {
+  ASC
+  DESC
+}
+
+enum ChangeType {
+  CREATED
+  UPDATED
+  DELETED
+}
+
+# Provenance of a change event: the action that caused it (null for
+# direct/non-action mutations). Mirrors the runtime ChangeEvent.causedBy
+# and spec Section 8.1 (causedBy: ActionReference).
+type ActionReference {
+  actionType: String
+  actionId: String
+}
+
+type ActionError {
+  code: String!
+  message: String!
+  field: String
+}
+
+type AffectedObject {
+  typeName: String!
+  id: ID!
+  changeType: ChangeType!
+}
+
+# ─── Tool Discovery (Section 5.7) ───
+
+enum ToolKind {
+  ACTION
+  FUNCTION
+}
+
+type ToolDescriptor {
+  name: String!
+  kind: ToolKind!
+  description: String!
+  parameters: JSON!
+  returnType: JSON!
+  requiredPermissions: [String!]!
+  dryRunSupported: Boolean!
+  reversible: Boolean!
+  tags: [String!]!
+}
+
+input ToolFilter {
+  kind: ToolKind
+  tags: [String!]
+}
+
+# ─── Object Sets (Section 8.3) ───
+
+type ObjectSet {
+  id: ID!
+  name: String!
+  description: String
+  objectType: String!
+  filter: JSON
+  orderBy: JSON
+  limit: Int
+  aggregation: JSON
+  isPublic: Boolean!
+  createdBy: String!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+input CreateObjectSetInput {
+  name: String!
+  description: String
+  objectType: String!
+  filter: JSON
+  orderBy: JSON
+  limit: Int
+  aggregation: JSON
+  isPublic: Boolean
+}
+
+input UpdateObjectSetInput {
+  name: String
+  description: String
+  filter: JSON
+  orderBy: JSON
+  limit: Int
+  aggregation: JSON
+  isPublic: Boolean
+}
+
+# ─── Relationship (care-team) grants (v0.2.0 A1) ───
+
+input RelationshipInput {
+  user: ID!
+  relation: String!
+  objectType: String!
+  objectId: ID!
+}
+
+type RelationshipResult {
+  subject: String!
+  relation: String!
+  object: String!
+  ok: Boolean!
+}
+
+# ─── Consent record (v0.2.0 A2) ───
+
+input ConsentInput {
+  subject: ID!
+  purpose: String
+  decision: String
+  evidence: String
+}
+
+type ConsentResult {
+  subject: String!
+  purpose: String!
+  decision: String!
+  recorded: Boolean!
+}
+
+# ─── Bulk Actions (Section 5.5) ───
+
+input BulkActionInput {
+  actionType: String!
+  items: [JSON!]!
+  idempotencyKey: String!
+  allOrNothing: Boolean
+  dryRun: Boolean
+}
+
+enum BulkJobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  PARTIAL
+}
+
+type BulkProgress {
+  total: Int!
+  succeeded: Int!
+  failed: Int!
+  pending: Int!
+}
+
+type BulkSummary {
+  totalItems: Int!
+  succeededCount: Int!
+  failedCount: Int!
+}
+
+type BulkItemError {
+  index: Int!
+  code: String!
+  message: String!
+}
+
+type BulkActionJob {
+  id: ID!
+  status: BulkJobStatus!
+  submittedAt: DateTime!
+  completedAt: DateTime
+  progress: BulkProgress!
+  summary: BulkSummary
+  errors: [BulkItemError!]
+}
+
+input IDFilter {
+  eq: ID
+  ne: ID
+  in: [ID!]
+}
+
+input StringFilter {
+  eq: String
+  ne: String
+  in: [String!]
+  contains: String
+  startsWith: String
+}
+
+input DateFilter {
+  eq: Date
+  ne: Date
+  in: [Date!]
+  gt: Date
+  gte: Date
+  lt: Date
+  lte: Date
+}
+
+input IntFilter {
+  eq: Int
+  ne: Int
+  in: [Int!]
+  gt: Int
+  gte: Int
+  lt: Int
+  lte: Int
+}
+
+input DateTimeFilter {
+  eq: DateTime
+  ne: DateTime
+  in: [DateTime!]
+  gt: DateTime
+  gte: DateTime
+  lt: DateTime
+  lte: DateTime
+}
+
+input PatientStatusFilter {
+  eq: PatientStatus
+  ne: PatientStatus
+  in: [PatientStatus!]
+}
+
+input TriageCategoryFilter {
+  eq: TriageCategory
+  ne: TriageCategory
+  in: [TriageCategory!]
+}
+
+input BedTypeFilter {
+  eq: BedType
+  ne: BedType
+  in: [BedType!]
+}
+
+input BedStatusFilter {
+  eq: BedStatus
+  ne: BedStatus
+  in: [BedStatus!]
+}
+
+input DischargeDestinationFilter {
+  eq: DischargeDestination
+  ne: DischargeDestination
+  in: [DischargeDestination!]
+}
+
+type Patient {
+  id: ID!
+  nhsNumber: String
+  name: String
+  dateOfBirth: Date
+  status: PatientStatus
+  triageCategory: TriageCategory
+  currentWard: Ward
+  currentBed: Bed
+  admissions: [AdmittedTo!]
+  consultant: Consultant
+  _redactedFields: [String!]
+  _consentRestricted: Boolean
+}
+
+type PatientConnection {
+  edges: [PatientEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type PatientEdge {
+  node: Patient!
+  cursor: String!
+}
+
+input PatientFilter {
+  id: IDFilter
+  nhsNumber: StringFilter
+  name: StringFilter
+  dateOfBirth: DateFilter
+  status: PatientStatusFilter
+  triageCategory: TriageCategoryFilter
+  AND: [PatientFilter!]
+  OR: [PatientFilter!]
+  NOT: PatientFilter
+}
+
+input PatientOrderBy {
+  id: SortDirection
+  nhsNumber: SortDirection
+  name: SortDirection
+  dateOfBirth: SortDirection
+  status: SortDirection
+  triageCategory: SortDirection
+}
+
+type PatientChangeEvent {
+  changeType: ChangeType!
+  object: Patient!
+  previousValues: JSON
+  causedBy: ActionReference
+  timestamp: DateTime!
+}
+
+type Ward {
+  id: ID!
+  name: String
+  specialty: String
+  capacity: Int
+  currentOccupancy: Int
+  patients: [Patient!]
+  beds: [Bed!]
+  _redactedFields: [String!]
+  _consentRestricted: Boolean
+}
+
+type WardConnection {
+  edges: [WardEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type WardEdge {
+  node: Ward!
+  cursor: String!
+}
+
+input WardFilter {
+  id: IDFilter
+  name: StringFilter
+  specialty: StringFilter
+  capacity: IntFilter
+  AND: [WardFilter!]
+  OR: [WardFilter!]
+  NOT: WardFilter
+}
+
+input WardOrderBy {
+  id: SortDirection
+  name: SortDirection
+  specialty: SortDirection
+  capacity: SortDirection
+}
+
+type WardChangeEvent {
+  changeType: ChangeType!
+  object: Ward!
+  previousValues: JSON
+  causedBy: ActionReference
+  timestamp: DateTime!
+}
+
+type Bed {
+  id: ID!
+  number: String
+  type: BedType
+  status: BedStatus
+  ward: Ward
+  patient: Patient
+  _redactedFields: [String!]
+  _consentRestricted: Boolean
+}
+
+type BedConnection {
+  edges: [BedEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type BedEdge {
+  node: Bed!
+  cursor: String!
+}
+
+input BedFilter {
+  id: IDFilter
+  number: StringFilter
+  type: BedTypeFilter
+  status: BedStatusFilter
+  AND: [BedFilter!]
+  OR: [BedFilter!]
+  NOT: BedFilter
+}
+
+input BedOrderBy {
+  id: SortDirection
+  number: SortDirection
+  type: SortDirection
+  status: SortDirection
+}
+
+type BedChangeEvent {
+  changeType: ChangeType!
+  object: Bed!
+  previousValues: JSON
+  causedBy: ActionReference
+  timestamp: DateTime!
+}
+
+type Consultant {
+  id: ID!
+  gmcNumber: String
+  name: String
+  specialty: String
+  patients: [Patient!]
+  _redactedFields: [String!]
+  _consentRestricted: Boolean
+}
+
+type ConsultantConnection {
+  edges: [ConsultantEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type ConsultantEdge {
+  node: Consultant!
+  cursor: String!
+}
+
+input ConsultantFilter {
+  id: IDFilter
+  gmcNumber: StringFilter
+  name: StringFilter
+  specialty: StringFilter
+  AND: [ConsultantFilter!]
+  OR: [ConsultantFilter!]
+  NOT: ConsultantFilter
+}
+
+input ConsultantOrderBy {
+  id: SortDirection
+  gmcNumber: SortDirection
+  name: SortDirection
+  specialty: SortDirection
+}
+
+type ConsultantChangeEvent {
+  changeType: ChangeType!
+  object: Consultant!
+  previousValues: JSON
+  causedBy: ActionReference
+  timestamp: DateTime!
+}
+
+type DischargeRecord {
+  id: ID!
+  patient: Patient
+  ward: Ward
+  destination: DischargeDestination
+  dischargeDate: DateTime
+  notes: String
+  _redactedFields: [String!]
+  _consentRestricted: Boolean
+}
+
+type DischargeRecordConnection {
+  edges: [DischargeRecordEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type DischargeRecordEdge {
+  node: DischargeRecord!
+  cursor: String!
+}
+
+input DischargeRecordFilter {
+  id: IDFilter
+  destination: DischargeDestinationFilter
+  dischargeDate: DateTimeFilter
+  notes: StringFilter
+  AND: [DischargeRecordFilter!]
+  OR: [DischargeRecordFilter!]
+  NOT: DischargeRecordFilter
+}
+
+input DischargeRecordOrderBy {
+  id: SortDirection
+  destination: SortDirection
+  dischargeDate: SortDirection
+  notes: SortDirection
+}
+
+type DischargeRecordChangeEvent {
+  changeType: ChangeType!
+  object: DischargeRecord!
+  previousValues: JSON
+  causedBy: ActionReference
+  timestamp: DateTime!
+}
+
+type AdmittedTo {
+  id: ID!
+  admissionDate: DateTime
+  expectedDischarge: DateTime
+  reason: String
+}
+
+type OccupiesBed {
+  id: ID!
+  assignedAt: DateTime
+}
+
+type UnderCareOf {
+  id: ID!
+  assignedDate: DateTime
+  role: CareRole
+}
+
+type BedInWard {
+  id: ID!
+}
+
+input AdmitPatientInput {
+  patient: ID!
+  ward: ID!
+  bed: ID
+  consultant: ID!
+  reason: String
+}
+
+type AdmitPatientResult {
+  success: Boolean!
+  actionId: ID!
+  errors: [ActionError!]
+  affectedObjects: [AffectedObject!]
+}
+
+input DischargePatientInput {
+  patient: ID!
+  destination: DischargeDestination!
+  notes: String
+}
+
+type DischargePatientResult {
+  success: Boolean!
+  actionId: ID!
+  errors: [ActionError!]
+  affectedObjects: [AffectedObject!]
+}
+
+input TransferWardInput {
+  patient: ID!
+  toWard: ID!
+  toBed: ID
+  reason: String
+}
+
+type TransferWardResult {
+  success: Boolean!
+  actionId: ID!
+  errors: [ActionError!]
+  affectedObjects: [AffectedObject!]
+}
+
+type SearchHit_Patient {
+  node: Patient!
+  score: Float!
+}
+
+type SearchResult_Patient {
+  hits: [SearchHit_Patient!]!
+  totalCount: Int!
+  hasNextPage: Boolean!
+}
+
+type SearchHit_Ward {
+  node: Ward!
+  score: Float!
+}
+
+type SearchResult_Ward {
+  hits: [SearchHit_Ward!]!
+  totalCount: Int!
+  hasNextPage: Boolean!
+}
+
+type SearchHit_Bed {
+  node: Bed!
+  score: Float!
+}
+
+type SearchResult_Bed {
+  hits: [SearchHit_Bed!]!
+  totalCount: Int!
+  hasNextPage: Boolean!
+}
+
+type SearchHit_Consultant {
+  node: Consultant!
+  score: Float!
+}
+
+type SearchResult_Consultant {
+  hits: [SearchHit_Consultant!]!
+  totalCount: Int!
+  hasNextPage: Boolean!
+}
+
+type SearchHit_DischargeRecord {
+  node: DischargeRecord!
+  score: Float!
+}
+
+type SearchResult_DischargeRecord {
+  hits: [SearchHit_DischargeRecord!]!
+  totalCount: Int!
+  hasNextPage: Boolean!
+}
+
+enum AggregateFunction {
+  COUNT
+  SUM
+  AVG
+  MIN
+  MAX
+}
+
+input AggregateFieldInput {
+  field: String!
+  fn: AggregateFunction!
+  alias: String
+}
+
+type AggregateGroup {
+  keys: JSON!
+  values: JSON!
+}
+
+type AggregateResult {
+  groups: [AggregateGroup!]!
+  totalGroups: Int!
+}
+
+type Query {
+  patient(id: ID!): Patient
+  patients(filter: PatientFilter, orderBy: PatientOrderBy, first: Int, after: String, last: Int, before: String): PatientConnection!
+  patientAggregate(filter: PatientFilter, groupBy: [String!], fields: [AggregateFieldInput!]!): AggregateResult!
+  searchPatients(query: String!, fields: [String!], filter: PatientFilter, first: Int, after: String): SearchResult_Patient!
+
+  ward(id: ID!): Ward
+  wards(filter: WardFilter, orderBy: WardOrderBy, first: Int, after: String, last: Int, before: String): WardConnection!
+  wardAggregate(filter: WardFilter, groupBy: [String!], fields: [AggregateFieldInput!]!): AggregateResult!
+  searchWards(query: String!, fields: [String!], filter: WardFilter, first: Int, after: String): SearchResult_Ward!
+  bed(id: ID!): Bed
+  beds(filter: BedFilter, orderBy: BedOrderBy, first: Int, after: String, last: Int, before: String): BedConnection!
+  bedAggregate(filter: BedFilter, groupBy: [String!], fields: [AggregateFieldInput!]!): AggregateResult!
+  searchBeds(query: String!, fields: [String!], filter: BedFilter, first: Int, after: String): SearchResult_Bed!
+  consultant(id: ID!): Consultant
+  consultants(filter: ConsultantFilter, orderBy: ConsultantOrderBy, first: Int, after: String, last: Int, before: String): ConsultantConnection!
+  consultantAggregate(filter: ConsultantFilter, groupBy: [String!], fields: [AggregateFieldInput!]!): AggregateResult!
+  searchConsultants(query: String!, fields: [String!], filter: ConsultantFilter, first: Int, after: String): SearchResult_Consultant!
+  dischargeRecord(id: ID!): DischargeRecord
+  dischargeRecords(filter: DischargeRecordFilter, orderBy: DischargeRecordOrderBy, first: Int, after: String, last: Int, before: String): DischargeRecordConnection!
+  dischargeRecordAggregate(filter: DischargeRecordFilter, groupBy: [String!], fields: [AggregateFieldInput!]!): AggregateResult!
+  searchDischargeRecords(query: String!, fields: [String!], filter: DischargeRecordFilter, first: Int, after: String): SearchResult_DischargeRecord!
+
+  availableTools(filter: ToolFilter): [ToolDescriptor!]!
+  objectSet(id: ID!): ObjectSet
+  objectSets(objectType: String): [ObjectSet!]!
+
+  cdmMetadata: JSON!
+  cdmRecord(sourceType: String!, id: ID!): JSON
+  cdmRecords(sourceType: String!): JSON!
+  cdmEncounters(patient: ID!): JSON!
+}
+
+type Mutation {
+  admitPatient(input: AdmitPatientInput!): AdmitPatientResult!
+  dischargePatient(input: DischargePatientInput!): DischargePatientResult!
+  transferWard(input: TransferWardInput!): TransferWardResult!
+  createObjectSet(input: CreateObjectSetInput!): ObjectSet!
+  updateObjectSet(id: ID!, input: UpdateObjectSetInput!): ObjectSet!
+  deleteObjectSet(id: ID!): Boolean!
+  grantRelationship(input: RelationshipInput!): RelationshipResult!
+  revokeRelationship(input: RelationshipInput!): RelationshipResult!
+  recordConsent(input: ConsentInput!): ConsentResult!
+}
+
+type Subscription {
+  patientChanged(id: ID!): PatientChangeEvent!
+  patientsChanged(filter: JSON): PatientChangeEvent!
+  wardChanged(id: ID!): WardChangeEvent!
+  wardsChanged(filter: JSON): WardChangeEvent!
+  bedChanged(id: ID!): BedChangeEvent!
+  bedsChanged(filter: JSON): BedChangeEvent!
+  consultantChanged(id: ID!): ConsultantChangeEvent!
+  consultantsChanged(filter: JSON): ConsultantChangeEvent!
+  dischargeRecordChanged(id: ID!): DischargeRecordChangeEvent!
+  dischargeRecordsChanged(filter: JSON): DischargeRecordChangeEvent!
+}
