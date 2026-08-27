@@ -350,7 +350,7 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 		return spi.TraversalResult{}, err
 	}
 	if len(path.Steps) == 0 {
-		return spi.TraversalResult{}, nil
+		return emptyTraversal(), nil
 	}
 	if len(path.Steps) > 8 {
 		return spi.TraversalResult{}, spi.ErrUnsupportedCapability
@@ -366,12 +366,12 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 	if _, err := p.loadObject(p.db, startModel, ctx.TenantID, startID); err != nil {
 		return spi.TraversalResult{}, spi.ErrObjectNotFound
 	}
-	frontier := []typedID{{typ: startType, id: startID}}
-	seen := map[string]struct{}{startID: {}}
-	var edges []spi.OntologyLink
-	var visited []spi.OntologyObject
-	var nodes []spi.OntologyObject
-	for i, step := range path.Steps {
+	includeDeleted := options != nil && options.IncludeDeleted
+	hops := make([]obda.TraverseHop, 0, len(path.Steps))
+	prevType := startType
+	prevModel := startModel
+	var terminal *obda.CompiledModel
+	for _, step := range path.Steps {
 		dir := step.Direction
 		if dir == "" {
 			dir = "outbound"
@@ -380,54 +380,113 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 		if err != nil {
 			return spi.TraversalResult{}, err
 		}
-		peerType := l.ToObject
+		want := l.FromObject
+		peerName := l.ToObject
 		if dir == "inbound" {
-			peerType = l.FromObject
+			want = l.ToObject
+			peerName = l.FromObject
 		}
-		peerModel, err := act.model(peerType)
+		if want != prevType {
+			return emptyTraversal(), nil
+		}
+		peer, err := act.model(peerName)
 		if err != nil {
-			return spi.TraversalResult{}, spi.ErrObjectNotFound
+			return emptyTraversal(), nil
 		}
-		var next []typedID
-		for _, cur := range frontier {
-			page, err := p.GetLinks(ctx, cur.id, step.LinkType, dir, &spi.QueryOptions{Limit: 1000})
-			if err != nil {
-				return spi.TraversalResult{}, err
-			}
-			for _, e := range page.Items {
-				edges = append(edges, e)
-				other, _ := e[spi.LinkFieldToID].(string)
-				if dir == "inbound" {
-					other, _ = e[spi.LinkFieldFromID].(string)
-				}
-				if other == "" {
-					continue
-				}
-				if _, ok := seen[other]; ok {
-					continue
-				}
-				seen[other] = struct{}{}
-				obj, err := p.loadObject(p.db, peerModel, ctx.TenantID, other)
-				if err != nil {
-					continue
-				}
-				next = append(next, typedID{typ: peerType, id: other})
-				if i == len(path.Steps)-1 {
-					nodes = append(nodes, obj)
-				} else {
-					visited = append(visited, obj)
-				}
-			}
-		}
-		frontier = next
+		hops = append(hops, obda.TraverseHop{
+			Direction:         dir,
+			LinkTable:         l.Table,
+			LinkTenant:        l.TenantColumn,
+			LinkIdentityCol:   firstCol(l.IdentityColumns),
+			FromCol:           firstCol(l.FromColumns),
+			ToCol:             firstCol(l.ToColumns),
+			PrevIDCol:         firstCol(prevModel.IdentityColumns),
+			PrevTenantCol:     prevModel.TenantColumn,
+			TargetTable:       peer.Table,
+			TargetIDCol:       firstCol(peer.IdentityColumns),
+			TargetTenantCol:   peer.TenantColumn,
+			TargetSelect:      peer.Binding().SelectColumns,
+			OmitLinkDeleted:   l.Omit.DeletedAt || includeDeleted,
+			OmitTargetDeleted: peer.Omit.DeletedAt || includeDeleted,
+		})
+		prevType = peerName
+		prevModel = peer
+		terminal = peer
 	}
-	_ = options
-	return spi.TraversalResult{Nodes: nodes, Edges: edges, Visited: visited, TotalCount: len(nodes)}, nil
+	sel, args, err := obda.PlanTraverse(startModel.Binding(), hops, ctx.TenantID, startID)
+	if err != nil {
+		return spi.TraversalResult{}, err
+	}
+	limit, offset := 100, 0
+	if options != nil {
+		if options.Limit > 0 {
+			limit = options.Limit
+		}
+		if limit > 1000 {
+			limit = 1000
+		}
+		if options.Offset > 0 {
+			offset = options.Offset
+		}
+	}
+	countSel := *sel
+	countSel.Limit = nil
+	countStmt, err := p.dialect.Render(&countSel)
+	if err != nil {
+		return spi.TraversalResult{}, err
+	}
+	var total int
+	if err := p.db.QueryRow("SELECT COUNT(*) FROM ("+countStmt.SQL+") AS q", args...).Scan(&total); err != nil {
+		return spi.TraversalResult{}, sqlitedialect.Classify(err)
+	}
+	sel.Limit = &sqlast.LimitOffset{Limit: sqlast.Param{}, Offset: sqlast.Param{}}
+	stmt, err := p.dialect.Render(sel)
+	if err != nil {
+		return spi.TraversalResult{}, err
+	}
+	rows, err := p.db.Query(stmt.SQL, append(append([]any{}, args...), limit, offset)...)
+	if err != nil {
+		return spi.TraversalResult{}, sqlitedialect.Classify(err)
+	}
+	defer rows.Close()
+	bizCols := terminal.Binding().SelectColumns
+	nodes := make([]spi.OntologyObject, 0)
+	for rows.Next() {
+		dest := make([]any, len(bizCols))
+		ptrs := make([]any, len(dest))
+		for i := range dest {
+			ptrs[i] = &dest[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			return spi.TraversalResult{}, err
+		}
+		biz := map[string]any{}
+		for i, col := range bizCols {
+			biz[col] = unwrap(dest[i])
+		}
+		obj, err := p.assemble(terminal, ctx.TenantID, biz)
+		if err != nil {
+			return spi.TraversalResult{}, err
+		}
+		nodes = append(nodes, obj)
+	}
+	if err := rows.Err(); err != nil {
+		return spi.TraversalResult{}, err
+	}
+	return spi.TraversalResult{
+		Nodes:      nodes,
+		Edges:      []spi.OntologyLink{},
+		Visited:    []spi.OntologyObject{},
+		TotalCount: total,
+	}, nil
 }
 
-type typedID struct {
-	typ string
-	id  string
+func emptyTraversal() spi.TraversalResult {
+	return spi.TraversalResult{
+		Nodes:   []spi.OntologyObject{},
+		Edges:   []spi.OntologyLink{},
+		Visited: []spi.OntologyObject{},
+	}
 }
 
 func startTypeForPath(act *activation, startID string, step spi.TraversalStep) (string, error) {

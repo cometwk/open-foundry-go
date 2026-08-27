@@ -168,3 +168,169 @@ func TestPlanCreateReadOnly(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+func admittedHop(omitLink, omitTarget bool) obda.TraverseHop {
+	return obda.TraverseHop{
+		Direction:         "outbound",
+		LinkTable:         "admission",
+		LinkTenant:        "tenant_id",
+		LinkIdentityCol:   "id",
+		FromCol:           "from_id",
+		ToCol:             "to_id",
+		PrevIDCol:         "id",
+		PrevTenantCol:     "tenant_id",
+		TargetTable:       "ward",
+		TargetIDCol:       "id",
+		TargetTenantCol:   "tenant_id",
+		TargetSelect:      []string{"id", "ward_name", "tenant_id"},
+		OmitLinkDeleted:   omitLink,
+		OmitTargetDeleted: omitTarget,
+	}
+}
+
+func startPatient() obda.ObjectBinding {
+	return obda.ObjectBinding{
+		Table:           "patient",
+		TenantColumn:    "tenant_id",
+		IdentityColumns: []string{"id"},
+		SelectColumns:   []string{"id", "patient_name", "tenant_id"},
+	}
+}
+
+func TestPlanTraverseOneHopOutbound(t *testing.T) {
+	sel, args, err := obda.PlanTraverse(startPatient(), []obda.TraverseHop{admittedHop(false, false)}, "t1", "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(args) != 2 || args[0] != "t1" || args[1] != "p1" {
+		t.Fatalf("args=%v", args)
+	}
+	if sel.From.Name != "patient" || sel.As != "s0" {
+		t.Fatalf("from=%+v as=%s", sel.From, sel.As)
+	}
+	if len(sel.Joins) != 2 {
+		t.Fatalf("joins=%d", len(sel.Joins))
+	}
+	if sel.Joins[0].Table.Name != "admission" || sel.Joins[1].Table.Name != "ward" {
+		t.Fatalf("joins=%+v", sel.Joins)
+	}
+	for _, c := range sel.Columns {
+		id, ok := c.(sqlast.Identifier)
+		if !ok || id.Qualifier != "s1" {
+			t.Fatalf("column=%+v", c)
+		}
+	}
+	if !hasNull(sel.Where, "l0", "deleted_at") || !hasNull(sel.Where, "s1", "deleted_at") {
+		t.Fatalf("missing deleted_at: %+v", sel.Where)
+	}
+	if hasNull(sel.Where, "s0", "deleted_at") {
+		t.Fatal("start table must not filter deleted_at")
+	}
+	if len(sel.Order) < 2 {
+		t.Fatalf("order=%+v", sel.Order)
+	}
+	if sel.Order[0].Field.Qualifier != "s1" || sel.Order[0].Field.Name != "id" {
+		t.Fatalf("terminal order=%+v", sel.Order[0])
+	}
+	if sel.Order[1].Field.Qualifier != "l0" || sel.Order[1].Field.Name != "id" {
+		t.Fatalf("link order=%+v", sel.Order[1])
+	}
+}
+
+func TestPlanTraverseTwoHops(t *testing.T) {
+	hops := []obda.TraverseHop{
+		admittedHop(false, false),
+		{
+			Direction:         "outbound",
+			LinkTable:         "ward_trust",
+			LinkTenant:        "tenant_id",
+			LinkIdentityCol:   "id",
+			FromCol:           "from_id",
+			ToCol:             "to_id",
+			PrevIDCol:         "id",
+			PrevTenantCol:     "tenant_id",
+			TargetTable:       "trust",
+			TargetIDCol:       "id",
+			TargetTenantCol:   "tenant_id",
+			TargetSelect:      []string{"id", "trust_name"},
+			OmitLinkDeleted:   false,
+			OmitTargetDeleted: false,
+		},
+	}
+	sel, _, err := obda.PlanTraverse(startPatient(), hops, "t1", "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sel.Joins) != 4 {
+		t.Fatalf("joins=%d", len(sel.Joins))
+	}
+	if sel.Joins[2].Table.Name != "ward_trust" || sel.Joins[3].Table.Name != "trust" {
+		t.Fatalf("joins=%+v", sel.Joins)
+	}
+	for _, c := range sel.Columns {
+		id, ok := c.(sqlast.Identifier)
+		if !ok || id.Qualifier != "s2" {
+			t.Fatalf("column=%+v", c)
+		}
+	}
+}
+
+func TestPlanTraverseIncludeDeletedOmitsNulls(t *testing.T) {
+	sel, _, err := obda.PlanTraverse(startPatient(), []obda.TraverseHop{admittedHop(true, true)}, "t1", "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasNull(sel.Where, "l0", "deleted_at") || hasNull(sel.Where, "s1", "deleted_at") {
+		t.Fatalf("includeDeleted still has deleted_at: %+v", sel.Where)
+	}
+}
+
+func TestPlanTraverseInboundSwapsEndpoint(t *testing.T) {
+	h := admittedHop(true, true)
+	h.Direction = "inbound"
+	h.TargetTable = "patient"
+	h.TargetSelect = []string{"id"}
+	h.PrevIDCol = "id"
+	sel, _, err := obda.PlanTraverse(obda.ObjectBinding{
+		Table: "ward", TenantColumn: "tenant_id", IdentityColumns: []string{"id"},
+	}, []obda.TraverseHop{h}, "t1", "w1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	on := sel.Joins[0].On
+	if !hasColEq(on, "l0", "to_id", "s0", "id") {
+		t.Fatalf("inbound endpoint not to_id: %+v", on)
+	}
+}
+
+func hasNull(p *sqlast.Predicate, qual, name string) bool {
+	if p == nil {
+		return false
+	}
+	if p.Op == "is_null" && p.Field != nil && p.Field.Qualifier == qual && p.Field.Name == name {
+		return true
+	}
+	for _, c := range p.Children {
+		if hasNull(c, qual, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasColEq(p *sqlast.Predicate, aq, an, bq, bn string) bool {
+	if p == nil {
+		return false
+	}
+	if p.Op == "col_eq" && p.Field != nil && p.Other != nil &&
+		p.Field.Qualifier == aq && p.Field.Name == an &&
+		p.Other.Qualifier == bq && p.Other.Name == bn {
+		return true
+	}
+	for _, c := range p.Children {
+		if hasColEq(c, aq, an, bq, bn) {
+			return true
+		}
+	}
+	return false
+}

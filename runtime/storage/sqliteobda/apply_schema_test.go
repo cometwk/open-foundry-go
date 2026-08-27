@@ -71,6 +71,8 @@ func TestApplySchemaMissingUniqueFails(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE patient (id TEXT PRIMARY KEY, tenant_id TEXT, patient_name TEXT, version INTEGER, created_at TEXT, updated_at TEXT, deleted_at TEXT)`)
 	mustExec(t, db, `CREATE TABLE ward (id TEXT PRIMARY KEY, tenant_id TEXT, ward_name TEXT, version INTEGER, created_at TEXT, updated_at TEXT, deleted_at TEXT)`)
 	mustExec(t, db, `CREATE TABLE admission (id TEXT PRIMARY KEY, tenant_id TEXT, from_id TEXT, to_id TEXT, version INTEGER, created_at TEXT, updated_at TEXT, deleted_at TEXT)`)
+	mustExec(t, db, `CREATE TABLE trust (id TEXT PRIMARY KEY, tenant_id TEXT, trust_name TEXT, version INTEGER, created_at TEXT, updated_at TEXT, deleted_at TEXT)`)
+	mustExec(t, db, `CREATE TABLE ward_trust (id TEXT PRIMARY KEY, tenant_id TEXT, from_id TEXT, to_id TEXT, version INTEGER, created_at TEXT, updated_at TEXT, deleted_at TEXT)`)
 	_, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, hospitalSchema(spi.CardinalityManyToOne))
 	if !errors.Is(err, spi.ErrSourceSchemaDrift) {
 		t.Fatalf("err=%v want ErrSourceSchemaDrift", err)
@@ -172,10 +174,12 @@ func hospitalSchema(card spi.Cardinality) spi.OntologySchema {
 		ObjectTypes: []spi.ObjectTypeDefinition{
 			{Name: "Patient", Properties: []spi.PropertyDefinition{{Name: "name", Type: "String"}}},
 			{Name: "Ward", Properties: []spi.PropertyDefinition{{Name: "name", Type: "String"}}},
+			{Name: "Trust", Properties: []spi.PropertyDefinition{{Name: "name", Type: "String"}}},
 		},
-		LinkTypes: []spi.LinkTypeDefinition{{
-			Name: "AdmittedTo", FromType: "Patient", ToType: "Ward", Cardinality: card,
-		}},
+		LinkTypes: []spi.LinkTypeDefinition{
+			{Name: "AdmittedTo", FromType: "Patient", ToType: "Ward", Cardinality: card},
+			{Name: "BelongsTo", FromType: "Ward", ToType: "Trust", Cardinality: spi.CardinalityManyToMany},
+		},
 	}
 }
 

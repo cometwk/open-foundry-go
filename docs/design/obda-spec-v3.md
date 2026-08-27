@@ -707,14 +707,7 @@ GetLinks：先解全局对象 id（`DecodeDirect`）。默认排除软删 link�
 
 ### 8.4 Traverse
 
-Traverse（当前实现）：
-
-- planner 产出 `sqlast.Join`。每跳 `tenant_id`（及未 omit 的 `deleted_at IS NULL`）在同一 SQL
-- 深度 > 8 → `ErrUnsupportedCapability`
-- 未知/跨租户 start → `ErrObjectNotFound`
-- 固定 `path.Steps` 的链式 JOIN 即可。禁止再对影子表 BFS
-- **不是** recursive CTE（计划曾写 CTE；实现取链式 JOIN）
-- 多态「一列指向多种 ObjectType」不支持：from/to 在 mapping 里 typed
+Traverse：planner 产出固定 `path.Steps` 的链式 `sqlast.Join`（FROM 起点对象表，每跳 JOIN link 表再 JOIN 目标对象表）。同一条 SQL 带每跳 `tenant_id` 及未 omit 的 `deleted_at IS NULL`。结果只交终点 `Nodes`；sqliteobda 本轮 `Edges` / `Visited` 为空。深度 > 8 → `ErrUnsupportedCapability`。未知/跨租户/错类型 start → `ErrObjectNotFound`。禁止再对影子表 BFS。**不是** recursive CTE。多态「一列指向多种 ObjectType」不支持：from/to 在 mapping 里 typed。
 
 ### 8.5 Traversal 示例
 
@@ -757,18 +750,19 @@ ward.id
 最终：
 
 ```sql
-SELECT w.*
+SELECT w.id, w.ward_name, w.tenant_id, w.version, w.created_at, w.updated_at, w.deleted_at
 FROM patient p
 JOIN admission a
-  ON a.from_id = p.id
+  ON a.from_id = p.id AND a.tenant_id = p.tenant_id
 JOIN ward w
-  ON w.id = a.to_id
+  ON w.id = a.to_id AND w.tenant_id = a.tenant_id
 WHERE p.id = $1
   AND p.tenant_id = $2
-  AND a.tenant_id = $2
-  AND w.tenant_id = $2
   AND a.deleted_at IS NULL
+  AND w.deleted_at IS NULL
 ```
+
+装配为 `Nodes`（终点 Ward）。`IncludeDeleted` 时去掉沿途软删谓词。起点表不加 `deleted_at` 谓词。
 
 ### 8.6 Multi-hop Traversal
 
@@ -1133,7 +1127,7 @@ Provider 嵌入 `UnimplementedStorageProvider` 仅满足 Go 前向兼容。返�
 | `ApplySchema` / `GetSchema` | 有。ApplySchema = 检查 + 进程内激活，不建 `of_*` |
 | `HealthCheck` / `Capabilities` | 有。Details 不含路径/DSN/SQL。 |
 | `CreateObject` `GetObject` `UpdateObject` `DeleteObject` `QueryObjects` | 有。业务表。 |
-| `CreateLink` `GetLink` `UpdateLink` `DeleteLink` `GetLinks` `Traverse` | 有。业务表 JOIN。 |
+| `CreateLink` `GetLink` `UpdateLink` `DeleteLink` `GetLinks` `Traverse` | 有。业务表 JOIN。Traverse 只交终点 Nodes。 |
 | `BeginTransaction` | 有（见 §12） |
 | `GetObjectAtVersion` `GetObjectAtTime` | `ErrUnsupportedCapability` 或 `ErrUnimplemented`，不得装成成功 |
 | `AggregateObjects` `SearchObjects` `BulkMutate` | `ErrUnimplemented` |
@@ -1931,7 +1925,7 @@ Patient.name
 |---|---|
 | `sidecar` identity + `of_*_meta` | 删除 |
 | `_id` 与物理 PK 两套值 | 合一 |
-| Traverse = GetLinks BFS on `of_link_meta` | JOIN 业务表 |
+| Traverse = GetLinks BFS on `of_link_meta` | JOIN 业务表；Traverse 只交终点 Nodes |
 | ApplySchema 创建 sidecar | 禁止；改为存在性检查 |
 | 无自动业务表 DDL | 可选辅助，且不能跳过检查 |
 | 系统列缺失由 sidecar 补 | 列在表上，或 mapping omit |
@@ -1947,7 +1941,7 @@ Patient.name
 - 没有 PostgreSQL+AGE 本体存储、没有 Sync Engine、没有 `sync.mode`
 - YAML 形状是 `sourceRef` + `relation` + `identity.strategy: direct`，不是 `source.kind` + `identity.fields[].target`
 - 无 ReBAC 谓词注入
-- Traverse 为链式 JOIN，不是 BFS on `of_link_meta`
+- Traverse 为链式 JOIN（只交终点 Nodes），不是 BFS on `of_link_meta`
 - 对象物理键唯一索引是全量 unique，不是仅 active 部分唯一（v2 sidecar）
 - mapping 由 `Open` 注入，不走 `ApplySchema` 第二参数
 

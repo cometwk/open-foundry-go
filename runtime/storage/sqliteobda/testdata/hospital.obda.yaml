@@ -50,6 +50,24 @@ models:
     fields:
       name:
         column: ward_name
+  Trust:
+    sourceRef: primary
+    relation:
+      kind: table
+      name: trust
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+    fields:
+      name:
+        column: trust_name
 links:
   AdmittedTo:
     sourceRef: primary
@@ -66,6 +84,27 @@ links:
       columns: [from_id]
     to:
       object: Ward
+      columns: [to_id]
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+  BelongsTo:
+    sourceRef: primary
+    relation:
+      kind: table
+      name: ward_trust
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    from:
+      object: Ward
+      columns: [from_id]
+    to:
+      object: Trust
       columns: [to_id]
     tenant:
       strategy: column

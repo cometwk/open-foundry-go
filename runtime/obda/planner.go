@@ -221,6 +221,114 @@ func PlanGetLinksJoin(b LinkJoinBinding, tenant, objectID string) (*sqlast.Selec
 	}, []any{tenant, objectID}, nil
 }
 
+// TraverseHop is one typed hop in a chained Traverse JOIN.
+type TraverseHop struct {
+	Direction         string
+	LinkTable         string
+	LinkTenant        string
+	LinkIdentityCol   string
+	FromCol           string
+	ToCol             string
+	PrevIDCol         string
+	PrevTenantCol     string
+	TargetTable       string
+	TargetIDCol       string
+	TargetTenantCol   string
+	TargetSelect      []string
+	OmitLinkDeleted   bool
+	OmitTargetDeleted bool
+}
+
+// PlanTraverse selects terminal object columns via a chained INNER JOIN.
+// FROM is the start object table; each hop adds the link table then the target object table.
+func PlanTraverse(start ObjectBinding, hops []TraverseHop, tenant, startID string) (*sqlast.Select, []any, error) {
+	if tenant == "" {
+		return nil, nil, spi.ErrTenantRequired
+	}
+	if start.Table == "" || len(start.IdentityColumns) == 0 || len(hops) == 0 {
+		return nil, nil, spi.ErrInvalidMapping
+	}
+	startIDCol := start.IdentityColumns[0]
+	startAlias := "s0"
+	sel := &sqlast.Select{
+		From: ident(start.Table),
+		As:   startAlias,
+		Where: and(
+			eq(sqlast.Identifier{Qualifier: startAlias, Name: start.TenantColumn}, 1),
+			eq(sqlast.Identifier{Qualifier: startAlias, Name: startIDCol}, 2),
+		),
+	}
+	var where *sqlast.Predicate
+	for i, h := range hops {
+		if h.LinkTable == "" || h.TargetTable == "" || h.FromCol == "" || h.ToCol == "" {
+			return nil, nil, spi.ErrInvalidMapping
+		}
+		prevAlias := fmt.Sprintf("s%d", i)
+		linkAlias := fmt.Sprintf("l%d", i)
+		nextAlias := fmt.Sprintf("s%d", i+1)
+		endCol, peerFK := h.FromCol, h.ToCol
+		if h.Direction == "inbound" {
+			endCol, peerFK = h.ToCol, h.FromCol
+		}
+		sel.Joins = append(sel.Joins, sqlast.Join{
+			Kind:  "INNER",
+			Table: ident(h.LinkTable),
+			As:    linkAlias,
+			On: and(
+				colEq(linkAlias, endCol, prevAlias, h.PrevIDCol),
+				colEq(linkAlias, h.LinkTenant, prevAlias, h.PrevTenantCol),
+			),
+		})
+		sel.Joins = append(sel.Joins, sqlast.Join{
+			Kind:  "INNER",
+			Table: ident(h.TargetTable),
+			As:    nextAlias,
+			On: and(
+				colEq(nextAlias, h.TargetIDCol, linkAlias, peerFK),
+				colEq(nextAlias, h.TargetTenantCol, linkAlias, h.LinkTenant),
+			),
+		})
+		if !h.OmitLinkDeleted {
+			where = and(where, &sqlast.Predicate{
+				Op:    "is_null",
+				Field: &sqlast.Identifier{Qualifier: linkAlias, Name: "deleted_at"},
+			})
+		}
+		if !h.OmitTargetDeleted {
+			where = and(where, &sqlast.Predicate{
+				Op:    "is_null",
+				Field: &sqlast.Identifier{Qualifier: nextAlias, Name: "deleted_at"},
+			})
+		}
+	}
+	sel.Where = and(sel.Where, where)
+	last := hops[len(hops)-1]
+	termAlias := fmt.Sprintf("s%d", len(hops))
+	linkAlias := fmt.Sprintf("l%d", len(hops)-1)
+	cols := make([]sqlast.Expr, len(last.TargetSelect))
+	for i, c := range last.TargetSelect {
+		cols[i] = sqlast.Identifier{Qualifier: termAlias, Name: c}
+	}
+	sel.Columns = cols
+	sel.Order = append(sel.Order, sqlast.Order{
+		Field: sqlast.Identifier{Qualifier: termAlias, Name: last.TargetIDCol},
+	})
+	if last.LinkIdentityCol != "" {
+		sel.Order = append(sel.Order, sqlast.Order{
+			Field: sqlast.Identifier{Qualifier: linkAlias, Name: last.LinkIdentityCol},
+		})
+	}
+	return sel, []any{tenant, startID}, nil
+}
+
+func colEq(aq, an, bq, bn string) *sqlast.Predicate {
+	return &sqlast.Predicate{
+		Op:    "col_eq",
+		Field: &sqlast.Identifier{Qualifier: aq, Name: an},
+		Other: &sqlast.Identifier{Qualifier: bq, Name: bn},
+	}
+}
+
 func compileFilter(f spi.FilterExpression, known map[string]struct{}, next int) (*sqlast.Predicate, []any, error) {
 	empty := f.Field == "" && f.Operator == "" && len(f.And) == 0 && len(f.Or) == 0 && f.Not == nil
 	if empty {
