@@ -10,12 +10,15 @@ require (
 )
 
 require (
+	github.com/go-sql-driver/mysql v1.10.0
 	github.com/google/uuid v1.6.0
 	github.com/graph-gophers/graphql-go v1.8.0
+	modernc.org/sqlite v1.57.0
 )
 
 require (
 	cel.dev/expr v0.25.1 // indirect
+	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/cel-go v0.27.0 // indirect
@@ -33,7 +36,6 @@ require (
 	modernc.org/libc v1.74.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.57.0 // indirect
 )
 
 replace github.com/openfoundry/cel-evaluator => ../packages/cel-evaluator
