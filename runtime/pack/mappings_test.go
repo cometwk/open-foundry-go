@@ -240,6 +240,36 @@ func TestLoadMappings_DuplicateRelationTable(t *testing.T) {
 	}
 }
 
+func TestLoadSupplyChainMappings(t *testing.T) {
+	dir, err := pack.SupplyChainDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	onto, err := pack.LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir: %v", err)
+	}
+	got, err := pack.LoadMappings(dir, onto)
+	if err != nil {
+		t.Fatalf("LoadMappings: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1", len(got))
+	}
+	if got[0].Path != "obda/supply-chain.obda.yaml" {
+		t.Fatalf("Path = %q", got[0].Path)
+	}
+	if got[0].Doc == nil {
+		t.Fatal("Doc is nil")
+	}
+	if n := len(got[0].Doc.Models); n != 6 {
+		t.Fatalf("models = %d, want 6", n)
+	}
+	if n := len(got[0].Doc.Links); n != 7 {
+		t.Fatalf("links = %d, want 7", n)
+	}
+}
+
 func TestLoadMappings_NestedPath(t *testing.T) {
 	dir := writePack(t, map[string]string{
 		"pack.yaml":               schemaPackYAML("obda:\n  - obda/nested/x.obda.yaml\n"),

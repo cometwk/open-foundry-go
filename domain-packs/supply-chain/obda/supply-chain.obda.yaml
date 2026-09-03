@@ -1,0 +1,373 @@
+# Supply Chain Domain Pack — OBDA mapping (SQLite direct-native)
+#
+# Maps the 6 ObjectTypes and 7 LinkTypes of the supply.chain namespace onto
+# business tables. Loaded by the pack loader (obda/ directory convention);
+# the DSN is resolved from the dsnRef at provider construction.
+
+apiVersion: openfoundry.io/obda/v1
+kind: OBDAConfig
+metadata:
+  name: supply-chain
+  namespace: supply.chain
+  version: 1
+schema:
+  namespace: supply.chain
+  version: 1
+sources:
+  primary:
+    kind: sql
+    dialect: sqlite
+    connection:
+      dsnRef: secret://supply-chain/sqlite-dsn
+models:
+  Supplier:
+    sourceRef: primary
+    relation:
+      kind: table
+      name: supplier
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+    fields:
+      name:
+        column: name
+      code:
+        column: code
+      tier:
+        column: tier
+      contactName:
+        column: contact_name
+      contactEmail:
+        column: contact_email
+      country:
+        column: country
+      leadTimeDays:
+        column: lead_time_days
+      onTimeDeliveryRate:
+        column: on_time_delivery_rate
+  Facility:
+    sourceRef: primary
+    relation:
+      kind: table
+      name: facility
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+    fields:
+      name:
+        column: name
+      code:
+        column: code
+      type:
+        column: type
+      status:
+        column: status
+      address:
+        column: address
+      country:
+        column: country
+      capacity:
+        column: capacity
+  Product:
+    sourceRef: primary
+    relation:
+      kind: table
+      name: product
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+    fields:
+      sku:
+        column: sku
+      name:
+        column: name
+      category:
+        column: category
+      unitOfMeasure:
+        column: unit_of_measure
+      reorderPoint:
+        column: reorder_point
+      reorderQuantity:
+        column: reorder_quantity
+  PurchaseOrder:
+    sourceRef: primary
+    relation:
+      kind: table
+      name: purchase_order
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+    fields:
+      orderNumber:
+        column: order_number
+      status:
+        column: status
+      supplier:
+        column: supplier_id
+      product:
+        column: product_id
+      quantity:
+        column: quantity
+      unitCost:
+        column: unit_cost
+      currency:
+        column: currency
+      requestedDeliveryDate:
+        column: requested_delivery_date
+      notes:
+        column: notes
+  Shipment:
+    sourceRef: primary
+    relation:
+      kind: table
+      name: shipment
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+    fields:
+      trackingNumber:
+        column: tracking_number
+      status:
+        column: status
+      transportMode:
+        column: transport_mode
+      quantity:
+        column: quantity
+      departureDate:
+        column: departure_date
+      estimatedArrival:
+        column: estimated_arrival
+      actualArrival:
+        column: actual_arrival
+      order:
+        column: order_id
+      origin:
+        column: origin_facility_id
+      destination:
+        column: destination_facility_id
+  InventoryRecord:
+    sourceRef: primary
+    relation:
+      kind: table
+      name: inventory_record
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+    fields:
+      quantity:
+        column: quantity
+      reservedQuantity:
+        column: reserved_quantity
+      stockLevel:
+        column: stock_level
+      lastCountDate:
+        column: last_count_date
+      product:
+        column: product_id
+      facility:
+        column: facility_id
+links:
+  SuppliesProduct:
+    sourceRef: primary
+    relation:
+      kind: table
+      name: supplies_product
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    from:
+      object: Supplier
+      columns: [from_id]
+    to:
+      object: Product
+      columns: [to_id]
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+    fields:
+      leadTimeDays:
+        column: lead_time_days
+      unitCost:
+        column: unit_cost
+      minOrderQuantity:
+        column: min_order_quantity
+      preferredSupplier:
+        column: preferred_supplier
+  OrderedFrom:
+    sourceRef: primary
+    relation:
+      kind: table
+      name: ordered_from
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    from:
+      object: PurchaseOrder
+      columns: [from_id]
+    to:
+      object: Supplier
+      columns: [to_id]
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+    fields:
+      orderedAt:
+        column: ordered_at
+  ShipmentForOrder:
+    sourceRef: primary
+    relation:
+      kind: table
+      name: shipment_for_order
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    from:
+      object: Shipment
+      columns: [from_id]
+    to:
+      object: PurchaseOrder
+      columns: [to_id]
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+    fields:
+      createdAt:
+        column: created_at
+  ShipsFrom:
+    sourceRef: primary
+    relation:
+      kind: table
+      name: ships_from
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    from:
+      object: Shipment
+      columns: [from_id]
+    to:
+      object: Facility
+      columns: [to_id]
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+  ShipsTo:
+    sourceRef: primary
+    relation:
+      kind: table
+      name: ships_to
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    from:
+      object: Shipment
+      columns: [from_id]
+    to:
+      object: Facility
+      columns: [to_id]
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+  InventoryAt:
+    sourceRef: primary
+    relation:
+      kind: table
+      name: inventory_at
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    from:
+      object: InventoryRecord
+      columns: [from_id]
+    to:
+      object: Facility
+      columns: [to_id]
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+  InventoryOf:
+    sourceRef: primary
+    relation:
+      kind: table
+      name: inventory_of
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    from:
+      object: InventoryRecord
+      columns: [from_id]
+    to:
+      object: Product
+      columns: [to_id]
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
