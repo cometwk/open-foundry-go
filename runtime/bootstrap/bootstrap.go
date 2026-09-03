@@ -87,25 +87,72 @@ func mergeDocuments(mappings []pack.Mapping) (*obda.Document, error) {
 		Models:     map[string]obda.Model{},
 		Links:      map[string]obda.Link{},
 	}
+	tables := map[string]string{}
 	for _, m := range mappings {
 		if m.Doc == nil {
 			return nil, fmt.Errorf("bootstrap: mapping %s has nil document", m.Path)
 		}
 		for name, src := range m.Doc.Sources {
 			if existing, ok := out.Sources[name]; ok {
-				if existing != src {
+				merged, ok := mergeSources(existing, src)
+				if !ok {
 					return nil, fmt.Errorf("bootstrap: mapping %s: conflicting source %q", m.Path, name)
 				}
+				out.Sources[name] = merged
 				continue
 			}
 			out.Sources[name] = src
 		}
 		for name, model := range m.Doc.Models {
+			if _, ok := out.Models[name]; ok {
+				return nil, fmt.Errorf("bootstrap: mapping %s: duplicate model %q", m.Path, name)
+			}
+			if prev, ok := tables[model.Relation.Name]; ok {
+				return nil, fmt.Errorf("bootstrap: mapping %s: duplicate relation table %q (already in %s)", m.Path, model.Relation.Name, prev)
+			}
 			out.Models[name] = model
+			tables[model.Relation.Name] = m.Path
 		}
 		for name, link := range m.Doc.Links {
+			if _, ok := out.Links[name]; ok {
+				return nil, fmt.Errorf("bootstrap: mapping %s: duplicate link %q", m.Path, name)
+			}
+			if prev, ok := tables[link.Relation.Name]; ok {
+				return nil, fmt.Errorf("bootstrap: mapping %s: duplicate relation table %q (already in %s)", m.Path, link.Relation.Name, prev)
+			}
 			out.Links[name] = link
+			tables[link.Relation.Name] = m.Path
 		}
 	}
 	return &out, nil
+}
+
+func mergeSources(a, b obda.Source) (obda.Source, bool) {
+	kindA, kindB := a.Kind, b.Kind
+	if kindA == "" {
+		kindA = "sql"
+	}
+	if kindB == "" {
+		kindB = "sql"
+	}
+	if kindA != kindB {
+		return obda.Source{}, false
+	}
+	if a.Dialect != "" && b.Dialect != "" && a.Dialect != b.Dialect {
+		return obda.Source{}, false
+	}
+	if a.Connection.DSNRef != b.Connection.DSNRef {
+		return obda.Source{}, false
+	}
+	out := a
+	if out.Kind == "" {
+		out.Kind = b.Kind
+	}
+	if out.Dialect == "" {
+		out.Dialect = b.Dialect
+	}
+	if out.Kind == "" {
+		out.Kind = "sql"
+	}
+	return out, true
 }

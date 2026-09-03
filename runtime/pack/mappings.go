@@ -32,6 +32,9 @@ func LoadMappings(packDir string, onto *ir.Ontology) ([]Mapping, error) {
 	if len(m.OBDA) == 0 {
 		return nil, fmt.Errorf("pack: %s has empty obda list", packDir)
 	}
+	if onto == nil {
+		return nil, fmt.Errorf("pack: ontology required")
+	}
 
 	schema := projection.ProjectStorage(onto)
 	out := make([]Mapping, 0, len(m.OBDA))
@@ -86,9 +89,6 @@ func registerMapping(rel string, doc *obda.Document, models, links, tables map[s
 }
 
 func registerTable(rel, table string, tables map[string]string) error {
-	if table == "" {
-		return nil
-	}
 	if prev, ok := tables[table]; ok {
 		return fmt.Errorf("pack: mapping %s: duplicate relation table %q (already in %s)", rel, table, prev)
 	}

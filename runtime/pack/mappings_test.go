@@ -23,6 +23,10 @@ type Gadget @objectType {
   id: ID! @primary
   name: String
 }
+
+type AssembledFrom @linkType(from: "Widget", to: "Gadget", cardinality: MANY_TO_ONE) {
+  id: ID! @primary
+}
 `
 
 func modelMapping(name, table string) string {
@@ -63,6 +67,47 @@ models:
 `
 }
 
+func linkMapping(name, table string) string {
+	return `apiVersion: openfoundry.io/obda/v1
+kind: OBDAConfig
+metadata:
+  name: ` + strings.ToLower(name) + `
+  namespace: test.pack
+  version: 1
+schema:
+  namespace: test.pack
+  version: 1
+sources:
+  primary:
+    kind: sql
+    dialect: sqlite
+    connection:
+      dsnRef: secret://test/sqlite-dsn
+links:
+  ` + name + `:
+    sourceRef: primary
+    relation:
+      kind: table
+      name: ` + table + `
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    from:
+      object: Widget
+      columns: [widget_id]
+    to:
+      object: Gadget
+      columns: [gadget_id]
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+`
+}
+
 func writePack(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -88,11 +133,7 @@ func loadOnto(t *testing.T, dir string) *ir.Ontology {
 }
 
 func schemaPackYAML(obdaBlock string) string {
-	base := "name: fixture\nnamespace: test.pack\nschema:\n  - schema/models.odl\n"
-	if obdaBlock == "" {
-		return base
-	}
-	return base + obdaBlock
+	return "name: fixture\nnamespace: test.pack\nschema:\n  - schema/models.odl\n" + obdaBlock
 }
 
 func TestLoadMappings_UndeclaredNoObdaDir(t *testing.T) {
@@ -237,6 +278,37 @@ func TestLoadMappings_DuplicateRelationTable(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "shared") {
 		t.Fatalf("err = %v, want table shared", err)
+	}
+}
+
+func TestLoadMappings_DuplicateLink(t *testing.T) {
+	dir := writePack(t, map[string]string{
+		"pack.yaml":         schemaPackYAML("obda:\n  - obda/a.obda.yaml\n  - obda/b.obda.yaml\n"),
+		"schema/models.odl": widgetODL,
+		"obda/a.obda.yaml":  linkMapping("AssembledFrom", "assembled_a"),
+		"obda/b.obda.yaml":  linkMapping("AssembledFrom", "assembled_b"),
+	})
+	_, err := pack.LoadMappings(dir, loadOnto(t, dir))
+	if err == nil {
+		t.Fatal("err = nil, want duplicate link error")
+	}
+	if !strings.Contains(err.Error(), "AssembledFrom") {
+		t.Fatalf("err = %v, want link AssembledFrom", err)
+	}
+	if !strings.Contains(err.Error(), "obda/b.obda.yaml") {
+		t.Fatalf("err = %v, want file obda/b.obda.yaml", err)
+	}
+}
+
+func TestLoadMappings_NilOntology(t *testing.T) {
+	dir := writePack(t, map[string]string{
+		"pack.yaml":             schemaPackYAML("obda:\n  - obda/widget.obda.yaml\n"),
+		"schema/models.odl":     widgetODL,
+		"obda/widget.obda.yaml": modelMapping("Widget", "widget"),
+	})
+	_, err := pack.LoadMappings(dir, nil)
+	if err == nil || !strings.Contains(err.Error(), "ontology required") {
+		t.Fatalf("err = %v, want ontology required", err)
 	}
 }
 
