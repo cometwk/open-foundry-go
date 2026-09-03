@@ -4,6 +4,7 @@
 **YAML `apiVersion`:** `openfoundry.io/obda/v1`（文档版本与 YAML 版本独立）  
 **Format:** `*.obda.yaml`  
 **Runtime target:** `runtime/obda` + `runtime/storage/sqliteobda`  
+**Pack loader:** `runtime/pack`（pack.yaml `obda:` 清单）+ `runtime/bootstrap`（组装层注入）  
 **SPI:** `runtime/spi/provider.go`
 
 **Origin:** `docs/brainstorms/2026-08-21-obda-direct-native-identity-requirements.md`  
@@ -162,7 +163,6 @@ SQL
 - mapping 内任意 SQL、`sqlQuery` source、computed SQL、不可逆 `hash`
 - 本轮交付 MySQL 或其他方言
 - 本轮持久化 history / Bulk 幂等 / 改 Engine / 改 `runtime/projection`（Primary 仍被丢掉）
-- Pack loader 加载 `*.obda.yaml`（mapping 由调用方注入）
 - 把 Go/SQLite 测例接入现有 GitHub CI
 - 改 `memory` provider、改 Engine Get-then-Update 语义
 
@@ -356,6 +356,7 @@ erp.obda.yaml
 
 ```text
 nhs-acute/
+├── pack.yaml                 # obda: [obda/pas.obda.yaml, obda/ehr.obda.yaml, obda/bed-system.obda.yaml]
 ├── schema/
 │   ├── patient.odl
 │   ├── ward.odl
@@ -372,7 +373,7 @@ nhs-acute/
 └── quality/
 ```
 
-> 注：v3 当前 mapping 由 `Open` 注入，不走 Pack loader。此目录结构为推荐演进方向。
+> 注：mapping 由 **Pack loader** 按 pack.yaml 的 `obda:` 清单加载：`pack.LoadMappings(packDir, onto)` 按声明路径逐个 read → parse（拒绝明文凭证键）→ validate → 对照 pack ontology 做 ODL 引用编译检查（model / link 名不存在即失败），并拒绝 pack 内跨文件的 model / link / relation 表名冲突。未声明 `obda:` 键视为零 mapping（非错误）；显式空清单 `obda: []` 为加载错误；`obda/` 目录存在但未声明则不加载（不做目录发现）。加载结果由组装层 `bootstrap.OpenSQLite` 合并后经 provider `Open` 注入并 `ApplySchema` 激活；`ApplySchema` 第二参数语义不变。
 
 ### 4.2 顶层
 
@@ -1943,7 +1944,7 @@ Patient.name
 - 无 ReBAC 谓词注入
 - Traverse 为链式 JOIN（只交终点 Nodes），不是 BFS on `of_link_meta`
 - 对象物理键唯一索引是全量 unique，不是仅 active 部分唯一（v2 sidecar）
-- mapping 由 `Open` 注入，不走 `ApplySchema` 第二参数
+- mapping 由 Pack loader 按 pack.yaml `obda:` 清单加载、组装层经 `Open` 注入，不走 `ApplySchema` 第二参数
 
 相对 `open-foundry-obda-mapping-spec-v1.md`：
 
@@ -1967,6 +1968,10 @@ runtime/obda/
 runtime/storage/sqliteobda/
   provider.go sidecar.go objects.go query.go links.go transaction.go
   testdata/*.obda.yaml
+runtime/pack/
+  mappings.go                # pack.yaml obda: 清单：parse + validate + 对 IR 编译检查
+runtime/bootstrap/
+  bootstrap.go               # OpenSQLite：合并 mapping、Open、ApplySchema
 runtime/spi/errors.go      # OBDA 加法 sentinel
 ```
 
