@@ -329,9 +329,9 @@ Hard delete：删对象行，并同事务删以其 id 为 `from_id`/`to_id` 的 
 
 Query：`Limit<=0` → 100，上限 1000；identity 列 tie-breaker；`Cursor` 空；`AsOf*` → `ErrUnsupportedCapability`。OrderBy 为 mapping 逻辑名。JOIN `of_object_meta` **禁止**。
 
-GetLinks / Traverse：planner 产出 `sqlast.Join`。每跳 `tenant_id`（及未 omit 的 `deleted_at IS NULL`）在同一 SQL。深度 > 8 → `ErrUnsupportedCapability`。未知/跨租户 start → `ErrObjectNotFound`。
+GetLinks：planner 产出单跳 `sqlast.Join`（link 表 INNER JOIN 对端对象表）。每跳 `tenant_id`（及未 omit 的 `deleted_at IS NULL`）在同一 SQL。
 
-本轮不要求一条 SQL 表达可变深度递归；固定 `path.Steps` 的链式 JOIN 即可。禁止再对影子表 BFS。
+Traverse：planner 产出固定 `path.Steps` 的链式 JOIN，只交终点 `Nodes`。深度 > 8 → `ErrUnsupportedCapability`。未知/跨租户/错类型 start → `ErrObjectNotFound`。本轮不要求一条 SQL 表达可变深度递归。禁止再对影子表 BFS。sqliteobda 本轮 `Edges` / `Visited` 为空。
 
 多态「一列指向多种 ObjectType」不支持：from/to 在 mapping 里 typed。
 
@@ -353,7 +353,7 @@ Sentinel 沿用 v2 加法集合。不再出现依赖 sidecar 的 split-brain。�
 |---|---|
 | `ApplySchema` / `GetSchema` / `HealthCheck` / `Capabilities` | 有。ApplySchema = 检查 + 进程内激活，不建 `of_*` |
 | Object CRUD / `QueryObjects` | 业务表 |
-| Link CRUD / `GetLinks` / `Traverse` | 业务表 JOIN |
+| Link CRUD / `GetLinks` / `Traverse` | 业务表 JOIN；Traverse 只交终点 Nodes |
 | `BeginTransaction` | 本地 SQL 事务，钉住 tenant + compiled |
 | `GetObjectAtVersion` / `GetObjectAtTime` / `BulkMutate` | `ErrUnsupportedCapability` 或 `ErrUnimplemented`，不得装成成功 |
 | Aggregate / Search / EnsureIndex | 本轮可不交付；不得 silently 空成功冒充能力 |
@@ -378,7 +378,7 @@ Sentinel 沿用 v2 加法集合。不再出现依赖 sidecar 的 split-brain。�
 |---|---|
 | `sidecar` identity + `of_*_meta` | 删除 |
 | `_id` 与物理 PK 两套值 | 合一 |
-| Traverse = GetLinks BFS on `of_link_meta` | JOIN 业务表 |
+| Traverse = GetLinks BFS on `of_link_meta` | JOIN 业务表；Traverse 只交终点 Nodes |
 | ApplySchema 创建 sidecar | 禁止；改为存在性检查 |
 | 无自动业务表 DDL | 可选辅助，且不能跳过检查 |
 | 系统列缺失由 sidecar 补 | 列在表上，或 mapping omit |

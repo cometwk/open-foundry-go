@@ -1,4 +1,4 @@
-package sqliteobda
+package mysqlobda
 
 import (
 	"database/sql"
@@ -6,7 +6,7 @@ import (
 
 	"github.com/openfoundry/runtime/internal/uuidv7"
 	"github.com/openfoundry/runtime/obda"
-	sqlitedialect "github.com/openfoundry/runtime/obda/dialect/sqlite"
+	mysqldialect "github.com/openfoundry/runtime/obda/dialect/mysql"
 	"github.com/openfoundry/runtime/obda/sqlast"
 	"github.com/openfoundry/runtime/spi"
 )
@@ -163,7 +163,7 @@ func (p *Provider) UpdateLink(ctx spi.RequestContext, typ, linkID string, proper
 	}
 	res, err := tx.Exec(stmt.SQL, args...)
 	if err != nil {
-		return nil, sqlitedialect.Classify(err)
+		return nil, mysqldialect.Classify(err)
 	}
 	n, _ := res.RowsAffected()
 	if n != 1 {
@@ -237,7 +237,7 @@ func (p *Provider) DeleteLink(ctx spi.RequestContext, typ, linkID string) error 
 		return err
 	}
 	if _, err := tx.Exec(stmt.SQL, args...); err != nil {
-		return sqlitedialect.Classify(err)
+		return mysqldialect.Classify(err)
 	}
 	return tx.Commit()
 }
@@ -301,7 +301,7 @@ func (p *Provider) GetLinks(ctx spi.RequestContext, objectID, linkType, directio
 	}
 	var total int
 	if err := p.db.QueryRow("SELECT COUNT(*) FROM ("+countStmt.SQL+") AS q", args...).Scan(&total); err != nil {
-		return spi.LinkPage{}, sqlitedialect.Classify(err)
+		return spi.LinkPage{}, mysqldialect.Classify(err)
 	}
 	sel.Limit = &sqlast.LimitOffset{}
 	stmt, err := p.dialect.Render(sel)
@@ -310,7 +310,7 @@ func (p *Provider) GetLinks(ctx spi.RequestContext, objectID, linkType, directio
 	}
 	rows, err := p.db.Query(stmt.SQL, append(append([]any{}, args...), limit+1, offset)...)
 	if err != nil {
-		return spi.LinkPage{}, sqlitedialect.Classify(err)
+		return spi.LinkPage{}, mysqldialect.Classify(err)
 	}
 	defer rows.Close()
 	bizCols := l.Binding().SelectColumns
@@ -437,7 +437,7 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 	}
 	var total int
 	if err := p.db.QueryRow("SELECT COUNT(*) FROM ("+countStmt.SQL+") AS q", args...).Scan(&total); err != nil {
-		return spi.TraversalResult{}, sqlitedialect.Classify(err)
+		return spi.TraversalResult{}, mysqldialect.Classify(err)
 	}
 	sel.Limit = &sqlast.LimitOffset{Limit: sqlast.Param{}, Offset: sqlast.Param{}}
 	stmt, err := p.dialect.Render(sel)
@@ -446,7 +446,7 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 	}
 	rows, err := p.db.Query(stmt.SQL, append(append([]any{}, args...), limit, offset)...)
 	if err != nil {
-		return spi.TraversalResult{}, sqlitedialect.Classify(err)
+		return spi.TraversalResult{}, mysqldialect.Classify(err)
 	}
 	defer rows.Close()
 	bizCols := terminal.Binding().SelectColumns
@@ -584,7 +584,7 @@ func (p *Provider) insertLinkRow(tx DBTX, l *obda.CompiledLink, tenant, id, from
 		return err
 	}
 	if _, err := tx.Exec(stmt.SQL, args...); err != nil {
-		return sqlitedialect.Classify(err)
+		return mysqldialect.Classify(err)
 	}
 	return nil
 }
@@ -611,7 +611,7 @@ func (p *Provider) loadLink(tx DBTX, l *obda.CompiledLink, tenant, id string) (s
 		if err == sql.ErrNoRows {
 			return nil, spi.ErrLinkNotFound
 		}
-		return nil, sqlitedialect.Classify(err)
+		return nil, mysqldialect.Classify(err)
 	}
 	biz := map[string]any{}
 	for i, col := range b.SelectColumns {

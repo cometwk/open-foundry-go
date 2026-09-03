@@ -12,12 +12,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Manifest is the subset of pack.yaml needed for schema and action loading.
+// Manifest is the subset of pack.yaml needed for schema, action, and OBDA loading.
 type Manifest struct {
 	Name      string   `yaml:"name"`
 	Namespace string   `yaml:"namespace"`
 	Schema    []string `yaml:"schema"`
 	Actions   []string `yaml:"actions"`
+	OBDA      []string `yaml:"obda"`
 }
 
 var namespaceExtendRe = regexp.MustCompile(`(?m)^extend\s+schema\s+@namespace\([^)]*\)\s*\n?`)

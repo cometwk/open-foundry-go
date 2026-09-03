@@ -1,4 +1,4 @@
-package sqliteobda_test
+package mysqlobda_test
 
 import (
 	"database/sql"
@@ -9,7 +9,7 @@ import (
 
 	"github.com/openfoundry/runtime/obda"
 	"github.com/openfoundry/runtime/spi"
-	"github.com/openfoundry/runtime/storage/sqliteobda"
+	"github.com/openfoundry/runtime/storage/mysqlobda"
 )
 
 func TestCreateLinkSystemFields(t *testing.T) {
@@ -40,7 +40,7 @@ func TestCardinalityManyToOne(t *testing.T) {
 	}
 	_, err := p.CreateLink(ctx, "AdmittedTo", patientID, wardID, nil)
 	if !errors.Is(err, spi.ErrCardinalityViolation) {
-		t.Fatalf("err=%v", err)
+		t.Fatalf("err=%v want ErrCardinalityViolation", err)
 	}
 	var n int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM admission WHERE deleted_at IS NULL`).Scan(&n); err != nil {
@@ -63,7 +63,7 @@ func TestCardinalityOneToOne(t *testing.T) {
 	}
 	_, err = p.CreateLink(ctx, "AdmittedTo", p2obj[spi.FieldID].(string), w1, nil)
 	if !errors.Is(err, spi.ErrCardinalityViolation) {
-		t.Fatalf("err=%v", err)
+		t.Fatalf("err=%v want ErrCardinalityViolation", err)
 	}
 }
 
@@ -80,6 +80,21 @@ func TestCardinalityManyToManyAllowsPair(t *testing.T) {
 	}
 	if a[spi.FieldID] == b[spi.FieldID] {
 		t.Fatal("expected distinct ids")
+	}
+}
+
+func TestCardinalitySoftDeleteFreesSlot(t *testing.T) {
+	p, _, patientID, wardID := activateHospital(t, spi.CardinalityManyToOne)
+	ctx := spi.RequestContext{TenantID: "t1"}
+	link, err := p.CreateLink(ctx, "AdmittedTo", patientID, wardID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.DeleteLink(ctx, "AdmittedTo", link[spi.FieldID].(string)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.CreateLink(ctx, "AdmittedTo", patientID, wardID, nil); err != nil {
+		t.Fatalf("soft-deleted link must free the active slot: %v", err)
 	}
 }
 
@@ -520,7 +535,7 @@ func assertTerminalOnly(t *testing.T, tr spi.TraversalResult) {
 	}
 }
 
-func activateHospital(t *testing.T, card spi.Cardinality) (*sqliteobda.Provider, *sql.DB, string, string) {
+func activateHospital(t *testing.T, card spi.Cardinality) (*mysqlobda.Provider, *sql.DB, string, string) {
 	t.Helper()
 	raw := testdata(t, "hospital.obda.yaml")
 	p, db := openProvider(t, raw)

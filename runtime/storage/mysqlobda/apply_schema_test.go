@@ -1,19 +1,23 @@
-package sqliteobda_test
+package mysqlobda_test
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
-	_ "modernc.org/sqlite"
+	"github.com/go-sql-driver/mysql"
 
 	"github.com/openfoundry/runtime/obda"
-	sqlitedialect "github.com/openfoundry/runtime/obda/dialect/sqlite"
+	mysqldialect "github.com/openfoundry/runtime/obda/dialect/mysql"
 	"github.com/openfoundry/runtime/spi"
-	"github.com/openfoundry/runtime/storage/sqliteobda"
+	"github.com/openfoundry/runtime/storage/mysqlobda"
 )
 
 func TestApplySchemaEmptyDatabaseFails(t *testing.T) {
@@ -32,7 +36,7 @@ func TestApplySchemaEmptyDatabaseFails(t *testing.T) {
 func TestApplySchemaGeneratedDDLNotExecutedFails(t *testing.T) {
 	p, _ := openProvider(t, testdata(t, "patient.obda.yaml"))
 	compiled := compileMapping(t, testdata(t, "patient.obda.yaml"), patientSchema())
-	stmts, err := sqlitedialect.MappedTableStatements(compiled)
+	stmts, err := mysqldialect.MappedTableStatements(compiled)
 	if err != nil || len(stmts) == 0 {
 		t.Fatalf("stmts=%v err=%v", stmts, err)
 	}
@@ -61,18 +65,18 @@ func TestApplySchemaAfterHelperSucceeds(t *testing.T) {
 	}
 	other := 999
 	if _, err := p.GetSchema(spi.RequestContext{TenantID: "t1"}, &other); !errors.Is(err, spi.ErrMappingNotActive) {
-		t.Fatalf("err=%v", err)
+		t.Fatalf("err=%v want ErrMappingNotActive", err)
 	}
 	assertNoOfTables(t, db)
 }
 
 func TestApplySchemaMissingUniqueFails(t *testing.T) {
 	p, db := openProvider(t, testdata(t, "hospital.obda.yaml"))
-	mustExec(t, db, `CREATE TABLE patient (id TEXT PRIMARY KEY, tenant_id TEXT, patient_name TEXT, version INTEGER, created_at TEXT, updated_at TEXT, deleted_at TEXT)`)
-	mustExec(t, db, `CREATE TABLE ward (id TEXT PRIMARY KEY, tenant_id TEXT, ward_name TEXT, version INTEGER, created_at TEXT, updated_at TEXT, deleted_at TEXT)`)
-	mustExec(t, db, `CREATE TABLE admission (id TEXT PRIMARY KEY, tenant_id TEXT, from_id TEXT, to_id TEXT, version INTEGER, created_at TEXT, updated_at TEXT, deleted_at TEXT)`)
-	mustExec(t, db, `CREATE TABLE trust (id TEXT PRIMARY KEY, tenant_id TEXT, trust_name TEXT, version INTEGER, created_at TEXT, updated_at TEXT, deleted_at TEXT)`)
-	mustExec(t, db, `CREATE TABLE ward_trust (id TEXT PRIMARY KEY, tenant_id TEXT, from_id TEXT, to_id TEXT, version INTEGER, created_at TEXT, updated_at TEXT, deleted_at TEXT)`)
+	mustExec(t, db, `CREATE TABLE patient (id VARCHAR(255) PRIMARY KEY, tenant_id VARCHAR(255), patient_name TEXT, version BIGINT, created_at VARCHAR(64), updated_at VARCHAR(64), deleted_at VARCHAR(64))`)
+	mustExec(t, db, `CREATE TABLE ward (id VARCHAR(255) PRIMARY KEY, tenant_id VARCHAR(255), ward_name TEXT, version BIGINT, created_at VARCHAR(64), updated_at VARCHAR(64), deleted_at VARCHAR(64))`)
+	mustExec(t, db, `CREATE TABLE admission (id VARCHAR(255) PRIMARY KEY, tenant_id VARCHAR(255), from_id VARCHAR(255), to_id VARCHAR(255), version BIGINT, created_at VARCHAR(64), updated_at VARCHAR(64), deleted_at VARCHAR(64))`)
+	mustExec(t, db, `CREATE TABLE trust (id VARCHAR(255) PRIMARY KEY, tenant_id VARCHAR(255), trust_name TEXT, version BIGINT, created_at VARCHAR(64), updated_at VARCHAR(64), deleted_at VARCHAR(64))`)
+	mustExec(t, db, `CREATE TABLE ward_trust (id VARCHAR(255) PRIMARY KEY, tenant_id VARCHAR(255), from_id VARCHAR(255), to_id VARCHAR(255), version BIGINT, created_at VARCHAR(64), updated_at VARCHAR(64), deleted_at VARCHAR(64))`)
 	_, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, hospitalSchema(spi.CardinalityManyToOne))
 	if !errors.Is(err, spi.ErrSourceSchemaDrift) {
 		t.Fatalf("err=%v want ErrSourceSchemaDrift", err)
@@ -85,7 +89,7 @@ func TestApplySchemaMissingUniqueFails(t *testing.T) {
 
 func TestApplySchemaMissingColumnIsDrift(t *testing.T) {
 	p, db := openProvider(t, testdata(t, "patient.obda.yaml"))
-	mustExec(t, db, `CREATE TABLE patient (id TEXT PRIMARY KEY, tenant_id TEXT)`)
+	mustExec(t, db, `CREATE TABLE patient (id VARCHAR(255) PRIMARY KEY, tenant_id VARCHAR(255))`)
 	_, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, patientSchema())
 	if !errors.Is(err, spi.ErrSourceSchemaDrift) {
 		t.Fatalf("err=%v want ErrSourceSchemaDrift", err)
@@ -113,13 +117,13 @@ func TestApplySchemaRequiresTenant(t *testing.T) {
 	}
 }
 
-func TestOpenRejectsMySQLDialect(t *testing.T) {
+func TestOpenRejectsSQLiteDialect(t *testing.T) {
 	db := openDB(t)
 	raw := testdata(t, "patient.obda.yaml")
-	raw = []byte(strings.Replace(string(raw), "dialect: sqlite", "dialect: mysql", 1))
-	_, err := sqliteobda.Open(db, raw, sqliteobda.Options{DSNRefs: map[string]string{"secret://hospital/sqlite-dsn": "x"}})
+	raw = []byte(strings.Replace(string(raw), "dialect: mysql", "dialect: sqlite", 1))
+	_, err := mysqlobda.Open(db, raw, mysqlobda.Options{DSNRefs: map[string]string{"secret://hospital/mysql-dsn": "x"}})
 	if !errors.Is(err, spi.ErrInvalidMapping) {
-		t.Fatalf("err=%v", err)
+		t.Fatalf("err=%v want ErrInvalidMapping", err)
 	}
 }
 
@@ -131,8 +135,8 @@ func TestHealthCheckOmitsPath(t *testing.T) {
 	}
 	for _, v := range st.Details {
 		s, _ := v.(string)
-		if s != "" && (strings.Contains(s, ".db") || strings.Contains(s, "Temp")) {
-			t.Fatalf("details leaked path: %#v", st.Details)
+		if s != "" && (strings.Contains(s, "of_test_") || strings.Contains(s, "tcp(")) {
+			t.Fatalf("details leaked dsn: %#v", st.Details)
 		}
 	}
 }
@@ -153,7 +157,7 @@ func TestHealthCheckDriftFailClosed(t *testing.T) {
 	}
 	_, err = p.GetObject(spi.RequestContext{TenantID: "t1"}, "Patient", "x")
 	if !errors.Is(err, spi.ErrSourceSchemaDrift) {
-		t.Fatalf("err=%v", err)
+		t.Fatalf("err=%v want ErrSourceSchemaDrift", err)
 	}
 }
 
@@ -198,14 +202,14 @@ func compileMapping(t *testing.T, mapping []byte, schema spi.OntologySchema) *ob
 
 func mustInit(t *testing.T, db *sql.DB, mapping []byte, schema spi.OntologySchema) {
 	t.Helper()
-	if err := sqliteobda.InitMappedSchema(db, compileMapping(t, mapping, schema)); err != nil {
+	if err := mysqlobda.InitMappedSchema(db, compileMapping(t, mapping, schema)); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func assertNoOfTables(t *testing.T, db *sql.DB) {
 	t.Helper()
-	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type IN ('table','index','view') AND name LIKE 'of_%'`)
+	rows, err := db.Query(`SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE 'of\_%'`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,11 +227,11 @@ func assertNoOfTables(t *testing.T, db *sql.DB) {
 	}
 }
 
-func openProvider(t *testing.T, mapping []byte) (*sqliteobda.Provider, *sql.DB) {
+func openProvider(t *testing.T, mapping []byte) (*mysqlobda.Provider, *sql.DB) {
 	t.Helper()
 	db := openDB(t)
-	p, err := sqliteobda.Open(db, mapping, sqliteobda.Options{
-		DSNRefs: map[string]string{"secret://hospital/sqlite-dsn": "ignored"},
+	p, err := mysqlobda.Open(db, mapping, mysqlobda.Options{
+		DSNRefs: map[string]string{"secret://hospital/mysql-dsn": "ignored"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -235,14 +239,47 @@ func openProvider(t *testing.T, mapping []byte) (*sqliteobda.Provider, *sql.DB) 
 	return p, db
 }
 
+// openDB connects to the TEST_DB_URL MySQL server and creates an isolated
+// per-test database. Tests skip when TEST_DB_URL is unset.
 func openDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "t.db")+"?_busy_timeout=5000")
+	base := os.Getenv("TEST_DB_URL")
+	if base == "" {
+		t.Skip("TEST_DB_URL not set; MySQL integration tests skipped")
+	}
+	cfg, err := mysql.ParseDSN(base)
+	if err != nil {
+		t.Fatalf("parse TEST_DB_URL: %v", err)
+	}
+	admin, err := sql.Open("mysql", base)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close() })
+	name := fmt.Sprintf("of_test_%d_%s", time.Now().UnixNano(), randHex(4))
+	if _, err := admin.Exec("CREATE DATABASE `" + name + "` CHARACTER SET utf8mb4"); err != nil {
+		_ = admin.Close()
+		t.Fatalf("create database %s: %v", name, err)
+	}
+	cfg.DBName = name
+	db, err := sql.Open("mysql", cfg.FormatDSN())
+	if err != nil {
+		_ = admin.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = db.Close()
+		_, _ = admin.Exec("DROP DATABASE IF EXISTS `" + name + "`")
+		_ = admin.Close()
+	})
 	return db
+}
+
+func randHex(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "00000000"
+	}
+	return hex.EncodeToString(b)
 }
 
 func testdata(t *testing.T, name string) []byte {

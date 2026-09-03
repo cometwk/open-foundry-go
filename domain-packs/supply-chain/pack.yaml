@@ -33,6 +33,9 @@ actions:
   - actions/receive-shipment.yaml
   - actions/cancel-order.yaml
 
+obda:
+  - obda/supply-chain.obda.yaml
+
 connectors:
   - connectors/erp-jdbc.yaml
 

@@ -247,7 +247,7 @@ WHERE l.from_id = ? AND l.tenant_id = ?
 
 ### U6. Traverse JOIN, hard-delete cascade, remove sidecar
 
-- **Goal:** Traverse 链式 JOIN；硬删级联所有 mapped link 表；删除 sidecar 代码路径。
+- **Goal:** Traverse 链式 JOIN 只交终点 Nodes；硬删级联所有 mapped link 表；删除 sidecar 代码路径。
 - **Requirements:** R3, R20, R22, KTD-5, KTD-9
 - **Dependencies:** U5
 - **Files:**
@@ -257,9 +257,9 @@ WHERE l.from_id = ? AND l.tenant_id = ?
   - delete `runtime/storage/sqliteobda/sidecar.go` if still present
   - modify `runtime/storage/sqliteobda/links_test.go`
   - modify `runtime/storage/sqliteobda/objects_test.go`
-- **Approach:** 固定 `path.Steps` 生成多 JOIN，每跳 tenant（及未 omit 软删）谓词。起点类型校验 KTD-9。深度 >8 → `ErrUnsupportedCapability`。Hard delete：KTD-5 先删全部相关 link 行，再删对象行（替换 U4 未实现的硬删）。
+- **Approach:** 固定 `path.Steps` 生成多 JOIN，每跳 tenant（及未 omit 软删）谓词。只投影并装配终点对象；`Edges`/`Visited` 空。起点类型校验 KTD-9。深度 >8 → `ErrUnsupportedCapability`。Hard delete：KTD-5 先删全部相关 link 行，再删对象行（替换 U4 未实现的硬删）。完整图装配与 Query IR sqlite 拼树不在本单元。
 - **Test scenarios:**
-  - 两步路径返回终端 nodes 与 edges；超深度拒绝
+  - 两步路径返回终端 nodes；`Edges`/`Visited` 为空；超深度拒绝
   - 起点类型与第一跳不符 → `ErrObjectNotFound`
   - Hard delete 后两端 GetLinks 为空；admission 行消失
   - 编译包内无对 `of_` 表名的 Exec（测例扫 sqlite_master）

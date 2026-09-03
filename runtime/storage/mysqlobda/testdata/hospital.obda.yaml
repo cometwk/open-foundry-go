@@ -10,9 +10,9 @@ schema:
 sources:
   primary:
     kind: sql
-    dialect: sqlite
+    dialect: mysql
     connection:
-      dsnRef: secret://hospital/sqlite-dsn
+      dsnRef: secret://hospital/mysql-dsn
 models:
   Patient:
     sourceRef: primary
