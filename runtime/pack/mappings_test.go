@@ -39,15 +39,8 @@ metadata:
 schema:
   namespace: test.pack
   version: 1
-sources:
-  primary:
-    kind: sql
-    dialect: sqlite
-    connection:
-      dsnRef: primary
 models:
   ` + name + `:
-    sourceRef: primary
     relation:
       kind: table
       name: ` + table + `
@@ -77,15 +70,8 @@ metadata:
 schema:
   namespace: test.pack
   version: 1
-sources:
-  primary:
-    kind: sql
-    dialect: sqlite
-    connection:
-      dsnRef: primary
 links:
   ` + name + `:
-    sourceRef: primary
     relation:
       kind: table
       name: ` + table + `
@@ -194,7 +180,7 @@ func TestLoadMappings_MissingFile(t *testing.T) {
 }
 
 func TestLoadMappings_PlaintextDSN(t *testing.T) {
-	raw := strings.Replace(modelMapping("Widget", "widget"), "dsnRef: primary", "dsn: file:secret.db", 1)
+	raw := strings.Replace(modelMapping("Widget", "widget"), "column: name", "column: name\n      dsn: file:secret.db", 1)
 	dir := writePack(t, map[string]string{
 		"pack.yaml":             schemaPackYAML("obda:\n  - obda/widget.obda.yaml\n"),
 		"schema/models.odl":     widgetODL,

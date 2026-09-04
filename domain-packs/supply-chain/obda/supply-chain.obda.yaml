@@ -1,8 +1,7 @@
 # Supply Chain Domain Pack — OBDA mapping (SQLite direct-native)
 #
 # Maps the 6 ObjectTypes and 7 LinkTypes of the supply.chain namespace onto
-# business tables. Loaded by the pack loader (obda/ directory convention);
-# the DSN is resolved from the dsnRef at provider construction.
+# business tables. Loaded by the pack loader (obda/ directory convention).
 
 apiVersion: openfoundry.io/obda/v1
 kind: OBDAConfig
@@ -13,15 +12,8 @@ metadata:
 schema:
   namespace: supply.chain
   version: 1
-sources:
-  primary:
-    kind: sql
-    dialect: sqlite
-    connection:
-      dsnRef: primary
 models:
   Supplier:
-    sourceRef: primary
     relation:
       kind: table
       name: supplier
@@ -53,7 +45,6 @@ models:
       onTimeDeliveryRate:
         column: on_time_delivery_rate
   Facility:
-    sourceRef: primary
     relation:
       kind: table
       name: facility
@@ -83,7 +74,6 @@ models:
       capacity:
         column: capacity
   Product:
-    sourceRef: primary
     relation:
       kind: table
       name: product
@@ -111,7 +101,6 @@ models:
       reorderQuantity:
         column: reorder_quantity
   PurchaseOrder:
-    sourceRef: primary
     relation:
       kind: table
       name: purchase_order
@@ -145,7 +134,6 @@ models:
       notes:
         column: notes
   Shipment:
-    sourceRef: primary
     relation:
       kind: table
       name: shipment
@@ -181,7 +169,6 @@ models:
       destination:
         column: destination_facility_id
   InventoryRecord:
-    sourceRef: primary
     relation:
       kind: table
       name: inventory_record
@@ -210,7 +197,6 @@ models:
         column: facility_id
 links:
   SuppliesProduct:
-    sourceRef: primary
     relation:
       kind: table
       name: supplies_product
@@ -240,7 +226,6 @@ links:
       preferredSupplier:
         column: preferred_supplier
   OrderedFrom:
-    sourceRef: primary
     relation:
       kind: table
       name: ordered_from
@@ -264,7 +249,6 @@ links:
       orderedAt:
         column: ordered_at
   ShipmentForOrder:
-    sourceRef: primary
     relation:
       kind: table
       name: shipment_for_order
@@ -288,7 +272,6 @@ links:
       createdAt:
         column: created_at
   ShipsFrom:
-    sourceRef: primary
     relation:
       kind: table
       name: ships_from
@@ -309,7 +292,6 @@ links:
     system:
       strategy: native
   ShipsTo:
-    sourceRef: primary
     relation:
       kind: table
       name: ships_to
@@ -330,7 +312,6 @@ links:
     system:
       strategy: native
   InventoryAt:
-    sourceRef: primary
     relation:
       kind: table
       name: inventory_at
@@ -351,7 +332,6 @@ links:
     system:
       strategy: native
   InventoryOf:
-    sourceRef: primary
     relation:
       kind: table
       name: inventory_of

@@ -2,16 +2,15 @@ package obda
 
 import "fmt"
 
-// Document is a parsed *.obda.yaml mapping. Dialect is an opaque
-// identifier here; a provider binds a concrete adapter at Open time.
+// Document is a parsed *.obda.yaml mapping. YAML describes logical
+// bindings only; the database connection is injected at provider.Open.
 type Document struct {
-	APIVersion string            `yaml:"apiVersion"`
-	Kind       string            `yaml:"kind"`
-	Metadata   Metadata          `yaml:"metadata"`
-	Schema     SchemaRef         `yaml:"schema"`
-	Sources    map[string]Source `yaml:"sources"`
-	Models     map[string]Model  `yaml:"models"`
-	Links      map[string]Link   `yaml:"links"`
+	APIVersion string           `yaml:"apiVersion"`
+	Kind       string           `yaml:"kind"`
+	Metadata   Metadata         `yaml:"metadata"`
+	Schema     SchemaRef        `yaml:"schema"`
+	Models     map[string]Model `yaml:"models"`
+	Links      map[string]Link  `yaml:"links"`
 }
 
 // Metadata names a mapping document version.
@@ -27,42 +26,26 @@ type SchemaRef struct {
 	Version   int    `yaml:"version"`
 }
 
-// Source is a named SQL data source. Connection holds only a dsnRef
-// (a simple identifier such as "primary"); plaintext DSNs are rejected at parse.
-type Source struct {
-	Kind       string     `yaml:"kind"`
-	Dialect    string     `yaml:"dialect"`
-	Connection Connection `yaml:"connection"`
-}
-
-// Connection names a dsnRef resolved at provider construction via Options.DSNRefs.
-// The value is a map key, not a URI or DSN.
-type Connection struct {
-	DSNRef string `yaml:"dsnRef"`
-}
-
 // Model maps one ObjectType onto a physical relation.
 type Model struct {
-	SourceRef string           `yaml:"sourceRef"`
-	Relation  Relation         `yaml:"relation"`
-	Access    string           `yaml:"access"`
-	Identity  Identity         `yaml:"identity"`
-	Tenant    Tenant           `yaml:"tenant"`
-	System    System           `yaml:"system"`
-	Fields    map[string]Field `yaml:"fields"`
+	Relation Relation         `yaml:"relation"`
+	Access   string           `yaml:"access"`
+	Identity Identity         `yaml:"identity"`
+	Tenant   Tenant           `yaml:"tenant"`
+	System   System           `yaml:"system"`
+	Fields   map[string]Field `yaml:"fields"`
 }
 
 // Link maps one LinkType onto a physical relation.
 type Link struct {
-	SourceRef string           `yaml:"sourceRef"`
-	Relation  Relation         `yaml:"relation"`
-	Access    string           `yaml:"access"`
-	Identity  Identity         `yaml:"identity"`
-	From      Endpoint         `yaml:"from"`
-	To        Endpoint         `yaml:"to"`
-	Tenant    Tenant           `yaml:"tenant"`
-	System    System           `yaml:"system"`
-	Fields    map[string]Field `yaml:"fields"`
+	Relation Relation         `yaml:"relation"`
+	Access   string           `yaml:"access"`
+	Identity Identity         `yaml:"identity"`
+	From     Endpoint         `yaml:"from"`
+	To       Endpoint         `yaml:"to"`
+	Tenant   Tenant           `yaml:"tenant"`
+	System   System           `yaml:"system"`
+	Fields   map[string]Field `yaml:"fields"`
 }
 
 // Relation names a table or view. Catalog must be empty or "main" for SQLite.

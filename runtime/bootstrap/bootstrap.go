@@ -19,13 +19,12 @@ type Config struct {
 	DB       *sql.DB
 	Ontology *ir.Ontology
 	Mappings []pack.Mapping
-	DSNRefs  map[string]string
 	TenantID string
 }
 
 // OpenSQLite constructs a SQLite OBDA provider from already-loaded pack
-// mappings and activates it. The caller opens the database and resolves
-// secret references; this function does not import a driver or build an Engine.
+// mappings and activates it. The caller opens the database; this function
+// does not import a driver or build an Engine.
 func OpenSQLite(cfg Config) (spi.StorageProvider, error) {
 	if cfg.DB == nil {
 		return nil, fmt.Errorf("bootstrap: db required")
@@ -44,11 +43,7 @@ func OpenSQLite(cfg Config) (spi.StorageProvider, error) {
 	if err != nil {
 		return nil, err
 	}
-	refs := cfg.DSNRefs
-	if refs == nil {
-		refs = map[string]string{}
-	}
-	p, err := sqliteobda.Open(cfg.DB, raw, sqliteobda.Options{DSNRefs: refs})
+	p, err := sqliteobda.Open(cfg.DB, raw, sqliteobda.Options{})
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +78,6 @@ func mergeDocuments(mappings []pack.Mapping) (*obda.Document, error) {
 		Kind:       first.Kind,
 		Metadata:   first.Metadata,
 		Schema:     first.Schema,
-		Sources:    map[string]obda.Source{},
 		Models:     map[string]obda.Model{},
 		Links:      map[string]obda.Link{},
 	}
@@ -91,17 +85,6 @@ func mergeDocuments(mappings []pack.Mapping) (*obda.Document, error) {
 	for _, m := range mappings {
 		if m.Doc == nil {
 			return nil, fmt.Errorf("bootstrap: mapping %s has nil document", m.Path)
-		}
-		for name, src := range m.Doc.Sources {
-			if existing, ok := out.Sources[name]; ok {
-				merged, ok := mergeSources(existing, src)
-				if !ok {
-					return nil, fmt.Errorf("bootstrap: mapping %s: conflicting source %q", m.Path, name)
-				}
-				out.Sources[name] = merged
-				continue
-			}
-			out.Sources[name] = src
 		}
 		for name, model := range m.Doc.Models {
 			if _, ok := out.Models[name]; ok {
@@ -125,34 +108,4 @@ func mergeDocuments(mappings []pack.Mapping) (*obda.Document, error) {
 		}
 	}
 	return &out, nil
-}
-
-func mergeSources(a, b obda.Source) (obda.Source, bool) {
-	kindA, kindB := a.Kind, b.Kind
-	if kindA == "" {
-		kindA = "sql"
-	}
-	if kindB == "" {
-		kindB = "sql"
-	}
-	if kindA != kindB {
-		return obda.Source{}, false
-	}
-	if a.Dialect != "" && b.Dialect != "" && a.Dialect != b.Dialect {
-		return obda.Source{}, false
-	}
-	if a.Connection.DSNRef != b.Connection.DSNRef {
-		return obda.Source{}, false
-	}
-	out := a
-	if out.Kind == "" {
-		out.Kind = b.Kind
-	}
-	if out.Dialect == "" {
-		out.Dialect = b.Dialect
-	}
-	if out.Kind == "" {
-		out.Kind = "sql"
-	}
-	return out, true
 }

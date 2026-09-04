@@ -17,9 +17,6 @@ func TestParseValidDirectNative(t *testing.T) {
 	if err := obda.Validate(doc); err != nil {
 		t.Fatal(err)
 	}
-	if doc.Sources["primary"].Dialect != "sqlite" {
-		t.Fatalf("dialect=%q", doc.Sources["primary"].Dialect)
-	}
 	if doc.Models["Patient"].Relation.Catalog != "" {
 		t.Fatalf("catalog=%q want empty", doc.Models["Patient"].Relation.Catalog)
 	}
@@ -30,11 +27,10 @@ func TestParseRejectsPlaintextDSN(t *testing.T) {
 apiVersion: openfoundry.io/obda/v1
 kind: OBDAConfig
 metadata: {name: x}
-sources:
-  primary:
-    dialect: sqlite
-    connection:
-      dsn: file:secret.db
+models:
+  Patient:
+    relation: {kind: table, name: patient}
+    dsn: file:secret.db
 `
 	_, err := obda.Parse([]byte(raw))
 	if !errors.Is(err, spi.ErrInvalidMapping) {
@@ -47,12 +43,10 @@ func TestParseRejectsPassword(t *testing.T) {
 apiVersion: openfoundry.io/obda/v1
 kind: OBDAConfig
 metadata: {name: x}
-sources:
-  primary:
-    dialect: sqlite
-    connection:
-      dsnRef: primary
-      password: hunter2
+models:
+  Patient:
+    relation: {kind: table, name: patient}
+    password: hunter2
 `
 	_, err := obda.Parse([]byte(raw))
 	if !errors.Is(err, spi.ErrInvalidMapping) {
@@ -60,17 +54,50 @@ sources:
 	}
 }
 
-func TestParseDialectMySQLIsOpaque(t *testing.T) {
-	raw := strings.Replace(validYAML, "dialect: sqlite", "dialect: mysql", 1)
-	doc, err := obda.Parse([]byte(raw))
-	if err != nil {
+func TestParseRejectsTopLevelSources(t *testing.T) {
+	raw := strings.Replace(validYAML, "models:", "sources:\n  primary: {}\nmodels:", 1)
+	_, err := obda.Parse([]byte(raw))
+	if !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("err=%v", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "sources") {
+		t.Fatalf("err=%v, want sources removed", err)
+	}
+}
+
+func TestParseRejectsModelSourceRef(t *testing.T) {
+	raw := strings.Replace(validYAML, "  Patient:\n    relation:", "  Patient:\n    sourceRef: primary\n    relation:", 1)
+	_, err := obda.Parse([]byte(raw))
+	if !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("err=%v", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "sourceRef") {
+		t.Fatalf("err=%v, want sourceRef removed", err)
+	}
+}
+
+func TestParseRejectsLinkSourceRef(t *testing.T) {
+	raw := strings.Replace(validYAML, "  AdmittedTo:\n    relation:", "  AdmittedTo:\n    sourceRef: primary\n    relation:", 1)
+	_, err := obda.Parse([]byte(raw))
+	if !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("err=%v", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "sourceRef") {
+		t.Fatalf("err=%v, want sourceRef removed", err)
+	}
+}
+
+func TestParseAllowsFieldNamedSources(t *testing.T) {
+	raw := strings.Replace(validYAML, "      name:\n        column: patient_name", "      sources:\n        column: patient_name", 1)
+	if _, err := obda.Parse([]byte(raw)); err != nil {
 		t.Fatal(err)
 	}
-	if err := obda.Validate(doc); err != nil {
+}
+
+func TestParseAllowsFieldNamedSourceRef(t *testing.T) {
+	raw := strings.Replace(validYAML, "      name:\n        column: patient_name", "      sourceRef:\n        column: patient_name", 1)
+	if _, err := obda.Parse([]byte(raw)); err != nil {
 		t.Fatal(err)
-	}
-	if doc.Sources["primary"].Dialect != "mysql" {
-		t.Fatalf("dialect=%q", doc.Sources["primary"].Dialect)
 	}
 }
 
@@ -84,15 +111,8 @@ metadata:
 schema:
   namespace: nhs.acute
   version: 1
-sources:
-  primary:
-    kind: sql
-    dialect: sqlite
-    connection:
-      dsnRef: primary
 models:
   Patient:
-    sourceRef: primary
     relation:
       kind: table
       name: patient
@@ -111,7 +131,6 @@ models:
         column: patient_name
 links:
   AdmittedTo:
-    sourceRef: primary
     relation:
       kind: table
       name: admission

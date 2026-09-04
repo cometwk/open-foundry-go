@@ -60,7 +60,6 @@ type Bootstrap struct {
 	DB       *sql.DB
 	Ontology *ir.Ontology
 	Mappings []pack.Mapping
-	DSNRefs  map[string]string
 	TenantID string
 	SPI      spi.StorageProvider
 	Schema   spi.OntologySchema
@@ -106,8 +105,7 @@ func Open(c *Conf) (*Bootstrap, error) {
 	if err != nil {
 		return nil, err
 	}
-	refs := map[string]string{}
-	p, err := sqliteobda.Open(db, raw, sqliteobda.Options{DSNRefs: refs})
+	p, err := sqliteobda.Open(db, raw, sqliteobda.Options{})
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +116,6 @@ func Open(c *Conf) (*Bootstrap, error) {
 		DB:       db,
 		Ontology: onto,
 		Mappings: mappings,
-		DSNRefs:  refs,
 		TenantID: "",
 		SPI:      p,
 	}

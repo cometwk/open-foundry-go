@@ -42,15 +42,8 @@ metadata:
 schema:
   namespace: test.pack
   version: 1
-sources:
-  primary:
-    kind: sql
-    dialect: sqlite
-    connection:
-      dsnRef: primary
 models:
   ` + name + `:
-    sourceRef: primary
     relation:
       kind: table
       name: ` + table + `
@@ -141,7 +134,6 @@ func TestOpenSQLite_RoundTrip(t *testing.T) {
 		DB:       db,
 		Ontology: onto,
 		Mappings: mappings,
-		DSNRefs:  map[string]string{"secret://test/sqlite-dsn": "ignored"},
 		TenantID: "t1",
 	})
 	if err != nil {
@@ -191,7 +183,6 @@ func TestOpenSQLite_MergesTwoMappings(t *testing.T) {
 		DB:       db,
 		Ontology: onto,
 		Mappings: mappings,
-		DSNRefs:  map[string]string{"secret://test/sqlite-dsn": "ignored"},
 		TenantID: "t1",
 	})
 	if err != nil {
@@ -216,28 +207,6 @@ func TestOpenSQLite_MergesTwoMappings(t *testing.T) {
 	}
 	if gotW["name"] != "W" || gotG["name"] != "G" {
 		t.Fatalf("widget=%v gadget=%v", gotW["name"], gotG["name"])
-	}
-}
-
-func TestOpenSQLite_CompatibleSourceDefaults(t *testing.T) {
-	gadget := strings.Replace(modelMapping("Gadget", "gadget"), "    kind: sql\n", "", 1)
-	dir := writePack(t, map[string]string{
-		"pack.yaml":             "name: fixture\nnamespace: test.pack\nschema:\n  - schema/models.odl\nobda:\n  - obda/widget.obda.yaml\n  - obda/gadget.obda.yaml\n",
-		"schema/models.odl":     widgetODL,
-		"obda/widget.obda.yaml": modelMapping("Widget", "widget"),
-		"obda/gadget.obda.yaml": gadget,
-	})
-	onto, mappings := loadPack(t, dir)
-	db := openDB(t)
-	mustInitMappings(t, db, onto, mappings)
-	if _, err := bootstrap.OpenSQLite(bootstrap.Config{
-		DB:       db,
-		Ontology: onto,
-		Mappings: mappings,
-		DSNRefs:  map[string]string{"secret://test/sqlite-dsn": "ignored"},
-		TenantID: "t1",
-	}); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -268,28 +237,10 @@ func TestOpenSQLite_DuplicateModelOnMerge(t *testing.T) {
 			{Path: "obda/a.obda.yaml", Raw: rawA, Doc: docA},
 			{Path: "obda/b.obda.yaml", Raw: rawB, Doc: docB},
 		},
-		DSNRefs:  map[string]string{"secret://test/sqlite-dsn": "ignored"},
 		TenantID: "t1",
 	})
 	if err == nil || !strings.Contains(err.Error(), "duplicate model") {
 		t.Fatalf("err = %v, want duplicate model", err)
-	}
-}
-
-func TestOpenSQLite_MissingDSNRef(t *testing.T) {
-	onto, mappings := widgetPack(t)
-	db := openDB(t)
-	_, err := bootstrap.OpenSQLite(bootstrap.Config{
-		DB:       db,
-		Ontology: onto,
-		Mappings: mappings,
-		TenantID: "t1",
-	})
-	if err == nil {
-		t.Fatal("err = nil, want unresolved dsnRef")
-	}
-	if !errors.Is(err, spi.ErrInvalidMapping) {
-		t.Fatalf("err = %v, want ErrInvalidMapping", err)
 	}
 }
 
@@ -300,7 +251,6 @@ func TestOpenSQLite_EmptyTenant(t *testing.T) {
 		DB:       db,
 		Ontology: onto,
 		Mappings: mappings,
-		DSNRefs:  map[string]string{"secret://test/sqlite-dsn": "ignored"},
 	})
 	if !errors.Is(err, spi.ErrTenantRequired) {
 		t.Fatalf("err = %v, want ErrTenantRequired", err)
@@ -321,7 +271,6 @@ func TestOpenSQLite_NoMapping(t *testing.T) {
 		DB:       db,
 		Ontology: onto,
 		Mappings: mappings,
-		DSNRefs:  map[string]string{"secret://test/sqlite-dsn": "ignored"},
 		TenantID: "t1",
 	})
 	if err == nil || !strings.Contains(err.Error(), "no OBDA mapping") {
@@ -352,7 +301,6 @@ func TestOpenSQLite_SupplyChainRoundTrip(t *testing.T) {
 		DB:       db,
 		Ontology: onto,
 		Mappings: mappings,
-		DSNRefs:  map[string]string{"secret://supply-chain/sqlite-dsn": "ignored"},
 		TenantID: "t1",
 	})
 	if err != nil {

@@ -113,16 +113,6 @@ func TestApplySchemaRequiresTenant(t *testing.T) {
 	}
 }
 
-func TestOpenRejectsMySQLDialect(t *testing.T) {
-	db := openDB(t)
-	raw := testdata(t, "patient.obda.yaml")
-	raw = []byte(strings.Replace(string(raw), "dialect: sqlite", "dialect: mysql", 1))
-	_, err := sqliteobda.Open(db, raw, sqliteobda.Options{DSNRefs: map[string]string{"secret://hospital/sqlite-dsn": "x"}})
-	if !errors.Is(err, spi.ErrInvalidMapping) {
-		t.Fatalf("err=%v", err)
-	}
-}
-
 func TestHealthCheckOmitsPath(t *testing.T) {
 	p, _ := openProvider(t, testdata(t, "patient.obda.yaml"))
 	st, err := p.HealthCheck()
@@ -226,9 +216,7 @@ func assertNoOfTables(t *testing.T, db *sql.DB) {
 func openProvider(t *testing.T, mapping []byte) (*sqliteobda.Provider, *sql.DB) {
 	t.Helper()
 	db := openDB(t)
-	p, err := sqliteobda.Open(db, mapping, sqliteobda.Options{
-		DSNRefs: map[string]string{"secret://hospital/sqlite-dsn": "ignored"},
-	})
+	p, err := sqliteobda.Open(db, mapping, sqliteobda.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

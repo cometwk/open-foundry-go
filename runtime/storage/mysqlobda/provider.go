@@ -3,7 +3,6 @@ package mysqlobda
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -20,10 +19,8 @@ import (
 
 var _ spi.StorageProvider = (*Provider)(nil)
 
-// Options resolve mapping dsnRef names. Plaintext DSNs never live in YAML.
-type Options struct {
-	DSNRefs map[string]string
-}
+// Options is reserved for future provider construction settings.
+type Options struct{}
 
 // DBTX is *sql.DB or *sql.Tx. Helpers must not fall back to p.db while a Tx is open.
 type DBTX interface {
@@ -60,16 +57,6 @@ func Open(db *sql.DB, mapping []byte, opts Options) (*Provider, error) {
 	}
 	if err := obda.Validate(doc); err != nil {
 		return nil, err
-	}
-	for name, src := range doc.Sources {
-		if src.Dialect != "" && src.Dialect != "mysql" {
-			return nil, fmt.Errorf("%w: dialect %q on source %q", spi.ErrInvalidMapping, src.Dialect, name)
-		}
-		if src.Connection.DSNRef != "" && opts.DSNRefs != nil {
-			if _, ok := opts.DSNRefs[src.Connection.DSNRef]; !ok {
-				return nil, fmt.Errorf("%w: unresolved dsnRef %q", spi.ErrInvalidMapping, src.Connection.DSNRef)
-			}
-		}
 	}
 	if err := db.Ping(); err != nil {
 		return nil, err
