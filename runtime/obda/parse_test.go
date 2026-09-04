@@ -51,7 +51,7 @@ sources:
   primary:
     dialect: sqlite
     connection:
-      dsnRef: secret://x
+      dsnRef: primary
       password: hunter2
 `
 	_, err := obda.Parse([]byte(raw))
@@ -89,7 +89,7 @@ sources:
     kind: sql
     dialect: sqlite
     connection:
-      dsnRef: secret://hospital/sqlite-dsn
+      dsnRef: primary
 models:
   Patient:
     sourceRef: primary

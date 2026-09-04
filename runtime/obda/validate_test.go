@@ -52,7 +52,7 @@ metadata: {name: v}
 sources:
   primary:
     dialect: sqlite
-    connection: {dsnRef: secret://x}
+    connection: {dsnRef: primary}
 models:
   Patient:
     sourceRef: primary
@@ -66,6 +66,11 @@ models:
 
 func TestValidateTenantConnection(t *testing.T) {
 	raw := strings.Replace(validYAML, "strategy: column\n      column: tenant_id", "strategy: connection", 1)
+	mustInvalid(t, raw)
+}
+
+func TestValidateRejectsURIStyleDSNRef(t *testing.T) {
+	raw := strings.Replace(validYAML, "dsnRef: primary", "dsnRef: secret://hospital/sqlite-dsn", 1)
 	mustInvalid(t, raw)
 }
 

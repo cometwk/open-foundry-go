@@ -18,7 +18,7 @@ sources:
     kind: sql
     dialect: sqlite
     connection:
-      dsnRef: secret://supply-chain/sqlite-dsn
+      dsnRef: primary
 models:
   Supplier:
     sourceRef: primary

@@ -27,15 +27,16 @@ type SchemaRef struct {
 	Version   int    `yaml:"version"`
 }
 
-// Source is a named SQL data source. Connection holds only a dsnRef;
-// plaintext DSNs are rejected at parse.
+// Source is a named SQL data source. Connection holds only a dsnRef
+// (a simple identifier such as "primary"); plaintext DSNs are rejected at parse.
 type Source struct {
 	Kind       string     `yaml:"kind"`
 	Dialect    string     `yaml:"dialect"`
 	Connection Connection `yaml:"connection"`
 }
 
-// Connection names a secret reference resolved at provider construction.
+// Connection names a dsnRef resolved at provider construction via Options.DSNRefs.
+// The value is a map key, not a URI or DSN.
 type Connection struct {
 	DSNRef string `yaml:"dsnRef"`
 }

@@ -44,7 +44,7 @@ sources:
     kind: sql
     dialect: sqlite
     connection:
-      dsnRef: secret://test/sqlite-dsn
+      dsnRef: primary
 models:
   ` + name + `:
     sourceRef: primary
@@ -82,7 +82,7 @@ sources:
     kind: sql
     dialect: sqlite
     connection:
-      dsnRef: secret://test/sqlite-dsn
+      dsnRef: primary
 links:
   ` + name + `:
     sourceRef: primary
@@ -194,7 +194,7 @@ func TestLoadMappings_MissingFile(t *testing.T) {
 }
 
 func TestLoadMappings_PlaintextDSN(t *testing.T) {
-	raw := strings.Replace(modelMapping("Widget", "widget"), "dsnRef: secret://test/sqlite-dsn", "dsn: file:secret.db", 1)
+	raw := strings.Replace(modelMapping("Widget", "widget"), "dsnRef: primary", "dsn: file:secret.db", 1)
 	dir := writePack(t, map[string]string{
 		"pack.yaml":             schemaPackYAML("obda:\n  - obda/widget.obda.yaml\n"),
 		"schema/models.odl":     widgetODL,

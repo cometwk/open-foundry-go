@@ -2,10 +2,15 @@ package obda
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/openfoundry/runtime/spi"
 )
+
+// dsnRefName is a simple identifier. URI-shaped values such as
+// secret://… are rejected so YAML cannot impersonate a secret store.
+var dsnRefName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 var writableTransforms = map[string]struct{}{
 	"":              {},
@@ -47,6 +52,9 @@ func Validate(doc *Document) error {
 		}
 		if src.Connection.DSNRef == "" {
 			return fmt.Errorf("%w: source %q missing connection.dsnRef", spi.ErrInvalidMapping, name)
+		}
+		if !dsnRefName.MatchString(src.Connection.DSNRef) {
+			return fmt.Errorf("%w: source %q connection.dsnRef %q is not a simple name", spi.ErrInvalidMapping, name, src.Connection.DSNRef)
 		}
 	}
 	if len(doc.Models) == 0 && len(doc.Links) == 0 {

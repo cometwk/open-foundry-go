@@ -12,7 +12,7 @@ sources:
     kind: sql
     dialect: sqlite
     connection:
-      dsnRef: secret://hospital/sqlite-dsn
+      dsnRef: primary
 models:
   Patient:
     sourceRef: primary

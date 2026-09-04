@@ -418,7 +418,7 @@ sources:
     kind: sql              # 空或 sql；其他 kind 非法
     dialect: sqlite        # Core 不解释；Open 要求 sqlite 或空
     connection:
-      dsnRef: secret://hospital/sqlite-dsn
+      dsnRef: primary
 ```
 
 v3 所有可写绑定必须落在**同一个 SQLite 连接/文件**（一个事务域）。跨域写入返回 `ErrTransactionDomain`（表已定义；当前单文件 Open 路径不会主动跨域）。
@@ -2009,7 +2009,7 @@ sources:
     kind: sql
     dialect: sqlite
     connection:
-      dsnRef: secret://hospital/sqlite-dsn
+      dsnRef: primary
 models:
   Patient:
     sourceRef: primary

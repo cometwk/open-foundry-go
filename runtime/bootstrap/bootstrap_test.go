@@ -47,7 +47,7 @@ sources:
     kind: sql
     dialect: sqlite
     connection:
-      dsnRef: secret://test/sqlite-dsn
+      dsnRef: primary
 models:
   ` + name + `:
     sourceRef: primary
