@@ -69,6 +69,24 @@ func MappedTableStatements(compiled *obda.Compiled) ([]string, error) {
 	return stmts, nil
 }
 
+// DropTableStatements emits DROP TABLE IF EXISTS for each mapped table,
+// reverse of PhysicalSchema order so junction tables go before hosts.
+func DropTableStatements(compiled *obda.Compiled) ([]string, error) {
+	if compiled == nil {
+		return nil, fmt.Errorf("mysql: nil compiled mapping")
+	}
+	tables := obda.PhysicalSchema(compiled).Tables
+	stmts := make([]string, 0, len(tables))
+	for i := len(tables) - 1; i >= 0; i-- {
+		q, err := quote(sqlast.Identifier{Name: tables[i].Name})
+		if err != nil {
+			return nil, err
+		}
+		stmts = append(stmts, "DROP TABLE IF EXISTS "+q)
+	}
+	return stmts, nil
+}
+
 func tablesByName(models map[string]*obda.CompiledModel) map[string]*obda.CompiledModel {
 	out := make(map[string]*obda.CompiledModel, len(models))
 	for _, m := range models {

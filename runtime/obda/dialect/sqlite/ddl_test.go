@@ -97,6 +97,35 @@ func TestMappedTableStatementsRejectsInline(t *testing.T) {
 	}
 }
 
+func TestDropTableStatementsReverseOrder(t *testing.T) {
+	stmts, err := sqlitedialect.DropTableStatements(hospitalCompiled(obda.OmitFlags{}, spi.CardinalityManyToOne))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		`DROP TABLE IF EXISTS "admission"`,
+		`DROP TABLE IF EXISTS "ward"`,
+		`DROP TABLE IF EXISTS "patient"`,
+	}
+	if len(stmts) != len(want) {
+		t.Fatalf("got %v", stmts)
+	}
+	for i := range want {
+		if stmts[i] != want[i] {
+			t.Fatalf("stmts[%d]=%q want %q", i, stmts[i], want[i])
+		}
+	}
+}
+
+func TestDropTableStatementsRejectsInline(t *testing.T) {
+	c := hospitalCompiled(obda.OmitFlags{}, spi.CardinalityManyToOne)
+	c.Links["OwnedBy"] = &obda.CompiledLink{Name: "OwnedBy", Table: "patient", Inline: true, HostModel: "Patient", FKColumn: "owner_id"}
+	_, err := sqlitedialect.DropTableStatements(c)
+	if !errors.Is(err, spi.ErrUnsupportedCapability) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 func hospitalCompiled(omit obda.OmitFlags, card spi.Cardinality) *obda.Compiled {
 	return &obda.Compiled{
 		Models: map[string]*obda.CompiledModel{

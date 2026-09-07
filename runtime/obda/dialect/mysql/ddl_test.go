@@ -275,3 +275,22 @@ func TestHasUniqueIndex(t *testing.T) {
 		t.Fatal("missing index must not match")
 	}
 }
+
+func TestDropTableStatementsReverseOrder(t *testing.T) {
+	stmts, err := mysqldialect.DropTableStatements(compiledFixture(spi.CardinalityManyToOne))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"DROP TABLE IF EXISTS `admission`",
+		"DROP TABLE IF EXISTS `patient`",
+	}
+	if len(stmts) != len(want) {
+		t.Fatalf("got %v", stmts)
+	}
+	for i := range want {
+		if stmts[i] != want[i] {
+			t.Fatalf("stmts[%d]=%q want %q", i, stmts[i], want[i])
+		}
+	}
+}

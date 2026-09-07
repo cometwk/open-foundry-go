@@ -36,3 +36,17 @@ func MappedStatements(compiled *obda.Compiled, dialect string) ([]string, error)
 		return sqlitedialect.MappedTableStatements(compiled)
 	}
 }
+
+// DropStatements renders DROP TABLE IF EXISTS for mapped tables, reverse of CREATE order.
+func DropStatements(compiled *obda.Compiled, dialect string) ([]string, error) {
+	name, err := SQLName(dialect)
+	if err != nil {
+		return nil, err
+	}
+	switch name {
+	case SQLMySQL:
+		return mysqldialect.DropTableStatements(compiled)
+	default:
+		return sqlitedialect.DropTableStatements(compiled)
+	}
+}

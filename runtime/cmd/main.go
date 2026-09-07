@@ -49,7 +49,7 @@ var cmd = &cli.Command{
 		{
 			Name:    "ddl",
 			Aliases: []string{"a"},
-			Usage:   "打印DDL语句",
+			Usage:   "打印或执行 DDL 语句",
 			Flags: []cli.Flag{
 				&cli.StringFlag{
 					Name:  "dialect",
@@ -60,9 +60,19 @@ var cmd = &cli.Command{
 					Aliases: []string{"o"},
 					Usage:   "将 DDL 写到指定文件；省略则打印到 stdout",
 				},
+				&cli.BoolFlag{
+					Name:    "execute",
+					Aliases: []string{"x"},
+					Usage:   "执行这些 DDL",
+				},
+				&cli.BoolFlag{
+					Name:    "force",
+					Aliases: []string{"f"},
+					Usage:   "先删除这些表，然后重建",
+				},
 			},
 			Action: func(ctx context.Context, cmd *cli.Command) error {
-				return ddl(cmd.String("dialect"), cmd.String("output"))
+				return ddl(cmd.String("dialect"), cmd.String("output"), cmd.Bool("execute"), cmd.Bool("force"))
 			},
 		},
 		{
@@ -109,8 +119,8 @@ func run() error {
 	return nil
 }
 
-func ddl(dialect, output string) error {
-	stmts, err := bootstrap.PrintMappedDDL(conf, dialect)
+func ddl(dialect, output string, execute, force bool) error {
+	stmts, err := bootstrap.MappedDDL(conf, dialect, force)
 	if err != nil {
 		slog.Error("print ddl failed", "error", err)
 		return err
@@ -119,12 +129,27 @@ func ddl(dialect, output string) error {
 		slog.Error("write ddl failed", "error", err, "output", output)
 		return err
 	}
+	if !execute {
+		return nil
+	}
+	if err := bootstrap.ExecStatements(conf, dialect, stmts); err != nil {
+		slog.Error("exec ddl failed", "error", err)
+		return err
+	}
 	return nil
 }
 
 func writeDDL(stmts []string, output string) error {
+	rendered := make([]string, 0, len(stmts))
+	for _, s := range stmts {
+		s = withSQLSemi(s)
+		if s == "" {
+			continue
+		}
+		rendered = append(rendered, s)
+	}
 	if output == "" {
-		for _, s := range stmts {
+		for _, s := range rendered {
 			fmt.Println(s)
 		}
 		return nil
@@ -136,11 +161,19 @@ func writeDDL(stmts []string, output string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	body := strings.Join(stmts, "\n")
+	body := strings.Join(rendered, "\n")
 	if body != "" {
 		body += "\n"
 	}
 	return os.WriteFile(path, []byte(body), 0o644)
+}
+
+func withSQLSemi(s string) string {
+	s = strings.TrimRight(s, " \t\r\n")
+	if s == "" || strings.HasSuffix(s, ";") {
+		return s
+	}
+	return s + ";"
 }
 
 func resolveOutputPath(output string) (string, error) {

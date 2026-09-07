@@ -1,11 +1,14 @@
 package bootstrap_test
 
 import (
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	_ "modernc.org/sqlite"
 
 	"github.com/openfoundry/runtime/bootstrap"
 	"github.com/openfoundry/runtime/pack"
@@ -128,6 +131,89 @@ func TestPrintMappedDDL_NoURL(t *testing.T) {
 	if !strings.Contains(strings.Join(stmts, "\n"), "ENGINE=InnoDB") {
 		t.Fatalf("want mysql: %v", stmts)
 	}
+}
+
+func TestMappedDDL_ForcePrependsDrop(t *testing.T) {
+	dir := widgetPackDir(t)
+	stmts, err := bootstrap.PackDDL(dir, "sqlite", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stmts) < 2 {
+		t.Fatalf("stmts=%v", stmts)
+	}
+	if stmts[0] != `DROP TABLE IF EXISTS "widget"` {
+		t.Fatalf("first=%q", stmts[0])
+	}
+	if !strings.Contains(stmts[1], `CREATE TABLE IF NOT EXISTS "widget"`) {
+		t.Fatalf("create missing: %v", stmts)
+	}
+}
+
+func TestExecStatements_SQLiteCreateAndForce(t *testing.T) {
+	base := t.TempDir()
+	writePackInto(t, base, "fixture")
+	dbPath := filepath.Join(t.TempDir(), "t.db")
+	c := &bootstrap.Conf{
+		BaseDir:     base,
+		DomainPacks: "fixture",
+		DBDriver:    "sqlite",
+		DBURL:       dbPath,
+	}
+	stmts, err := bootstrap.MappedDDL(c, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bootstrap.ExecStatements(c, "", stmts); err != nil {
+		t.Fatal(err)
+	}
+	db := openFileDB(t, dbPath)
+	if _, err := db.Exec(`INSERT INTO widget (id, tenant_id, name, version, created_at, updated_at) VALUES ('1','t1','n',1,'a','b')`); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM widget`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("count=%d err=%v", n, err)
+	}
+	_ = db.Close()
+
+	force, err := bootstrap.MappedDDL(c, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bootstrap.ExecStatements(c, "", force); err != nil {
+		t.Fatal(err)
+	}
+	db = openFileDB(t, dbPath)
+	defer db.Close()
+	if err := db.QueryRow(`SELECT COUNT(*) FROM widget`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("after force count=%d err=%v", n, err)
+	}
+}
+
+func TestExecStatements_NoURL(t *testing.T) {
+	c := &bootstrap.Conf{DBDriver: "sqlite"}
+	if err := bootstrap.ExecStatements(c, "", []string{"SELECT 1"}); err == nil || !strings.Contains(err.Error(), "DB_URL") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestExecStatements_DialectMismatch(t *testing.T) {
+	c := &bootstrap.Conf{DBDriver: "mysql", DBURL: "ignored"}
+	err := bootstrap.ExecStatements(c, "sqlite", []string{"SELECT 1"})
+	if err == nil || !strings.Contains(err.Error(), "cannot execute dialect") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func openFileDB(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
 }
 
 func widgetPackDir(t *testing.T) string {

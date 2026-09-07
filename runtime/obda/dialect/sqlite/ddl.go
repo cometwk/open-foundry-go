@@ -62,6 +62,27 @@ func MappedTableStatements(compiled *obda.Compiled) ([]string, error) {
 	return stmts, nil
 }
 
+// DropTableStatements emits DROP TABLE IF EXISTS for each mapped table,
+// reverse of PhysicalSchema order so junction tables go before hosts.
+func DropTableStatements(compiled *obda.Compiled) ([]string, error) {
+	if compiled == nil {
+		return nil, fmt.Errorf("sqlite: nil compiled mapping")
+	}
+	if name := firstInlineLink(compiled); name != "" {
+		return nil, fmt.Errorf("%w: sqlite does not support inline link %q", spi.ErrUnsupportedCapability, name)
+	}
+	tables := obda.PhysicalSchema(compiled).Tables
+	stmts := make([]string, 0, len(tables))
+	for i := len(tables) - 1; i >= 0; i-- {
+		q, err := quote(sqlast.Identifier{Name: tables[i].Name})
+		if err != nil {
+			return nil, err
+		}
+		stmts = append(stmts, "DROP TABLE IF EXISTS "+q)
+	}
+	return stmts, nil
+}
+
 func firstInlineLink(compiled *obda.Compiled) string {
 	names := make([]string, 0, len(compiled.Links))
 	for name, l := range compiled.Links {
