@@ -284,6 +284,15 @@ func (d *Dialect) renderPred(p *sqlast.Predicate) (string, error) {
 			return "", err
 		}
 		return q + " IS NULL", nil
+	case "is_not_null":
+		if p.Field == nil {
+			return "", fmt.Errorf("mysql: is_not_null without field")
+		}
+		q, err := quote(*p.Field)
+		if err != nil {
+			return "", err
+		}
+		return q + " IS NOT NULL", nil
 	default:
 		return "", fmt.Errorf("%w: predicate %s", spi.ErrUnsupportedCapability, p.Op)
 	}

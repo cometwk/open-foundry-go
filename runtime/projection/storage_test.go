@@ -41,6 +41,12 @@ func TestProjectOmitsNonPersistentFields(t *testing.T) {
 	if _, ok := props["bins"]; ok {
 		t.Fatal("link nav should be omitted")
 	}
+	if len(schema.ObjectTypes[0].Navigations) != 1 || schema.ObjectTypes[0].Navigations[0].Field != "bins" {
+		t.Fatalf("navigations: %+v", schema.ObjectTypes[0].Navigations)
+	}
+	if schema.ObjectTypes[0].Navigations[0].LinkType != "InBin" {
+		t.Fatalf("nav link type: %+v", schema.ObjectTypes[0].Navigations[0])
+	}
 	if _, ok := props["count"]; ok {
 		t.Fatal("computed should be omitted")
 	}

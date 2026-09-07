@@ -428,7 +428,7 @@ v3 所有可写绑定必须落在**同一个连接**（一个事务域）。跨�
 models:
   Patient:
     relation:
-      kind: table          # table | view；缺省 table
+      kind: table          # table | view | inline；缺省见下
       catalog:             # 空或 main；其他 → ErrInvalidMapping
       name: patient        # MUST；渲染前再过标识符白名单
     access: readWrite      # read | readWrite
@@ -1530,6 +1530,8 @@ interfaces:
 ```
 
 ### 15.7 Link Property Mapping
+
+无业务属性且非 MANY_TO_MANY 的 Link 可以是宿主表上的 FK（`kind: inline` 或省略 kind），不是独立表。有业务属性的 Link 仍映射为联结表。
 
 LinkType 可以带自己的属性：
 

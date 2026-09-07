@@ -187,6 +187,9 @@ func (p *Provider) fingerprint() (string, error) {
 		tables["m:"+name] = m.Relation.Name
 	}
 	for name, l := range p.doc.Links {
+		if l.Inline() {
+			continue
+		}
 		names = append(names, "l:"+name)
 		tables["l:"+name] = l.Relation.Name
 	}

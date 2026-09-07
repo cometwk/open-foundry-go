@@ -1,0 +1,32 @@
+apiVersion: openfoundry.io/obda/v1
+kind: OBDAConfig
+metadata:
+  name: library
+  namespace: example.library
+  version: 1
+schema:
+  namespace: example.library
+  version: 1
+models:
+  Book:
+    relation: {kind: table, name: book}
+    access: readWrite
+    identity: {strategy: direct, columns: [id], insert: generated}
+    tenant: {strategy: column, column: tenant_id}
+    system: {strategy: native}
+    fields:
+      title: {column: title}
+  Member:
+    relation: {kind: table, name: member}
+    access: readWrite
+    identity: {strategy: direct, columns: [id], insert: generated}
+    tenant: {strategy: column, column: tenant_id}
+    system: {strategy: native}
+    fields:
+      name: {column: name}
+links:
+  OwnedBy:
+    relation: {kind: inline}
+    access: readWrite
+    from: {object: Book}
+    to: {object: Member, columns: [owner_id]}

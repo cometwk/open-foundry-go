@@ -160,6 +160,88 @@ func TestPlanGetLinksJoinUsesParams(t *testing.T) {
 	}
 }
 
+func TestPlanGetLinksJoinInlineOutbound(t *testing.T) {
+	sel, args, err := obda.PlanGetLinksJoin(obda.LinkJoinBinding{
+		LinkTable:     "book",
+		LinkTenant:    "tenant_id",
+		EndpointCol:   "id",
+		PeerTable:     "member",
+		PeerIDCol:     "id",
+		PeerTenantCol: "tenant_id",
+		SelectColumns: []string{"id", "owner_id"},
+		Inline:        true,
+		FKColumn:      "owner_id",
+		HostPKCol:     "id",
+	}, "t1", "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(args) != 2 || args[1] != "b1" {
+		t.Fatalf("args=%v", args)
+	}
+	if sel.From.Name != "book" {
+		t.Fatalf("from=%s", sel.From.Name)
+	}
+	if len(sel.Joins) != 1 || sel.Joins[0].Table.Name != "member" {
+		t.Fatalf("joins=%+v", sel.Joins)
+	}
+	if sel.Joins[0].Table.Name == "owned_by" {
+		t.Fatal("must not join owned_by")
+	}
+	if !hasNotNull(sel.Where, "l", "owner_id") {
+		t.Fatalf("outbound wants FK IS NOT NULL: %+v", sel.Where)
+	}
+	if !hasNull(sel.Where, "l", "deleted_at") || !hasNull(sel.Where, "p", "deleted_at") {
+		t.Fatalf("soft-delete: %+v", sel.Where)
+	}
+}
+
+func TestPlanGetLinksJoinInlineInbound(t *testing.T) {
+	sel, _, err := obda.PlanGetLinksJoin(obda.LinkJoinBinding{
+		LinkTable:     "book",
+		LinkTenant:    "tenant_id",
+		EndpointCol:   "owner_id",
+		PeerTable:     "member",
+		PeerIDCol:     "id",
+		PeerTenantCol: "tenant_id",
+		SelectColumns: []string{"id", "owner_id"},
+		Inline:        true,
+		FKColumn:      "owner_id",
+		HostPKCol:     "id",
+	}, "t1", "m1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sel.From.Name != "book" || sel.Joins[0].Table.Name != "member" {
+		t.Fatalf("from=%s joins=%+v", sel.From.Name, sel.Joins)
+	}
+	if hasNotNull(sel.Where, "l", "owner_id") {
+		t.Fatal("inbound must not require FK IS NOT NULL beyond equality")
+	}
+}
+
+func TestPlanGetLinksJoinInlineIncludeDeleted(t *testing.T) {
+	sel, _, err := obda.PlanGetLinksJoin(obda.LinkJoinBinding{
+		LinkTable:       "book",
+		LinkTenant:      "tenant_id",
+		EndpointCol:     "id",
+		PeerTable:       "member",
+		PeerIDCol:       "id",
+		PeerTenantCol:   "tenant_id",
+		Inline:          true,
+		FKColumn:        "owner_id",
+		HostPKCol:       "id",
+		OmitLinkDeleted: true,
+		OmitPeerDeleted: true,
+	}, "t1", "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasNull(sel.Where, "l", "deleted_at") || hasNull(sel.Where, "p", "deleted_at") {
+		t.Fatalf("includeDeleted: %+v", sel.Where)
+	}
+}
+
 func TestPlanCreateReadOnly(t *testing.T) {
 	b := patientBinding()
 	b.Writable = false
@@ -303,6 +385,101 @@ func TestPlanTraverseInboundSwapsEndpoint(t *testing.T) {
 	}
 }
 
+func ownedByInlineHop() obda.TraverseHop {
+	return obda.TraverseHop{
+		Direction:         "outbound",
+		Inline:            true,
+		FKColumn:          "owner_id",
+		FKOnPrev:          true,
+		LinkIdentityCol:   "id",
+		PrevIDCol:         "id",
+		PrevTenantCol:     "tenant_id",
+		TargetTable:       "member",
+		TargetIDCol:       "id",
+		TargetTenantCol:   "tenant_id",
+		TargetSelect:      []string{"id", "name"},
+		OmitLinkDeleted:   false,
+		OmitTargetDeleted: false,
+	}
+}
+
+func TestPlanTraverseInlineOneHop(t *testing.T) {
+	sel, args, err := obda.PlanTraverse(obda.ObjectBinding{
+		Table: "book", TenantColumn: "tenant_id", IdentityColumns: []string{"id"},
+	}, []obda.TraverseHop{ownedByInlineHop()}, "t1", "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(args) != 2 {
+		t.Fatalf("args=%v", args)
+	}
+	if len(sel.Joins) != 1 || sel.Joins[0].Table.Name != "member" {
+		t.Fatalf("joins=%+v", sel.Joins)
+	}
+	if !hasColEq(sel.Joins[0].On, "s1", "id", "s0", "owner_id") {
+		t.Fatalf("on=%+v", sel.Joins[0].On)
+	}
+	for _, j := range sel.Joins {
+		if j.Table.Name == "owned_by" {
+			t.Fatal("must not join owned_by")
+		}
+	}
+}
+
+func TestPlanTraverseInlineThenTable(t *testing.T) {
+	hops := []obda.TraverseHop{
+		ownedByInlineHop(),
+		{
+			Direction:         "outbound",
+			LinkTable:         "borrowed_by",
+			LinkTenant:        "tenant_id",
+			LinkIdentityCol:   "id",
+			FromCol:           "from_id",
+			ToCol:             "to_id",
+			PrevIDCol:         "id",
+			PrevTenantCol:     "tenant_id",
+			TargetTable:       "loan",
+			TargetIDCol:       "id",
+			TargetTenantCol:   "tenant_id",
+			TargetSelect:      []string{"id"},
+			OmitLinkDeleted:   false,
+			OmitTargetDeleted: false,
+		},
+	}
+	sel, _, err := obda.PlanTraverse(obda.ObjectBinding{
+		Table: "book", TenantColumn: "tenant_id", IdentityColumns: []string{"id"},
+	}, hops, "t1", "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sel.Joins) != 3 {
+		t.Fatalf("joins=%d %+v", len(sel.Joins), sel.Joins)
+	}
+	if sel.Joins[0].Table.Name != "member" || sel.Joins[1].Table.Name != "borrowed_by" || sel.Joins[2].Table.Name != "loan" {
+		t.Fatalf("joins=%+v", sel.Joins)
+	}
+	for _, j := range sel.Joins {
+		if j.Table.Name == "owned_by" {
+			t.Fatal("inline hop must not name owned_by")
+		}
+	}
+}
+
+func TestPlanTraverseInlineIncludeDeleted(t *testing.T) {
+	h := ownedByInlineHop()
+	h.OmitLinkDeleted = true
+	h.OmitTargetDeleted = true
+	sel, _, err := obda.PlanTraverse(obda.ObjectBinding{
+		Table: "book", TenantColumn: "tenant_id", IdentityColumns: []string{"id"},
+	}, []obda.TraverseHop{h}, "t1", "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasNull(sel.Where, "s0", "deleted_at") || hasNull(sel.Where, "s1", "deleted_at") {
+		t.Fatalf("includeDeleted: %+v", sel.Where)
+	}
+}
+
 func hasNull(p *sqlast.Predicate, qual, name string) bool {
 	if p == nil {
 		return false
@@ -312,6 +489,21 @@ func hasNull(p *sqlast.Predicate, qual, name string) bool {
 	}
 	for _, c := range p.Children {
 		if hasNull(c, qual, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasNotNull(p *sqlast.Predicate, qual, name string) bool {
+	if p == nil {
+		return false
+	}
+	if p.Op == "is_not_null" && p.Field != nil && p.Field.Qualifier == qual && p.Field.Name == name {
+		return true
+	}
+	for _, c := range p.Children {
+		if hasNotNull(c, qual, name) {
 			return true
 		}
 	}

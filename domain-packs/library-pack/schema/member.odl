@@ -8,4 +8,5 @@ type Member @objectType {
   email: String @sensitive
 
   books: [Book!]! @link(type: "BorrowedBy", direction: INBOUND)
+  ownedBooks: [Book!]! @link(type: "OwnedBy", direction: INBOUND)
 }

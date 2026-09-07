@@ -2,10 +2,12 @@ package sqlite
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/openfoundry/runtime/obda"
 	"github.com/openfoundry/runtime/obda/sqlast"
+	"github.com/openfoundry/runtime/spi"
 )
 
 // MappedTableStatements generates CREATE TABLE / UNIQUE INDEX for compiled
@@ -14,17 +16,29 @@ func MappedTableStatements(compiled *obda.Compiled) ([]string, error) {
 	if compiled == nil {
 		return nil, fmt.Errorf("sqlite: nil compiled mapping")
 	}
+	if name := firstInlineLink(compiled); name != "" {
+		return nil, fmt.Errorf("%w: sqlite does not support inline link %q", spi.ErrUnsupportedCapability, name)
+	}
 	expect := obda.PhysicalSchema(compiled)
 	models := tablesByName(compiled.Models)
 	links := linksByName(compiled.Links)
+	fks := inlineFKColumns(compiled)
 	var stmts []string
 	for _, tbl := range expect.Tables {
 		if m, ok := models[tbl.Name]; ok {
-			s, err := createTableStmt(tbl.Name, modelDDLColumns(m, tbl.Columns), m.IdentityColumns)
+			s, err := createTableStmt(tbl.Name, modelDDLColumns(m, tbl.Columns, fks), m.IdentityColumns)
 			if err != nil {
 				return nil, err
 			}
 			stmts = append(stmts, s)
+			for _, spec := range tbl.Uniques {
+				name := uniqueIndexName(tbl.Name, spec, nil, nil)
+				idx, err := uniqueIndex(tbl.Name, name, spec.Columns, spec.ExcludeSoftDeleted)
+				if err != nil {
+					return nil, err
+				}
+				stmts = append(stmts, idx)
+			}
 			continue
 		}
 		l, ok := links[tbl.Name]
@@ -48,6 +62,20 @@ func MappedTableStatements(compiled *obda.Compiled) ([]string, error) {
 	return stmts, nil
 }
 
+func firstInlineLink(compiled *obda.Compiled) string {
+	names := make([]string, 0, len(compiled.Links))
+	for name, l := range compiled.Links {
+		if l != nil && l.Inline {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return ""
+	}
+	return names[0]
+}
+
 func tablesByName(models map[string]*obda.CompiledModel) map[string]*obda.CompiledModel {
 	out := make(map[string]*obda.CompiledModel, len(models))
 	for _, m := range models {
@@ -59,7 +87,20 @@ func tablesByName(models map[string]*obda.CompiledModel) map[string]*obda.Compil
 func linksByName(links map[string]*obda.CompiledLink) map[string]*obda.CompiledLink {
 	out := make(map[string]*obda.CompiledLink, len(links))
 	for _, l := range links {
+		if l.Inline {
+			continue
+		}
 		out[l.Table] = l
+	}
+	return out
+}
+
+func inlineFKColumns(compiled *obda.Compiled) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, l := range compiled.Links {
+		if l.Inline && l.FKColumn != "" {
+			out[l.FKColumn] = struct{}{}
+		}
 	}
 	return out
 }
@@ -70,6 +111,9 @@ func uniqueIndexName(table string, spec obda.UniqueSpec, from, to []string) stri
 	}
 	if uniqueMatches(spec.Columns, to) {
 		return table + "_to_active"
+	}
+	if n := len(spec.Columns); n > 0 {
+		return table + "_" + spec.Columns[n-1] + "_active"
 	}
 	return table + "_from_active"
 }
@@ -100,18 +144,22 @@ type ddlColumn struct {
 	defaultSQL string
 }
 
-func modelDDLColumns(m *obda.CompiledModel, names []string) []ddlColumn {
-	out := make([]ddlColumn, 0, len(names))
-	for _, name := range names {
-		out = append(out, typedColumn(name, m.IdentityColumns, m.TenantColumn, nil, nil, m.Fields, m.PropertyTypes))
+func modelDDLColumns(m *obda.CompiledModel, cols []obda.PhysicalColumn, fks map[string]struct{}) []ddlColumn {
+	out := make([]ddlColumn, 0, len(cols))
+	for _, col := range cols {
+		if _, ok := fks[col.Name]; ok {
+			out = append(out, ddlColumn{name: col.Name, typ: "TEXT", notNull: !col.Nullable})
+			continue
+		}
+		out = append(out, typedColumn(col.Name, m.IdentityColumns, m.TenantColumn, nil, nil, m.Fields, m.PropertyTypes))
 	}
 	return out
 }
 
-func linkDDLColumns(l *obda.CompiledLink, names []string) []ddlColumn {
-	out := make([]ddlColumn, 0, len(names))
-	for _, name := range names {
-		out = append(out, typedColumn(name, l.IdentityColumns, l.TenantColumn, l.FromColumns, l.ToColumns, l.Fields, l.PropertyTypes))
+func linkDDLColumns(l *obda.CompiledLink, cols []obda.PhysicalColumn) []ddlColumn {
+	out := make([]ddlColumn, 0, len(cols))
+	for _, col := range cols {
+		out = append(out, typedColumn(col.Name, l.IdentityColumns, l.TenantColumn, l.FromColumns, l.ToColumns, l.Fields, l.PropertyTypes))
 	}
 	return out
 }

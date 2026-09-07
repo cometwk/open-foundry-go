@@ -1,6 +1,7 @@
 package sqlite_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -31,8 +32,8 @@ func TestPhysicalSchemaOmitsDialectSyntax(t *testing.T) {
 	expect := obda.PhysicalSchema(c)
 	for _, tbl := range expect.Tables {
 		for _, col := range tbl.Columns {
-			if col == "of_active" || strings.Contains(strings.ToLower(col), "is null") {
-				t.Fatalf("dialect syntax in expectation: %q", col)
+			if col.Name == "of_active" || strings.Contains(strings.ToLower(col.Name), "is null") {
+				t.Fatalf("dialect syntax in expectation: %q", col.Name)
 			}
 		}
 	}
@@ -81,6 +82,18 @@ func TestMappedTableStatementsRejectsIllegalTable(t *testing.T) {
 	c.Models["Patient"].Table = "patient;drop"
 	if _, err := sqlitedialect.MappedTableStatements(c); err == nil {
 		t.Fatal("expected reject")
+	}
+}
+
+func TestMappedTableStatementsRejectsInline(t *testing.T) {
+	c := hospitalCompiled(obda.OmitFlags{}, spi.CardinalityManyToOne)
+	c.Links["OwnedBy"] = &obda.CompiledLink{Name: "OwnedBy", Table: "patient", Inline: true, HostModel: "Patient", FKColumn: "owner_id"}
+	_, err := sqlitedialect.MappedTableStatements(c)
+	if !errors.Is(err, spi.ErrUnsupportedCapability) {
+		t.Fatalf("err=%v", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "OwnedBy") {
+		t.Fatalf("err=%v want OwnedBy", err)
 	}
 }
 

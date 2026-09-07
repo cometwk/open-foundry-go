@@ -16,6 +16,30 @@ import (
 	"github.com/openfoundry/runtime/storage/sqliteobda"
 )
 
+func TestOpenRefusesInline(t *testing.T) {
+	db := openDB(t)
+	_, err := sqliteobda.Open(db, testdata(t, "inline.obda.yaml"), sqliteobda.Options{})
+	if !errors.Is(err, spi.ErrUnsupportedCapability) {
+		t.Fatalf("err=%v", err)
+	}
+	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		names = append(names, n)
+	}
+	if len(names) != 0 {
+		t.Fatalf("tables created on refuse: %v", names)
+	}
+}
+
 func TestApplySchemaEmptyDatabaseFails(t *testing.T) {
 	p, db := openProvider(t, testdata(t, "patient.obda.yaml"))
 	_, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, patientSchema())

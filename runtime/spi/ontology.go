@@ -100,9 +100,19 @@ type OntologySchema struct {
 
 // ObjectTypeDefinition describes a persisted object type.
 type ObjectTypeDefinition struct {
-	Name       string              `json:"name"`
-	Properties []PropertyDefinition `json:"properties"`
-	Indexes    []IndexDefinition    `json:"indexes,omitempty"`
+	Name         string            `json:"name"`
+	Properties   []PropertyDefinition `json:"properties"`
+	Indexes      []IndexDefinition `json:"indexes,omitempty"`
+	Navigations  []LinkNavigation  `json:"navigations,omitempty"`
+}
+
+// LinkNavigation is a host-object @link field. Storage projection keeps it
+// so OBDA compile can bind inline FK nullability without reading IR.
+type LinkNavigation struct {
+	Field     string `json:"field"`
+	LinkType  string `json:"linkType"`
+	Direction string `json:"direction"`
+	NonNull   bool   `json:"nonNull,omitempty"`
 }
 
 // LinkTypeDefinition describes a persisted link type.

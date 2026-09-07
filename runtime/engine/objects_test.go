@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/openfoundry/runtime/ir"
+	"github.com/openfoundry/runtime/obda"
 	"github.com/openfoundry/runtime/spi"
 	"github.com/openfoundry/runtime/storage/memory"
 )
@@ -155,6 +156,52 @@ func TestEngine_CreateObject_LinkNavRoleInPayload_Rejects(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("CreateObject with LinkNav field in payload = nil err, want role rejection")
+	}
+}
+
+func TestEngine_CreateObject_InlineNavAccepted(t *testing.T) {
+	ont := objectOntology(t)
+	ont.Objects[0].Fields = append(ont.Objects[0].Fields, ir.Field{
+		Name: "owner", Type: ir.TypeRef{Name: "Part"}, Role: ir.RoleLinkNav,
+		Link: &ir.LinkRef{Type: "OwnedBy", Direction: ir.DirectionOutbound},
+	})
+	ont.Links = append(ont.Links, ir.LinkType{Name: "OwnedBy", From: "Supplier", To: "Part"})
+	compiled := &obda.Compiled{
+		Links: map[string]*obda.CompiledLink{
+			"OwnedBy":  {Name: "OwnedBy", Inline: true, HostModel: "Supplier", HostNavField: "owner", FKColumn: "owner_id", FKNullable: true},
+			"Supplies": {Name: "Supplies", Inline: false},
+		},
+	}
+	e, err := NewWithCompiled(memory.New(), ont, compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.CreateObject(tenantCtx("tnt"), "Supplier", map[string]any{
+		"name":  "Acme",
+		"owner": "part-1",
+	})
+	if err != nil {
+		t.Fatalf("inline nav should be accepted: %v", err)
+	}
+}
+
+func TestEngine_CreateObject_KindTableNavStillRejected(t *testing.T) {
+	ont := objectOntology(t)
+	compiled := &obda.Compiled{
+		Links: map[string]*obda.CompiledLink{
+			"Supplies": {Name: "Supplies", Inline: false},
+		},
+	}
+	e, err := NewWithCompiled(memory.New(), ont, compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.CreateObject(tenantCtx("tnt"), "Supplier", map[string]any{
+		"name":             "Acme",
+		"currentShipments": "x",
+	})
+	if err == nil {
+		t.Fatal("junction nav must still reject")
 	}
 }
 

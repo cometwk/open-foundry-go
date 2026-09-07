@@ -14,8 +14,14 @@ type Physical struct {
 // PhysicalTable is one mapped relation: required columns and cardinality UNIQUEs.
 type PhysicalTable struct {
 	Name    string
-	Columns []string
+	Columns []PhysicalColumn
 	Uniques []UniqueSpec
+}
+
+// PhysicalColumn is a mapped column. SQL types stay in the dialect.
+type PhysicalColumn struct {
+	Name     string
+	Nullable bool
 }
 
 // UniqueSpec is a cardinality unique key. ExcludeSoftDeleted means only live rows collide.
@@ -24,11 +30,21 @@ type UniqueSpec struct {
 	ExcludeSoftDeleted bool
 }
 
+// ColumnNames returns column names in declaration order.
+func (t PhysicalTable) ColumnNames() []string {
+	out := make([]string, len(t.Columns))
+	for i, c := range t.Columns {
+		out[i] = c.Name
+	}
+	return out
+}
+
 // PhysicalSchema derives the physical expectation. It contains no SQL types or dialect syntax.
 func PhysicalSchema(compiled *Compiled) Physical {
 	if compiled == nil {
 		return Physical{}
 	}
+	inlineByHost := inlineLinksByHostTable(compiled)
 	var out Physical
 	modelNames := make([]string, 0, len(compiled.Models))
 	for name := range compiled.Models {
@@ -37,9 +53,11 @@ func PhysicalSchema(compiled *Compiled) Physical {
 	sort.Strings(modelNames)
 	for _, name := range modelNames {
 		m := compiled.Models[name]
+		cols, uniques := hostTableShape(m, inlineByHost[m.Table])
 		out.Tables = append(out.Tables, PhysicalTable{
 			Name:    m.Table,
-			Columns: modelColumns(m),
+			Columns: cols,
+			Uniques: uniques,
 		})
 	}
 	linkNames := make([]string, 0, len(compiled.Links))
@@ -49,6 +67,9 @@ func PhysicalSchema(compiled *Compiled) Physical {
 	sort.Strings(linkNames)
 	for _, name := range linkNames {
 		l := compiled.Links[name]
+		if l.Inline {
+			continue
+		}
 		out.Tables = append(out.Tables, PhysicalTable{
 			Name:    l.Table,
 			Columns: linkColumns(l),
@@ -58,44 +79,79 @@ func PhysicalSchema(compiled *Compiled) Physical {
 	return out
 }
 
-func modelColumns(m *CompiledModel) []string {
-	var cols []string
-	cols = appendUnique(cols, m.IdentityColumns...)
-	if m.TenantColumn != "" {
-		cols = appendUnique(cols, m.TenantColumn)
+func inlineLinksByHostTable(compiled *Compiled) map[string][]*CompiledLink {
+	out := map[string][]*CompiledLink{}
+	names := make([]string, 0, len(compiled.Links))
+	for name, l := range compiled.Links {
+		if l != nil && l.Inline {
+			names = append(names, name)
+		}
 	}
-	for _, f := range m.Fields {
-		cols = appendUnique(cols, f.Column)
+	sort.Strings(names)
+	for _, name := range names {
+		l := compiled.Links[name]
+		host := compiled.Models[l.HostModel]
+		if host == nil {
+			continue
+		}
+		out[host.Table] = append(out[host.Table], l)
 	}
-	return appendSystemColumns(cols, m.Omit)
+	return out
 }
 
-func linkColumns(l *CompiledLink) []string {
-	var cols []string
-	cols = appendUnique(cols, l.IdentityColumns...)
-	if l.TenantColumn != "" {
-		cols = appendUnique(cols, l.TenantColumn)
+func hostTableShape(m *CompiledModel, inlines []*CompiledLink) ([]PhysicalColumn, []UniqueSpec) {
+	cols := modelBusinessColumns(m)
+	var uniques []UniqueSpec
+	for _, l := range inlines {
+		cols = appendColumn(cols, PhysicalColumn{Name: l.FKColumn, Nullable: l.FKNullable})
+		if l.Cardinality == spi.CardinalityOneToOne {
+			uniques = append(uniques, UniqueSpec{
+				Columns:            appendTenant(l.TenantColumn, []string{l.FKColumn}),
+				ExcludeSoftDeleted: !m.Omit.DeletedAt,
+			})
+		}
 	}
-	cols = appendUnique(cols, l.FromColumns...)
-	cols = appendUnique(cols, l.ToColumns...)
+	return appendSystemColumns(cols, m.Omit), uniques
+}
+
+func modelBusinessColumns(m *CompiledModel) []PhysicalColumn {
+	var cols []PhysicalColumn
+	cols = appendRequired(cols, m.IdentityColumns...)
+	if m.TenantColumn != "" {
+		cols = appendRequired(cols, m.TenantColumn)
+	}
+	for _, f := range m.Fields {
+		cols = appendRequired(cols, f.Column)
+	}
+	return cols
+}
+
+func linkColumns(l *CompiledLink) []PhysicalColumn {
+	var cols []PhysicalColumn
+	cols = appendRequired(cols, l.IdentityColumns...)
+	if l.TenantColumn != "" {
+		cols = appendRequired(cols, l.TenantColumn)
+	}
+	cols = appendRequired(cols, l.FromColumns...)
+	cols = appendRequired(cols, l.ToColumns...)
 	for _, f := range l.Fields {
-		cols = appendUnique(cols, f.Column)
+		cols = appendRequired(cols, f.Column)
 	}
 	return appendSystemColumns(cols, l.Omit)
 }
 
-func appendSystemColumns(cols []string, omit OmitFlags) []string {
+func appendSystemColumns(cols []PhysicalColumn, omit OmitFlags) []PhysicalColumn {
 	if !omit.Version {
-		cols = appendUnique(cols, "version")
+		cols = appendRequired(cols, "version")
 	}
 	if !omit.CreatedAt {
-		cols = appendUnique(cols, "created_at")
+		cols = appendRequired(cols, "created_at")
 	}
 	if !omit.UpdatedAt {
-		cols = appendUnique(cols, "updated_at")
+		cols = appendRequired(cols, "updated_at")
 	}
 	if !omit.DeletedAt {
-		cols = appendUnique(cols, "deleted_at")
+		cols = appendColumn(cols, PhysicalColumn{Name: "deleted_at", Nullable: true})
 	}
 	return cols
 }
@@ -126,20 +182,21 @@ func appendTenant(tenant string, cols []string) []string {
 	return append(out, cols...)
 }
 
-func appendUnique(dst []string, names ...string) []string {
-	seen := map[string]struct{}{}
-	for _, n := range dst {
-		seen[n] = struct{}{}
-	}
+func appendRequired(dst []PhysicalColumn, names ...string) []PhysicalColumn {
 	for _, n := range names {
-		if n == "" {
-			continue
-		}
-		if _, ok := seen[n]; ok {
-			continue
-		}
-		seen[n] = struct{}{}
-		dst = append(dst, n)
+		dst = appendColumn(dst, PhysicalColumn{Name: n, Nullable: false})
 	}
 	return dst
+}
+
+func appendColumn(dst []PhysicalColumn, col PhysicalColumn) []PhysicalColumn {
+	if col.Name == "" {
+		return dst
+	}
+	for _, existing := range dst {
+		if existing.Name == col.Name {
+			return dst
+		}
+	}
+	return append(dst, col)
 }

@@ -251,6 +251,71 @@ func TestLoadMappings_DuplicateModel(t *testing.T) {
 	}
 }
 
+func TestLoadMappings_InlineSharesHostTable(t *testing.T) {
+	odl := `extend schema @namespace(name: "test.pack", version: "0.1.0")
+
+type Widget @objectType {
+  id: ID! @primary
+  name: String
+  gadget: Gadget @link(type: "AssembledFrom", direction: OUTBOUND)
+}
+
+type Gadget @objectType {
+  id: ID! @primary
+  name: String
+}
+
+type AssembledFrom @linkType(from: "Widget", to: "Gadget", cardinality: MANY_TO_ONE) {
+  id: ID! @primary
+}
+`
+	mapping := `apiVersion: openfoundry.io/obda/v1
+kind: OBDAConfig
+metadata:
+  name: combo
+  namespace: test.pack
+  version: 1
+schema:
+  namespace: test.pack
+  version: 1
+models:
+  Widget:
+    relation: {kind: table, name: widget}
+    access: readWrite
+    identity: {strategy: direct, columns: [id], insert: generated}
+    tenant: {strategy: column, column: tenant_id}
+    system: {strategy: native}
+    fields:
+      name: {column: name}
+  Gadget:
+    relation: {kind: table, name: gadget}
+    access: readWrite
+    identity: {strategy: direct, columns: [id], insert: generated}
+    tenant: {strategy: column, column: tenant_id}
+    system: {strategy: native}
+    fields:
+      name: {column: name}
+links:
+  AssembledFrom:
+    relation: {kind: inline}
+    access: readWrite
+    from: {object: Widget}
+    to: {object: Gadget, columns: [gadget_id]}
+`
+	dir := writePack(t, map[string]string{
+		"pack.yaml":            schemaPackYAML("obda:\n  - obda/combo.obda.yaml\n"),
+		"schema/models.odl":    odl,
+		"obda/combo.obda.yaml": mapping,
+	})
+	got, err := pack.LoadMappings(dir, loadOnto(t, dir))
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if len(got) != 1 || !got[0].Doc.Links["AssembledFrom"].Inline() {
+		t.Fatalf("got %#v", got)
+	}
+}
+
 func TestLoadMappings_DuplicateRelationTable(t *testing.T) {
 	dir := writePack(t, map[string]string{
 		"pack.yaml":         schemaPackYAML("obda:\n  - obda/a.obda.yaml\n  - obda/b.obda.yaml\n"),
@@ -359,8 +424,8 @@ func TestLoadLibraryPackMappings(t *testing.T) {
 	if _, ok := got[0].Doc.Models["Member"]; !ok {
 		t.Fatal("missing Member model")
 	}
-	if n := len(got[0].Doc.Links); n != 1 {
-		t.Fatalf("links = %d, want 1", n)
+	if n := len(got[0].Doc.Links); n != 2 {
+		t.Fatalf("links = %d, want 2", n)
 	}
 	link, ok := got[0].Doc.Links["BorrowedBy"]
 	if !ok {
@@ -368,6 +433,16 @@ func TestLoadLibraryPackMappings(t *testing.T) {
 	}
 	if link.From.Object != "Book" || link.To.Object != "Member" {
 		t.Fatalf("BorrowedBy ends = %s -> %s", link.From.Object, link.To.Object)
+	}
+	if link.Inline() || link.Relation.Kind != "table" {
+		t.Fatalf("BorrowedBy should stay a junction: %+v", link.Relation)
+	}
+	owned, ok := got[0].Doc.Links["OwnedBy"]
+	if !ok {
+		t.Fatal("missing OwnedBy link")
+	}
+	if !owned.Inline() {
+		t.Fatal("OwnedBy should be inline")
 	}
 }
 

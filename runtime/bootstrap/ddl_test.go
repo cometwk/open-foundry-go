@@ -1,12 +1,15 @@
 package bootstrap_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/openfoundry/runtime/bootstrap"
+	"github.com/openfoundry/runtime/pack"
+	"github.com/openfoundry/runtime/spi"
 )
 
 func TestSQLName(t *testing.T) {
@@ -50,6 +53,38 @@ func TestPrintPackDDL_DialectOverride(t *testing.T) {
 	}
 	if strings.Contains(joined, "ENGINE=InnoDB") {
 		t.Fatalf("mysql syntax leaked: %s", joined)
+	}
+}
+
+func TestPrintPackDDL_LibraryPackMySQL(t *testing.T) {
+	dir, err := pack.LibraryPackDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmts, err := bootstrap.PrintPackDDL(dir, "mysql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(stmts, "\n")
+	if !strings.Contains(joined, "`owner_id`") {
+		t.Fatalf("missing owner_id:\n%s", joined)
+	}
+	if strings.Contains(joined, "`owned_by`") {
+		t.Fatalf("must not emit owned_by:\n%s", joined)
+	}
+	if !strings.Contains(joined, "CREATE TABLE IF NOT EXISTS `borrowed_by`") {
+		t.Fatalf("missing borrowed_by:\n%s", joined)
+	}
+}
+
+func TestPrintPackDDL_LibraryPackSQLiteRefuses(t *testing.T) {
+	dir, err := pack.LibraryPackDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = bootstrap.PrintPackDDL(dir, "sqlite")
+	if !errors.Is(err, spi.ErrUnsupportedCapability) {
+		t.Fatalf("err=%v", err)
 	}
 }
 
