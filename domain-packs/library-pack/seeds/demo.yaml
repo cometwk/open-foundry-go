@@ -16,7 +16,7 @@ objects:
       isbn: "9780547572291"
       title: "Ubik"
       author: "Philip K. Dick"
-      status: AVAILABLE
+      status: ON_LOAN
 
   - type: Member
     ref: member-ada
@@ -25,4 +25,14 @@ objects:
       name: "Ada Lovelace"
       email: "ada@example.org"
 
-links: []
+links:
+  - type: OwnedBy
+    from: book-dune
+    to: member-ada
+
+  - type: BorrowedBy
+    from: book-ubik
+    to: member-ada
+    fields:
+      borrowedAt: "2026-09-01T10:00:00Z"
+      dueAt: "2026-09-15T10:00:00Z"

@@ -13,7 +13,7 @@ import (
 // parses each YAML into an action.Manifest, and binds YAML action names to
 // IR ActionType signatures. LoadDir is unchanged: it still returns only IR.
 func LoadActions(packDir string, onto *ir.Ontology) ([]action.Manifest, error) {
-	m, err := readManifest(packDir)
+	m, err := ReadManifest(packDir)
 	if err != nil {
 		return nil, err
 	}

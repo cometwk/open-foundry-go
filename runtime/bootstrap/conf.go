@@ -19,7 +19,8 @@ type Conf struct {
 	BaseDir     string `envconfig:"BASE_DIR" required:"true"`
 	DomainPacks string `envconfig:"DOMAIN_PACKS" required:"true"`
 	// Ctx
-	TenantID string `envconfig:"TENANT_ID" required:"true"`
+	TenantID   string `envconfig:"TENANT_ID" required:"true"`
+	SeedTenant string `envconfig:"SEED_TENANT"`
 	// 数据库
 	DBDriver         string `envconfig:"DB_DRIVER" default:"mysql"`
 	DBURL            string `envconfig:"DB_URL"`
@@ -65,6 +66,7 @@ type Bootstrap struct {
 	TenantID string
 	SPI      spi.StorageProvider
 	Schema   spi.OntologySchema
+	Seeds    []SeedManifest
 }
 
 func Open(c *Conf) (*Bootstrap, error) {
@@ -78,7 +80,12 @@ func Open(c *Conf) (*Bootstrap, error) {
 	if c.DBURL == "" {
 		return nil, fmt.Errorf("bootstrap: DB_URL required")
 	}
-	onto, mappings, schema, err := LoadPack(packDir(c))
+	dir := packDir(c)
+	onto, mappings, schema, err := LoadPack(dir)
+	if err != nil {
+		return nil, err
+	}
+	seeds, err := LoadPackSeeds(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -106,6 +113,7 @@ func Open(c *Conf) (*Bootstrap, error) {
 		TenantID: c.TenantID,
 		SPI:      p,
 		Schema:   schema,
+		Seeds:    seeds,
 	}, nil
 }
 

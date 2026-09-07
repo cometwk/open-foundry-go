@@ -22,7 +22,7 @@ type Mapping struct {
 // and rejects cross-file model / link / relation-table collisions.
 // An omitted obda: key returns (nil, nil). An explicit empty list is an error.
 func LoadMappings(packDir string, onto *ir.Ontology) ([]Mapping, error) {
-	m, err := readManifest(packDir)
+	m, err := ReadManifest(packDir)
 	if err != nil {
 		return nil, err
 	}

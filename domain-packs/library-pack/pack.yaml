@@ -33,4 +33,4 @@ permissions:
   - permissions/library-roles.fga
 
 seed:
-  - seeds/catalogue.yaml
+  - seeds/demo.yaml

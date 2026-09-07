@@ -12,18 +12,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Manifest is the subset of pack.yaml needed for schema, action, and OBDA loading.
+// Manifest is the subset of pack.yaml needed for schema, action, OBDA, and seed loading.
 type Manifest struct {
 	Name      string   `yaml:"name"`
 	Namespace string   `yaml:"namespace"`
 	Schema    []string `yaml:"schema"`
 	Actions   []string `yaml:"actions"`
 	OBDA      []string `yaml:"obda"`
+	Seed      []string `yaml:"seed"`
 }
 
 var namespaceExtendRe = regexp.MustCompile(`(?m)^extend\s+schema\s+@namespace\([^)]*\)\s*\n?`)
 
-func readManifest(packDir string) (*Manifest, error) {
+// ReadManifest reads and parses pack.yaml from packDir.
+func ReadManifest(packDir string) (*Manifest, error) {
 	manifestPath := filepath.Join(packDir, "pack.yaml")
 	raw, err := os.ReadFile(manifestPath)
 	if err != nil {
@@ -40,7 +42,7 @@ func readManifest(packDir string) (*Manifest, error) {
 // concatenating ODL with duplicate namespace stripping, then parse+lower+validate.
 // It does not load dependency packs (e.g. core) or action YAML.
 func LoadDir(packDir string) (*ir.Ontology, error) {
-	m, err := readManifest(packDir)
+	m, err := ReadManifest(packDir)
 	if err != nil {
 		return nil, err
 	}
