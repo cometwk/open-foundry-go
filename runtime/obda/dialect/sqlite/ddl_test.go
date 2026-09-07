@@ -26,6 +26,25 @@ func TestMappedTableStatementsNoOfPrefix(t *testing.T) {
 	}
 }
 
+func TestPhysicalSchemaOmitsDialectSyntax(t *testing.T) {
+	c := hospitalCompiled(obda.OmitFlags{}, spi.CardinalityManyToOne)
+	expect := obda.PhysicalSchema(c)
+	for _, tbl := range expect.Tables {
+		for _, col := range tbl.Columns {
+			if col == "of_active" || strings.Contains(strings.ToLower(col), "is null") {
+				t.Fatalf("dialect syntax in expectation: %q", col)
+			}
+		}
+	}
+	stmts, err := sqlitedialect.MappedTableStatements(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(stmts, "\n"), `WHERE "deleted_at" IS NULL`) {
+		t.Fatal("sqlite DDL must still emit partial unique")
+	}
+}
+
 func TestMappedTableStatementsManyToOnePartialUnique(t *testing.T) {
 	stmts, err := sqlitedialect.MappedTableStatements(hospitalCompiled(obda.OmitFlags{}, spi.CardinalityManyToOne))
 	if err != nil {
