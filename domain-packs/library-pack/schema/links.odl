@@ -6,3 +6,8 @@ type BorrowedBy @linkType(from: "Book", to: "Member", cardinality: MANY_TO_ONE) 
   borrowedAt: DateTime!
   dueAt: DateTime
 }
+
+# Property-less ownership: compiled as a host FK (book.owner_id), not a junction table.
+type OwnedBy @linkType(from: "Book", to: "Member", cardinality: MANY_TO_ONE) {
+  id: ID! @primary
+}

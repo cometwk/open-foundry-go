@@ -19,6 +19,7 @@ import (
 
 	"github.com/openfoundry/runtime/internal/uuidv7"
 	"github.com/openfoundry/runtime/ir"
+	"github.com/openfoundry/runtime/obda"
 	"github.com/openfoundry/runtime/spi"
 )
 
@@ -28,6 +29,7 @@ import (
 type Engine struct {
 	storage  spi.StorageProvider
 	ontology *ir.Ontology
+	compiled *obda.Compiled
 }
 
 // New constructs an Engine bound to the given storage provider and TBox.
@@ -35,6 +37,12 @@ type Engine struct {
 // is semantically invalid — the Engine never runs verbs against an
 // IR it cannot trust.
 func New(storage spi.StorageProvider, ontology *ir.Ontology) (*Engine, error) {
+	return NewWithCompiled(storage, ontology, nil)
+}
+
+// NewWithCompiled is New plus compiled OBDA mapping so inline host
+// navigations can be written on CreateObject / UpdateObject.
+func NewWithCompiled(storage spi.StorageProvider, ontology *ir.Ontology, compiled *obda.Compiled) (*Engine, error) {
 	if storage == nil {
 		return nil, fmt.Errorf("engine: storage provider must be non-nil")
 	}
@@ -44,7 +52,7 @@ func New(storage spi.StorageProvider, ontology *ir.Ontology) (*Engine, error) {
 	if err := ir.Validate(ontology); err != nil {
 		return nil, fmt.Errorf("engine: ontology validation failed: %w", err)
 	}
-	return &Engine{storage: storage, ontology: ontology}, nil
+	return &Engine{storage: storage, ontology: ontology, compiled: compiled}, nil
 }
 
 // CreateObject validates the payload against the held TBox and writes a
@@ -140,6 +148,17 @@ func (e *Engine) validateObjectPayload(typ string, properties map[string]any, is
 			// unknown-property rejection is a Phase 3 tightening.
 			continue
 		}
+		if field.Role == ir.RoleLinkNav {
+			if !e.inlineNavWritable(typ, field) {
+				return fmt.Errorf("openfoundry: field %q on type %q has role %s and is not writable via payload", name, typ, field.Role)
+			}
+			if val != nil {
+				if _, ok := val.(string); !ok {
+					return fmt.Errorf("openfoundry: type %q field %q: expected object id string, got %T", typ, name, val)
+				}
+			}
+			continue
+		}
 		if !roleWritable(field.Role) {
 			return fmt.Errorf("openfoundry: field %q on type %q has role %s and is not writable via payload", name, typ, field.Role)
 		}
@@ -153,7 +172,18 @@ func (e *Engine) validateObjectPayload(typ string, properties map[string]any, is
 	if !isUpdate {
 		for i := range objType.Fields {
 			f := &objType.Fields[i]
-			if spi.IsSystemField(f.Name) || !roleWritable(f.Role) {
+			if spi.IsSystemField(f.Name) {
+				continue
+			}
+			if f.Role == ir.RoleLinkNav {
+				if e.inlineNavWritable(typ, f) && f.Type.NonNull && f.Flags.Default == nil {
+					if _, present := properties[f.Name]; !present {
+						return fmt.Errorf("openfoundry: type %q missing required field %q", typ, f.Name)
+					}
+				}
+				continue
+			}
+			if !roleWritable(f.Role) {
 				continue
 			}
 			if !f.Type.NonNull {
@@ -215,6 +245,17 @@ func roleWritable(role ir.FieldRole) bool {
 		// RoleProperty and RoleParam are writable.
 		return true
 	}
+}
+
+func (e *Engine) inlineNavWritable(typ string, field *ir.Field) bool {
+	if e.compiled == nil || field == nil || field.Link == nil {
+		return false
+	}
+	l := e.compiled.Links[field.Link.Type]
+	if l == nil || !l.Inline {
+		return false
+	}
+	return l.HostModel == typ && l.HostNavField == field.Name
 }
 
 // checkScalarType asserts the runtime value matches the ir.TypeRef for

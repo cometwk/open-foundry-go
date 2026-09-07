@@ -43,9 +43,16 @@ type Link struct {
 	Identity Identity         `yaml:"identity"`
 	From     Endpoint         `yaml:"from"`
 	To       Endpoint         `yaml:"to"`
+	Host     string           `yaml:"host"`
 	Tenant   Tenant           `yaml:"tenant"`
 	System   System           `yaml:"system"`
 	Fields   map[string]Field `yaml:"fields"`
+}
+
+// Inline reports whether this link mapping is structurally inline
+// (explicit kind or omitted kind with no relation name).
+func (l Link) Inline() bool {
+	return l.Relation.Kind == "inline" || (l.Relation.Kind == "" && l.Relation.Name == "")
 }
 
 // Relation names a table or view. Catalog must be empty or "main" for SQLite.

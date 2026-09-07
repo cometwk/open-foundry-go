@@ -1,7 +1,7 @@
-# Library Domain Pack — OBDA mapping (SQLite direct-native)
+# Library Domain Pack — OBDA mapping
 #
-# Maps Book, Member, and BorrowedBy onto business tables.
-# Loaded by the pack loader via pack.yaml `obda:`.
+# BorrowedBy is a junction table (has borrowedAt/dueAt).
+# OwnedBy is a host FK on book (property-less). SQLite refuses inline.
 
 apiVersion: openfoundry.io/obda/v1
 kind: OBDAConfig
@@ -57,6 +57,8 @@ models:
         column: name
       email:
         column: email
+# BorrowedBy keeps kind: table because it carries borrowedAt/dueAt.
+# OwnedBy is property-less and defaults to an inline FK on book.
 links:
   BorrowedBy:
     relation:
@@ -83,3 +85,8 @@ links:
         column: borrowed_at
       dueAt:
         column: due_at
+  OwnedBy:
+    relation: {kind: inline}
+    access: readWrite
+    from: {object: Book}
+    to: {object: Member, columns: [owner_id]}

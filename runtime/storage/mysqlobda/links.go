@@ -37,6 +37,9 @@ func (p *Provider) createLinkTx(tx DBTX, act *activation, ctx spi.RequestContext
 	if !l.Writable() {
 		return nil, spi.ErrReadOnlyMapping
 	}
+	if l.Inline {
+		return p.createInlineLink(tx, act, ctx, l, fromID, toID, properties)
+	}
 	fromMeta, err := p.requireLiveEndpoint(tx, act, ctx.TenantID, l.FromObject, fromID)
 	if err != nil {
 		return nil, err
@@ -66,6 +69,9 @@ func (p *Provider) GetLink(ctx spi.RequestContext, typ, linkID string) (spi.Onto
 	if err != nil {
 		return nil, spi.ErrLinkNotFound
 	}
+	if l.Inline {
+		return p.loadInlineLink(p.db, act, l, ctx.TenantID, linkID)
+	}
 	return p.loadLink(p.db, l, ctx.TenantID, linkID)
 }
 
@@ -80,6 +86,9 @@ func (p *Provider) UpdateLink(ctx spi.RequestContext, typ, linkID string, proper
 	}
 	if !l.Writable() {
 		return nil, spi.ErrReadOnlyMapping
+	}
+	if l.Inline {
+		return nil, fmt.Errorf("%w: inline link %q has no properties", spi.ErrUnsupportedCapability, l.Name)
 	}
 	if l.Omit.Version && expectedVersion != nil {
 		return nil, spi.ErrUnsupportedCapability
@@ -204,6 +213,12 @@ func (p *Provider) DeleteLink(ctx spi.RequestContext, typ, linkID string) error 
 	}
 	defer func() { _ = conn.Close() }()
 	defer func() { _ = tx.Rollback() }()
+	if l.Inline {
+		if err := p.deleteInlineLink(tx, act, ctx, l, linkID); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
 	link, err := p.loadLink(tx, l, ctx.TenantID, linkID)
 	if err != nil {
 		if err == spi.ErrLinkNotFound {
@@ -251,35 +266,57 @@ func (p *Provider) GetLinks(ctx spi.RequestContext, objectID, linkType, directio
 	if err != nil {
 		return spi.LinkPage{}, spi.ErrLinkNotFound
 	}
-	peerName := l.ToObject
-	endCol := firstCol(l.FromColumns)
-	peerFK := firstCol(l.ToColumns)
-	if direction == "inbound" {
-		peerName = l.FromObject
-		endCol = firstCol(l.ToColumns)
-		peerFK = firstCol(l.FromColumns)
-	}
-	peer, err := act.model(peerName)
-	if err != nil {
-		return spi.LinkPage{}, spi.ErrObjectNotFound
-	}
 	includeDeleted := options != nil && options.IncludeDeleted
-	sel, args, err := obda.PlanGetLinksJoin(obda.LinkJoinBinding{
-		LinkTable:       l.Table,
-		LinkTenant:      l.TenantColumn,
-		EndpointCol:     endCol,
-		PeerFKCol:       peerFK,
-		PeerTable:       peer.Table,
-		PeerIDCol:       firstCol(peer.IdentityColumns),
-		PeerTenantCol:   peer.TenantColumn,
-		SelectColumns:   l.Binding().SelectColumns,
-		OmitLinkDeleted: l.Omit.DeletedAt || includeDeleted,
-		OmitPeerDeleted: peer.Omit.DeletedAt,
-	}, ctx.TenantID, objectID)
-	if err != nil {
-		return spi.LinkPage{}, err
+	var sel *sqlast.Select
+	var args []any
+	var scanCols []string
+	inline := l.Inline
+	if inline {
+		host, err := act.model(l.HostModel)
+		if err != nil {
+			return spi.LinkPage{}, spi.ErrObjectNotFound
+		}
+		peer, err := act.model(peerType(l))
+		if err != nil {
+			return spi.LinkPage{}, spi.ErrObjectNotFound
+		}
+		sel, args, err = obda.PlanGetLinksJoin(joinBindingForInline(l, host, peer, direction, includeDeleted), ctx.TenantID, objectID)
+		if err != nil {
+			return spi.LinkPage{}, err
+		}
+		scanCols = host.Binding().SelectColumns
+		sel.Order = []sqlast.Order{{Field: sqlast.Identifier{Qualifier: "l", Name: firstCol(host.IdentityColumns)}}}
+	} else {
+		peerName := l.ToObject
+		endCol := firstCol(l.FromColumns)
+		peerFK := firstCol(l.ToColumns)
+		if direction == "inbound" {
+			peerName = l.FromObject
+			endCol = firstCol(l.ToColumns)
+			peerFK = firstCol(l.FromColumns)
+		}
+		peer, err := act.model(peerName)
+		if err != nil {
+			return spi.LinkPage{}, spi.ErrObjectNotFound
+		}
+		sel, args, err = obda.PlanGetLinksJoin(obda.LinkJoinBinding{
+			LinkTable:       l.Table,
+			LinkTenant:      l.TenantColumn,
+			EndpointCol:     endCol,
+			PeerFKCol:       peerFK,
+			PeerTable:       peer.Table,
+			PeerIDCol:       firstCol(peer.IdentityColumns),
+			PeerTenantCol:   peer.TenantColumn,
+			SelectColumns:   l.Binding().SelectColumns,
+			OmitLinkDeleted: l.Omit.DeletedAt || includeDeleted,
+			OmitPeerDeleted: peer.Omit.DeletedAt,
+		}, ctx.TenantID, objectID)
+		if err != nil {
+			return spi.LinkPage{}, err
+		}
+		scanCols = l.Binding().SelectColumns
+		sel.Order = []sqlast.Order{{Field: sqlast.Identifier{Qualifier: "l", Name: firstCol(l.IdentityColumns)}}}
 	}
-	sel.Order = []sqlast.Order{{Field: sqlast.Identifier{Qualifier: "l", Name: firstCol(l.IdentityColumns)}}}
 	limit := 100
 	offset := 0
 	if options != nil {
@@ -313,10 +350,9 @@ func (p *Provider) GetLinks(ctx spi.RequestContext, objectID, linkType, directio
 		return spi.LinkPage{}, mysqldialect.Classify(err)
 	}
 	defer rows.Close()
-	bizCols := l.Binding().SelectColumns
 	var items []spi.OntologyLink
 	for rows.Next() {
-		dest := make([]any, len(bizCols))
+		dest := make([]any, len(scanCols))
 		ptrs := make([]any, len(dest))
 		for i := range dest {
 			ptrs[i] = &dest[i]
@@ -325,10 +361,16 @@ func (p *Provider) GetLinks(ctx spi.RequestContext, objectID, linkType, directio
 			return spi.LinkPage{}, err
 		}
 		biz := map[string]any{}
-		for i, col := range bizCols {
+		for i, col := range scanCols {
 			biz[col] = unwrap(dest[i])
 		}
-		link, err := p.assembleLink(l, ctx.TenantID, biz)
+		var link spi.OntologyLink
+		var err error
+		if inline {
+			link, err = assembleInlineLink(l, ctx.TenantID, biz)
+		} else {
+			link, err = p.assembleLink(l, ctx.TenantID, biz)
+		}
 		if err != nil {
 			return spi.LinkPage{}, err
 		}
@@ -408,6 +450,9 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 			TargetSelect:      peer.Binding().SelectColumns,
 			OmitLinkDeleted:   l.Omit.DeletedAt || includeDeleted,
 			OmitTargetDeleted: peer.Omit.DeletedAt || includeDeleted,
+			Inline:            l.Inline,
+			FKColumn:          l.FKColumn,
+			FKOnPrev:          l.Inline && l.HostModel == prevType,
 		})
 		prevType = peerName
 		prevModel = peer

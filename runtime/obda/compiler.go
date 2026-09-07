@@ -32,6 +32,7 @@ type CompiledModel struct {
 	PropertyTypes    map[string]string
 	SearchIndex      string
 	SearchableFields []string
+	InlineFKs        []CompiledField
 }
 
 // CompiledField maps one logical property onto a physical column.
@@ -62,6 +63,11 @@ type CompiledLink struct {
 	FieldByLogical   map[string]CompiledField
 	FieldByColumn    map[string]CompiledField
 	PropertyTypes    map[string]string
+	Inline           bool
+	HostModel        string
+	HostNavField     string
+	FKColumn         string
+	FKNullable       bool
 }
 
 // Writable reports whether mutations are allowed.
@@ -91,6 +97,9 @@ func (m *CompiledModel) Binding() ObjectBinding {
 		add(m.TenantColumn)
 	}
 	for _, f := range m.Fields {
+		add(f.Column)
+	}
+	for _, f := range m.InlineFKs {
 		add(f.Column)
 	}
 	if !m.Omit.Version {
@@ -200,49 +209,18 @@ func Compile(schema spi.OntologySchema, doc *Document) (*Compiled, error) {
 		if !ok && len(schema.LinkTypes) > 0 {
 			return nil, fmt.Errorf("%w: link %q not in schema", spi.ErrInvalidMapping, name)
 		}
-		cl := &CompiledLink{
-			Name:             name,
-			Table:            l.Relation.Name,
-			Access:           l.Access,
-			IdentityStrategy: l.Identity.Strategy,
-			IdentityInsert:   l.Identity.Insert,
-			IdentityColumns:  append([]string(nil), l.Identity.Columns...),
-			FromObject:       l.From.Object,
-			FromColumns:      append([]string(nil), l.From.Columns...),
-			ToObject:         l.To.Object,
-			ToColumns:        append([]string(nil), l.To.Columns...),
-			TenantStrategy:   l.Tenant.Strategy,
-			TenantColumn:     l.Tenant.Column,
-			TenantValue:      l.Tenant.Value,
-			SystemStrategy:   l.System.Strategy,
-			Cardinality:      def.Cardinality,
-			FieldByLogical:   map[string]CompiledField{},
-			FieldByColumn:    map[string]CompiledField{},
-			PropertyTypes:    map[string]string{},
-		}
-		omit, err := parseOmit(l.System.Omit)
+		cl, err := compileLink(name, l, def, models, out.Models)
 		if err != nil {
-			return nil, fmt.Errorf("%w: link %q: %v", spi.ErrInvalidMapping, name, err)
-		}
-		cl.Omit = omit
-		for _, p := range def.Properties {
-			cl.PropertyTypes[p.Name] = p.Type
-		}
-		for logical, f := range l.Fields {
-			cf := CompiledField{Logical: logical, Column: f.Column}
-			cl.Fields = append(cl.Fields, cf)
-			cl.FieldByLogical[logical] = cf
-			cl.FieldByColumn[f.Column] = cf
-		}
-		sort.Slice(cl.Fields, func(i, j int) bool { return cl.Fields[i].Logical < cl.Fields[j].Logical })
-		if l.Identity.Insert != "generated" {
-			for _, col := range l.Identity.Columns {
-				if _, ok := cl.FieldByColumn[col]; !ok {
-					return nil, fmt.Errorf("%w: link %q identity column %q is not a payload field", spi.ErrInvalidMapping, name, col)
-				}
-			}
+			return nil, err
 		}
 		out.Links[name] = cl
+		if cl.Inline {
+			host := out.Models[cl.HostModel]
+			host.InlineFKs = append(host.InlineFKs, CompiledField{Logical: cl.HostNavField, Column: cl.FKColumn})
+		}
+	}
+	for _, m := range out.Models {
+		sort.Slice(m.InlineFKs, func(i, j int) bool { return m.InlineFKs[i].Logical < m.InlineFKs[j].Logical })
 	}
 	return out, nil
 }

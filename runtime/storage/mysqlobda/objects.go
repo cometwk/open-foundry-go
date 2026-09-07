@@ -67,12 +67,15 @@ func (p *Provider) createObjectTx(tx DBTX, act *activation, ctx spi.RequestConte
 		return nil, spi.ErrReadOnlyMapping
 	}
 	props := copyUserProps(properties)
+	if err := p.requireInlineOnCreate(act, typ, props); err != nil {
+		return nil, err
+	}
 	id, err := objectIdentity(m, props)
 	if err != nil {
 		return nil, err
 	}
 	now := nowRFC3339()
-	if err := p.insertBusiness(tx, m, ctx.TenantID, props, id, now); err != nil {
+	if err := p.insertBusiness(tx, act, m, ctx.TenantID, props, id, now); err != nil {
 		if errors.Is(err, spi.ErrCardinalityViolation) {
 			return nil, fmt.Errorf("%w: identity exists", spi.ErrInvalidMapping)
 		}
@@ -160,6 +163,13 @@ func (p *Provider) updateObjectTx(tx DBTX, act *activation, ctx spi.RequestConte
 		}
 		cols = append(cols, f.Column)
 		vals = append(vals, writeValue(m.PropertyTypes[f.Logical], v))
+	}
+	seen := map[string]struct{}{}
+	for _, c := range cols {
+		seen[c] = struct{}{}
+	}
+	if err := p.applyInlineFKs(tx, act, m, ctx.TenantID, props, &cols, &vals, seen); err != nil {
+		return nil, err
 	}
 	if !m.Omit.UpdatedAt {
 		cols = append(cols, "updated_at")
@@ -271,6 +281,9 @@ func (p *Provider) deleteObjectTx(tx DBTX, act *activation, ctx spi.RequestConte
 		_, err = tx.Exec(stmt.SQL, args...)
 		return mysqldialect.Classify(err)
 	}
+	if err := p.clearInlineRefs(tx, act, ctx.TenantID, typ, id); err != nil {
+		return err
+	}
 	if err := p.deleteLinksForObject(tx, act, ctx.TenantID, id); err != nil {
 		return err
 	}
@@ -294,6 +307,9 @@ func (p *Provider) deleteLinksForObject(tx DBTX, act *activation, tenant, object
 	sort.Strings(names)
 	for _, name := range names {
 		l := act.compiled.Links[name]
+		if l.Inline {
+			continue
+		}
 		tbl, err := p.dialect.QuoteIdentifier(sqlast.Identifier{Name: l.Table})
 		if err != nil {
 			return err
@@ -318,7 +334,7 @@ func (p *Provider) deleteLinksForObject(tx DBTX, act *activation, tenant, object
 	return nil
 }
 
-func (p *Provider) insertBusiness(tx DBTX, m *obda.CompiledModel, tenant string, props map[string]any, id, now string) error {
+func (p *Provider) insertBusiness(tx DBTX, act *activation, m *obda.CompiledModel, tenant string, props map[string]any, id, now string) error {
 	cols := make([]string, 0, len(m.Fields)+6)
 	vals := make([]any, 0, len(m.Fields)+6)
 	seen := map[string]struct{}{}
@@ -343,6 +359,9 @@ func (p *Provider) insertBusiness(tx DBTX, m *obda.CompiledModel, tenant string,
 		cols = append(cols, f.Column)
 		vals = append(vals, writeValue(m.PropertyTypes[f.Logical], v))
 		seen[f.Column] = struct{}{}
+	}
+	if err := p.applyInlineFKs(tx, act, m, tenant, props, &cols, &vals, seen); err != nil {
+		return err
 	}
 	if !m.Omit.Version {
 		cols = append(cols, "version")

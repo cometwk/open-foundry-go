@@ -81,8 +81,10 @@ func registerMapping(rel string, doc *obda.Document, models, links, tables map[s
 			return fmt.Errorf("pack: mapping %s: duplicate link %q (already in %s)", rel, name, prev)
 		}
 		links[name] = rel
-		if err := registerTable(rel, link.Relation.Name, tables); err != nil {
-			return err
+		if !link.Inline() {
+			if err := registerTable(rel, link.Relation.Name, tables); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

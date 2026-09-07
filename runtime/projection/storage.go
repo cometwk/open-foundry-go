@@ -33,9 +33,22 @@ func ProjectStorage(o *ir.Ontology) spi.OntologySchema {
 func projectObject(obj ir.ObjectType) spi.ObjectTypeDefinition {
 	var props []spi.PropertyDefinition
 	var indexes []spi.IndexDefinition
+	var navs []spi.LinkNavigation
 
 	for _, f := range obj.Fields {
-		if f.Role == ir.RolePrimary || f.Role == ir.RoleComputed || f.Role == ir.RoleLinkNav {
+		if f.Role == ir.RoleLinkNav {
+			nav := spi.LinkNavigation{
+				Field:   f.Name,
+				NonNull: f.Type.NonNull,
+			}
+			if f.Link != nil {
+				nav.LinkType = f.Link.Type
+				nav.Direction = string(f.Link.Direction)
+			}
+			navs = append(navs, nav)
+			continue
+		}
+		if f.Role == ir.RolePrimary || f.Role == ir.RoleComputed {
 			continue
 		}
 		props = append(props, spi.PropertyDefinition{
@@ -61,6 +74,9 @@ func projectObject(obj ir.ObjectType) spi.ObjectTypeDefinition {
 	}
 	if len(indexes) > 0 {
 		def.Indexes = indexes
+	}
+	if len(navs) > 0 {
+		def.Navigations = navs
 	}
 	return def
 }

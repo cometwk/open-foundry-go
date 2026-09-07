@@ -70,6 +70,31 @@ func TestApplySchemaAfterHelperSucceeds(t *testing.T) {
 	assertNoOfTables(t, db)
 }
 
+func TestApplySchemaInlineHostFK(t *testing.T) {
+	p, db := openProvider(t, testdata(t, "inline.obda.yaml"))
+	mustInit(t, db, testdata(t, "inline.obda.yaml"), inlineSchema())
+	res, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, inlineSchema())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Success {
+		t.Fatalf("%+v", res)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'owned_by'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatal("owned_by must not exist")
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'book' AND COLUMN_NAME = 'owner_id'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatal("book.owner_id missing")
+	}
+}
+
 func TestApplySchemaMissingUniqueFails(t *testing.T) {
 	p, db := openProvider(t, testdata(t, "hospital.obda.yaml"))
 	mustExec(t, db, `CREATE TABLE patient (id VARCHAR(255) PRIMARY KEY, tenant_id VARCHAR(255), patient_name TEXT, version BIGINT, created_at VARCHAR(64), updated_at VARCHAR(64), deleted_at VARCHAR(64))`)
@@ -148,6 +173,33 @@ func TestHealthCheckDriftFailClosed(t *testing.T) {
 	_, err = p.GetObject(spi.RequestContext{TenantID: "t1"}, "Patient", "x")
 	if !errors.Is(err, spi.ErrSourceSchemaDrift) {
 		t.Fatalf("err=%v want ErrSourceSchemaDrift", err)
+	}
+}
+
+func inlineSchema() spi.OntologySchema {
+	return spi.OntologySchema{
+		Version: 1,
+		ObjectTypes: []spi.ObjectTypeDefinition{
+			{
+				Name:       "Book",
+				Properties: []spi.PropertyDefinition{{Name: "title", Type: "String"}},
+				Navigations: []spi.LinkNavigation{{
+					Field: "owner", LinkType: "OwnedBy", Direction: "OUTBOUND",
+				}},
+			},
+			{
+				Name:       "Member",
+				Properties: []spi.PropertyDefinition{{Name: "name", Type: "String"}},
+				Navigations: []spi.LinkNavigation{{
+					Field: "ownedBooks", LinkType: "OwnedBy", Direction: "INBOUND",
+				}},
+			},
+		},
+		LinkTypes: []spi.LinkTypeDefinition{{
+			Name: "OwnedBy", FromType: "Book", ToType: "Member",
+			Cardinality: spi.CardinalityManyToOne,
+			Properties:  []spi.PropertyDefinition{{Name: "id", Type: "ID", Required: true}},
+		}},
 	}
 }
 

@@ -46,14 +46,20 @@ func Validate(doc *Document) error {
 		}
 	}
 	for name, l := range doc.Links {
+		if l.From.Object == "" || l.To.Object == "" {
+			return fmt.Errorf("%w: link %q missing from/to object", spi.ErrInvalidMapping, name)
+		}
+		if l.Inline() {
+			if err := validateInlineLink(name, l); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := validateBinding(name, l.Relation, l.Access, l.Identity, l.Tenant, l.System, l.Fields); err != nil {
 			return err
 		}
-		if l.From.Object == "" || len(l.From.Columns) == 0 {
+		if len(l.From.Columns) == 0 || len(l.To.Columns) == 0 {
 			return fmt.Errorf("%w: link %q missing from", spi.ErrInvalidMapping, name)
-		}
-		if l.To.Object == "" || len(l.To.Columns) == 0 {
-			return fmt.Errorf("%w: link %q missing to", spi.ErrInvalidMapping, name)
 		}
 	}
 	return nil
@@ -110,6 +116,26 @@ func validateBinding(name string, rel Relation, access string, id Identity, tena
 			continue
 		}
 		return fmt.Errorf("%w: %q field %q transform %q", spi.ErrInvalidMapping, name, fname, kind)
+	}
+	return nil
+}
+
+func validateInlineLink(name string, l Link) error {
+	if l.Relation.Kind != "" && l.Relation.Kind != "inline" {
+		return fmt.Errorf("%w: %q relation.kind %q", spi.ErrInvalidMapping, name, l.Relation.Kind)
+	}
+	if l.Access != "read" && l.Access != "readWrite" && l.Access != "" {
+		return fmt.Errorf("%w: %q access %q", spi.ErrInvalidMapping, name, l.Access)
+	}
+	fromN, toN := len(l.From.Columns), len(l.To.Columns)
+	if (fromN == 0 && toN == 0) || (fromN > 0 && toN > 0) {
+		return fmt.Errorf("%w: link %q inline needs FK columns on exactly one endpoint", spi.ErrInvalidMapping, name)
+	}
+	if fromN > 1 || toN > 1 {
+		return fmt.Errorf("%w: link %q inline FK must be one column", spi.ErrInvalidMapping, name)
+	}
+	if l.Host != "" && l.Host != "from" && l.Host != "to" {
+		return fmt.Errorf("%w: link %q host %q (from or to)", spi.ErrInvalidMapping, name, l.Host)
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package sqliteobda
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -53,6 +54,9 @@ func Open(db *sql.DB, mapping []byte, opts Options) (*Provider, error) {
 	if err := obda.Validate(doc); err != nil {
 		return nil, err
 	}
+	if name := inlineLinkOnDoc(doc); name != "" {
+		return nil, fmt.Errorf("%w: sqlite does not support inline link %q", spi.ErrUnsupportedCapability, name)
+	}
 	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
 		return nil, err
 	}
@@ -74,6 +78,9 @@ func (p *Provider) ApplySchema(ctx spi.RequestContext, schema spi.OntologySchema
 	compiled, err := obda.Compile(schema, p.doc)
 	if err != nil {
 		return spi.MigrationResult{}, err
+	}
+	if name := firstInlineCompiled(compiled); name != "" {
+		return spi.MigrationResult{}, fmt.Errorf("%w: sqlite does not support inline link %q", spi.ErrUnsupportedCapability, name)
 	}
 	if err := p.verifyMappedSchema(compiled); err != nil {
 		return spi.MigrationResult{}, err
@@ -190,6 +197,9 @@ func (p *Provider) fingerprint() (string, error) {
 		tables["m:"+name] = m.Relation.Name
 	}
 	for name, l := range p.doc.Links {
+		if l.Inline() {
+			continue
+		}
 		names = append(names, "l:"+name)
 		tables["l:"+name] = l.Relation.Name
 	}
@@ -203,4 +213,32 @@ func (p *Provider) fingerprint() (string, error) {
 		h += snap.Hash
 	}
 	return h, nil
+}
+
+func inlineLinkOnDoc(doc *obda.Document) string {
+	names := make([]string, 0)
+	for name, l := range doc.Links {
+		if l.Inline() {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return ""
+	}
+	return names[0]
+}
+
+func firstInlineCompiled(compiled *obda.Compiled) string {
+	names := make([]string, 0)
+	for name, l := range compiled.Links {
+		if l != nil && l.Inline {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return ""
+	}
+	return names[0]
 }

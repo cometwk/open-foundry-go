@@ -29,7 +29,7 @@ func InitMappedSchema(db *sql.DB, compiled *obda.Compiled) error {
 func (p *Provider) verifyMappedSchema(compiled *obda.Compiled) error {
 	ctx := context.Background()
 	for _, tbl := range obda.PhysicalSchema(compiled).Tables {
-		if err := p.verifyTable(ctx, tbl.Name, tbl.Columns); err != nil {
+		if err := p.verifyTable(ctx, tbl.Name, tbl.ColumnNames()); err != nil {
 			return err
 		}
 		if err := p.verifyUniques(ctx, tbl); err != nil {
