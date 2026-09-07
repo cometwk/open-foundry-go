@@ -3,25 +3,26 @@ package bootstrap
 import (
 	"database/sql"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/kelseyhightower/envconfig"
 	"github.com/openfoundry/runtime/ir"
 	"github.com/openfoundry/runtime/pack"
-	"github.com/openfoundry/runtime/projection"
 	"github.com/openfoundry/runtime/spi"
+	"github.com/openfoundry/runtime/storage/mysqlobda"
 	"github.com/openfoundry/runtime/storage/sqliteobda"
 	_ "modernc.org/sqlite"
 )
 
 type Conf struct {
+	// 基础目录
 	BaseDir     string `envconfig:"BASE_DIR" required:"true"`
 	DomainPacks string `envconfig:"DOMAIN_PACKS" required:"true"`
+	// Ctx
+	TenantID string `envconfig:"TENANT_ID" required:"true"`
 	// 数据库
 	DBDriver         string `envconfig:"DB_DRIVER" default:"mysql"`
-	DBURL            string `envconfig:"DB_URL" required:"true"`
+	DBURL            string `envconfig:"DB_URL"`
 	DBMinConnections int    `envconfig:"DB_MIN_CONNECTIONS" default:"1"`
 	DBMaxConnections int    `envconfig:"DB_MAX_CONNECTIONS" default:"10"`
 	DBDebug          bool   `envconfig:"DB_DEBUG" default:"false"`
@@ -57,6 +58,7 @@ func LoadConfig(configPath string) (*Conf, error) {
 // Bootstrap is dialect-neutral assembly input. OpenSQLite binds SQLite;
 // a future MySQL entry point can share this shape without changing SPI.
 type Bootstrap struct {
+	Conf     *Conf
 	DB       *sql.DB
 	Ontology *ir.Ontology
 	Mappings []pack.Mapping
@@ -66,58 +68,60 @@ type Bootstrap struct {
 }
 
 func Open(c *Conf) (*Bootstrap, error) {
-	db, err := sql.Open(c.DBDriver, c.DBURL)
+	if c == nil {
+		return nil, fmt.Errorf("bootstrap: conf required")
+	}
+	driver, err := SQLName(c.DBDriver)
 	if err != nil {
 		return nil, err
 	}
-
-	dir := filepath.Join(c.BaseDir, "domain-packs", c.DomainPacks)
-	st, err := os.Stat(dir)
+	if c.DBURL == "" {
+		return nil, fmt.Errorf("bootstrap: DB_URL required")
+	}
+	onto, mappings, schema, err := LoadPack(packDir(c))
 	if err != nil {
 		return nil, err
 	}
-	if !st.IsDir() {
-		return nil, fmt.Errorf("domain-packs directory not found: %s", dir)
-	}
-	onto, err := pack.LoadDir(dir)
-	if err != nil {
+	if err := requireOneMapping(mappings); err != nil {
 		return nil, err
 	}
-	mappings, err := pack.LoadMappings(dir, onto)
-	if err != nil {
-		return nil, err
-	}
-	if len(mappings) != 1 {
-		return nil, fmt.Errorf("mappings=%d", len(mappings))
-	}
-	schema := projection.ProjectStorage(onto)
-	// for _, m := range mappings {
-	// 	compiled, err := obda.Compile(schema, m.Doc)
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// 	if err := sqliteobda.InitMappedSchema(db, compiled); err != nil {
-	// 		return nil, err
-	// 	}
-	// }
-
 	raw, err := mappingBytes(mappings)
 	if err != nil {
 		return nil, err
 	}
-	p, err := sqliteobda.Open(db, raw, sqliteobda.Options{})
+	db, err := sql.Open(driver, c.DBURL)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := p.ApplySchema(spi.RequestContext{TenantID: ""}, schema); err != nil {
+	p, err := openProvider(driver, db, raw)
+	if err != nil {
+		_ = db.Close()
 		return nil, err
 	}
-	bootstrap := &Bootstrap{
+	return &Bootstrap{
+		Conf:     c,
 		DB:       db,
 		Ontology: onto,
 		Mappings: mappings,
-		TenantID: "",
+		TenantID: c.TenantID,
 		SPI:      p,
+		Schema:   schema,
+	}, nil
+}
+
+func openProvider(driver string, db *sql.DB, raw []byte) (spi.StorageProvider, error) {
+	switch driver {
+	case SQLMySQL:
+		return mysqlobda.Open(db, raw, mysqlobda.Options{})
+	default:
+		return sqliteobda.Open(db, raw, sqliteobda.Options{})
 	}
-	return bootstrap, nil
+}
+
+func (b *Bootstrap) ApplySchema() error {
+	p, schema := b.SPI, b.Schema
+	if _, err := p.ApplySchema(spi.RequestContext{TenantID: b.Conf.TenantID}, schema); err != nil {
+		return err
+	}
+	return nil
 }

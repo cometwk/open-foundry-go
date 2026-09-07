@@ -7,8 +7,6 @@ import (
 	"os"
 
 	"github.com/openfoundry/runtime/bootstrap"
-	"github.com/openfoundry/runtime/obda"
-	"github.com/openfoundry/runtime/obda/dialect/sqlite"
 	"github.com/urfave/cli/v3"
 )
 
@@ -50,9 +48,14 @@ var cmd = &cli.Command{
 			Name:    "ddl",
 			Aliases: []string{"a"},
 			Usage:   "打印DDL语句",
+			Flags: []cli.Flag{
+				&cli.StringFlag{
+					Name:  "dialect",
+					Usage: "打印用的 SQL 方言（mysql 或 sqlite）。默认用配置的 DB_DRIVER",
+				},
+			},
 			Action: func(ctx context.Context, cmd *cli.Command) error {
-				slog.Info("config: ", "domainPacks", conf.DomainPacks)
-				return ddl()
+				return ddl(cmd.String("dialect"))
 			},
 		},
 		{
@@ -99,24 +102,14 @@ func run() error {
 	return nil
 }
 
-func ddl() error {
-	b, err := bootstrap.Open(conf)
+func ddl(dialect string) error {
+	stmts, err := bootstrap.PrintMappedDDL(conf, dialect)
 	if err != nil {
-		slog.Error("open bootstrap failed", "error", err)
+		slog.Error("print ddl failed", "error", err)
 		return err
 	}
-	for _, m := range b.Mappings {
-		compiled, err := obda.Compile(b.Schema, m.Doc)
-		if err != nil {
-			return err
-		}
-		stmts, err := sqlite.MappedTableStatements(compiled)
-		if err != nil {
-			return err
-		}
-		for _, s := range stmts {
-			fmt.Println(s)
-		}
+	for _, s := range stmts {
+		fmt.Println(s)
 	}
 	return nil
 }
