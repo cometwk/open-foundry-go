@@ -66,12 +66,12 @@ func (p *Provider) createObjectTx(tx DBTX, act *activation, ctx spi.RequestConte
 	if !m.Writable() {
 		return nil, spi.ErrReadOnlyMapping
 	}
-	props := copyUserProps(properties)
-	if err := p.requireInlineOnCreate(act, typ, props); err != nil {
+	id, err := objectIdentity(m, properties)
+	if err != nil {
 		return nil, err
 	}
-	id, err := objectIdentity(m, props)
-	if err != nil {
+	props := copyUserProps(properties)
+	if err := p.requireInlineOnCreate(act, typ, props); err != nil {
 		return nil, err
 	}
 	now := nowRFC3339()
@@ -390,9 +390,6 @@ func (p *Provider) insertBusiness(tx DBTX, act *activation, m *obda.CompiledMode
 }
 
 func (p *Provider) loadObject(tx DBTX, m *obda.CompiledModel, tenant, id string) (spi.OntologyObject, error) {
-	if err := matchDirectID(m.Name, id); err != nil {
-		return nil, err
-	}
 	biz, err := p.loadBusiness(tx, m, tenant, []any{id})
 	if err != nil {
 		return nil, err
@@ -484,35 +481,34 @@ func objectIdentity(m *obda.CompiledModel, props map[string]any) (string, error)
 				}
 			}
 		}
-		return obda.EncodeDirect(m.Name, []string{uuidv7.New()}), nil
-	}
-	keys := make([]string, len(m.IdentityColumns))
-	for i, col := range m.IdentityColumns {
-		f, ok := m.FieldByColumn[col]
-		if !ok {
-			return "", spi.ErrInvalidMapping
+		if v, ok := props[spi.FieldEngineObjectID].(string); ok && v != "" {
+			return v, nil
 		}
-		v, ok := props[f.Logical]
-		if !ok || v == nil {
-			return "", fmt.Errorf("%w: missing identity field", spi.ErrInvalidMapping)
-		}
-		keys[i] = fmt.Sprint(v)
+		return uuidv7.New(), nil
 	}
-	return obda.EncodeDirect(m.Name, keys), nil
-}
-
-func matchDirectID(typ, id string) error {
-	got, _, err := obda.DecodeDirect(id)
-	if err != nil || got != typ {
-		return spi.ErrObjectNotFound
+	if len(m.IdentityColumns) != 1 {
+		return "", fmt.Errorf("%w: identity columns", spi.ErrInvalidMapping)
 	}
-	return nil
+	col := m.IdentityColumns[0]
+	f, ok := m.FieldByColumn[col]
+	if !ok {
+		return "", spi.ErrInvalidMapping
+	}
+	v, ok := props[f.Logical]
+	if !ok || v == nil {
+		return "", fmt.Errorf("%w: missing identity field", spi.ErrInvalidMapping)
+	}
+	s := fmt.Sprint(v)
+	if s == "" {
+		return "", fmt.Errorf("%w: missing identity field", spi.ErrInvalidMapping)
+	}
+	return s, nil
 }
 
 func copyUserProps(in map[string]any) map[string]any {
 	out := map[string]any{}
 	for k, v := range in {
-		if spi.IsSystemField(k) {
+		if spi.IsSystemField(k) || k == spi.FieldEngineObjectID {
 			continue
 		}
 		out[k] = v

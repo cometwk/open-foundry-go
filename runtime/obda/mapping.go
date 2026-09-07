@@ -62,7 +62,7 @@ type Relation struct {
 	Name    string `yaml:"name"`
 }
 
-// Identity is always a reversible typed encoding of the physical key.
+// Identity names the single physical column that stores the ODL _id.
 type Identity struct {
 	Strategy string   `yaml:"strategy"`
 	Columns  []string `yaml:"columns"`

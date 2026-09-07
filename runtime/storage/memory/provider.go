@@ -212,7 +212,7 @@ func (p *Provider) CreateObject(ctx spi.RequestContext, typ string, properties m
 func (p *Provider) doCreateObjectUnlocked(ctx spi.RequestContext, typ string, properties map[string]any) (spi.OntologyObject, error) {
 	ts := systemTimestamps()
 	obj := spi.OntologyObject{
-		spi.FieldID:        uuidv7.New(),
+		spi.FieldID:        objectIDFromProps(properties),
 		spi.FieldType:      typ,
 		spi.FieldTenantID:  ctx.TenantID,
 		spi.FieldCreatedAt: ts,
@@ -220,7 +220,7 @@ func (p *Provider) doCreateObjectUnlocked(ctx spi.RequestContext, typ string, pr
 		spi.FieldVersion:   1,
 	}
 	for k, v := range properties {
-		if spi.IsSystemField(k) {
+		if spi.IsSystemField(k) || k == spi.FieldEngineObjectID {
 			continue
 		}
 		obj[k] = v
@@ -236,6 +236,13 @@ func (p *Provider) doCreateObjectUnlocked(ctx spi.RequestContext, typ string, pr
 	}
 	p.pushVersionHistoryUnlocked(key, snap)
 	return cloneObject(obj)
+}
+
+func objectIDFromProps(properties map[string]any) string {
+	if v, ok := properties[spi.FieldEngineObjectID].(string); ok && v != "" {
+		return v
+	}
+	return uuidv7.New()
 }
 
 // GetObject reads by (type, id). Cross-tenant reads and soft-deleted

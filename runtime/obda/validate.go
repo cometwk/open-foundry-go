@@ -88,8 +88,11 @@ func validateBinding(name string, rel Relation, access string, id Identity, tena
 	if id.Strategy != "direct" {
 		return fmt.Errorf("%w: %q identity.strategy %q (direct only)", spi.ErrInvalidMapping, name, id.Strategy)
 	}
-	if len(id.Columns) == 0 && id.Insert != "generated" {
-		return fmt.Errorf("%w: %q identity.columns empty", spi.ErrInvalidMapping, name)
+	if len(id.Columns) != 1 || strings.TrimSpace(id.Columns[0]) == "" {
+		return fmt.Errorf("%w: %q identity.columns must be exactly one column", spi.ErrInvalidMapping, name)
+	}
+	if id.Insert != "generated" && id.Insert != "provided" {
+		return fmt.Errorf("%w: %q identity.insert %q (generated or provided)", spi.ErrInvalidMapping, name, id.Insert)
 	}
 	if err := validateTenant(name, tenant); err != nil {
 		return err

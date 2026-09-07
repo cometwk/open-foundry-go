@@ -101,7 +101,7 @@ func (p *Provider) createInlineLink(tx DBTX, act *activation, ctx spi.RequestCon
 	if n != 1 {
 		return nil, spi.ErrCardinalityViolation
 	}
-	return p.loadInlineLink(tx, act, l, ctx.TenantID, obda.EncodeDirect(l.Name, []string{hostID}))
+	return p.loadInlineLink(tx, act, l, ctx.TenantID, hostID)
 }
 
 func (p *Provider) deleteInlineLink(tx DBTX, act *activation, ctx spi.RequestContext, l *obda.CompiledLink, linkID string) error {
@@ -149,12 +149,11 @@ func (p *Provider) deleteInlineLink(tx DBTX, act *activation, ctx spi.RequestCon
 	return mysqldialect.Classify(err)
 }
 
-func inlineHostID(l *obda.CompiledLink, linkID string) (string, error) {
-	typ, keys, err := obda.DecodeDirect(linkID)
-	if err != nil || typ != l.Name || len(keys) != 1 || keys[0] == "" {
+func inlineHostID(_ *obda.CompiledLink, linkID string) (string, error) {
+	if linkID == "" {
 		return "", spi.ErrLinkNotFound
 	}
-	return keys[0], nil
+	return linkID, nil
 }
 
 func (p *Provider) loadInlineLink(tx DBTX, act *activation, l *obda.CompiledLink, tenant, linkID string) (spi.OntologyLink, error) {
@@ -191,7 +190,7 @@ func assembleInlineLink(l *obda.CompiledLink, tenant string, biz map[string]any)
 		fromID, toID = peerID, hostID
 	}
 	link := spi.OntologyLink{
-		spi.FieldID:           obda.EncodeDirect(l.Name, []string{hostID}),
+		spi.FieldID:           hostID,
 		spi.FieldType:         l.Name,
 		spi.FieldTenantID:     tenant,
 		spi.LinkFieldFromID:   fromID,

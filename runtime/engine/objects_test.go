@@ -93,6 +93,87 @@ func TestEngine_CreateObject_Get_RoundTrip_StampsSystemFields(t *testing.T) {
 	if got["_id"] != id {
 		t.Errorf("GetObject _id = %v, want %v", got["_id"], id)
 	}
+	if !looksLikeUUIDv7(id) {
+		t.Errorf("CreateObject _id = %q, want a UUIDv7-shaped id", id)
+	}
+	if _, ok := obj[spi.FieldEngineObjectID]; ok {
+		t.Errorf("CreateObject leaked %s onto the returned object", spi.FieldEngineObjectID)
+	}
+}
+
+func TestEngine_CreateObject_DoesNotMutateCallerProperties(t *testing.T) {
+	e := newEngine(t)
+	props := map[string]any{"name": "Acme"}
+	if _, err := e.CreateObject(tenantCtx("tnt"), "Supplier", props); err != nil {
+		t.Fatalf("CreateObject err = %v, want nil", err)
+	}
+	if _, ok := props[spi.FieldEngineObjectID]; ok {
+		t.Errorf("CreateObject mutated caller properties map: %s present", spi.FieldEngineObjectID)
+	}
+}
+
+func TestEngine_CreateObject_ProvidedIdentity(t *testing.T) {
+	ont := &ir.Ontology{
+		Namespace: &ir.Namespace{Name: "test"},
+		Objects: []ir.ObjectType{
+			{
+				Name: "Book",
+				Fields: []ir.Field{
+					{Name: "id", Type: ir.TypeRef{Name: "ID"}, Role: ir.RolePrimary},
+					{Name: "isbn", Type: ir.TypeRef{Name: "String"}, Role: ir.RoleProperty},
+				},
+			},
+		},
+	}
+	compiled := &obda.Compiled{
+		Models: map[string]*obda.CompiledModel{
+			"Book": {
+				Name:            "Book",
+				IdentityInsert:  "provided",
+				IdentityColumns: []string{"isbn_col"},
+				FieldByColumn:   map[string]obda.CompiledField{"isbn_col": {Logical: "isbn", Column: "isbn_col"}},
+				FieldByLogical:  map[string]obda.CompiledField{"isbn": {Logical: "isbn", Column: "isbn_col"}},
+			},
+		},
+	}
+	e, err := NewWithCompiled(memory.New(), ont, compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := tenantCtx("tnt")
+	obj, err := e.CreateObject(ctx, "Book", map[string]any{"isbn": "9780"})
+	if err != nil {
+		t.Fatalf("CreateObject err = %v, want nil", err)
+	}
+	if obj[spi.FieldID] != "9780" {
+		t.Errorf("_id = %v, want 9780", obj[spi.FieldID])
+	}
+	_, err = e.CreateObject(ctx, "Book", map[string]any{})
+	if !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("missing isbn err = %v, want ErrInvalidMapping", err)
+	}
+}
+
+func TestEngine_CreateObject_GeneratedRejectsIdentityField(t *testing.T) {
+	ont := objectOntology(t)
+	compiled := &obda.Compiled{
+		Models: map[string]*obda.CompiledModel{
+			"Supplier": {
+				Name:            "Supplier",
+				IdentityInsert:  "generated",
+				IdentityColumns: []string{"name_col"},
+				FieldByColumn:   map[string]obda.CompiledField{"name_col": {Logical: "name", Column: "name_col"}},
+			},
+		},
+	}
+	e, err := NewWithCompiled(memory.New(), ont, compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.CreateObject(tenantCtx("tnt"), "Supplier", map[string]any{"name": "Acme"})
+	if !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("generated identity field in payload err = %v, want ErrInvalidMapping", err)
+	}
 }
 
 func TestEngine_CreateObject_UnknownType_RejectsBeforeStorage(t *testing.T) {

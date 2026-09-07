@@ -30,7 +30,7 @@ JOIN 条数（`len(Joins)==4`）在 `runtime/obda/planner_test.go` 的 `TestPlan
 | `AdmittedTo` | Patient → Ward | `admission` | `from_id` / `to_id` | 本文件 Traverse 金路径用 ManyToMany |
 | `BelongsTo` | Ward → Trust | `ward_trust` | `from_id` / `to_id` | ManyToMany |
 
-租户列均为 `tenant_id`；系统列 native（含 `deleted_at`）。对象 `_id` 为 `EncodeDirect` 全局 id，JOIN 时与业务表 `id` 对齐。
+租户列均为 `tenant_id`；系统列 native（含 `deleted_at`）。对象 `_id` 为 identity 列裸值，JOIN 时与业务表 `id` 对齐。
 
 两跳图：
 
@@ -102,7 +102,7 @@ p.Traverse(ctx, patientID, spi.TraversalPath{
 }, nil)
 ```
 
-`DecodeDirect(patientID)` 得 `Patient`，与 AdmittedTo outbound 的 from 一致。SELECT `s1`（Ward）列。
+起点类型由 AdmittedTo outbound 的 mapping 推出 Patient。SELECT `s1`（Ward）列。
 
 ```text
 FROM patient AS s0
@@ -130,12 +130,12 @@ ORDER BY s1.id, l0.id
 | 调用 | 触发点 | 期望 error |
 |------|--------|------------|
 | `LinkType: "NoSuch"` | `startTypeForPath` → `act.link` | `ErrLinkNotFound` |
-| 起点 `wardID` + AdmittedTo **outbound** | Decode 得 Ward，outbound 要求 Patient | `ErrObjectNotFound` |
+| 起点 `wardID` + AdmittedTo **outbound** | mapping 推出 Patient；`wardID` 在 patient 表空查 | `ErrObjectNotFound` |
 | 9 步 `AdmittedTo` | `len(Steps) > 8`（sqlite 上限 8，不是 memory 的 10） | `ErrUnsupportedCapability` |
-| `startID: "missing"` | `DecodeDirect` 失败 | `ErrObjectNotFound` |
+| `startID: "missing"` | 起点表无行 | `ErrObjectNotFound` |
 | `TenantID: "t2"` | 起点 `loadObject` 无行 | `ErrObjectNotFound` |
 
-错类型发生在 JOIN 之前，不会退化成「JOIN 零行」。JOIN 零行应空 `Nodes` 且 `TotalCount=0`，不是 NotFound。
+错类型 id 在正确表上查空 → `ErrObjectNotFound`，不会退化成「JOIN 零行」。JOIN 零行应空 `Nodes` 且 `TotalCount=0`，不是 NotFound。
 
 ### 期望断言
 

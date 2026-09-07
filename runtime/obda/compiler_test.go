@@ -23,7 +23,7 @@ func TestCompileUnknownModel(t *testing.T) {
 }
 
 func TestCompileRequiresIdentityField(t *testing.T) {
-	raw := strings.Replace(validYAML, "insert: generated", "", 1)
+	raw := strings.Replace(validYAML, "insert: generated", "insert: provided", 1)
 	raw = strings.Replace(raw, "columns: [id]", "columns: [patient_id]", 1)
 	doc, err := obda.Parse([]byte(raw))
 	if err != nil {

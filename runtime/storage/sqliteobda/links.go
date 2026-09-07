@@ -49,7 +49,7 @@ func (p *Provider) createLinkTx(tx DBTX, act *activation, ctx spi.RequestContext
 	if v, ok := properties[spi.LinkFieldEngineLinkID].(string); ok && v != "" {
 		k = v
 	}
-	id := obda.EncodeDirect(l.Name, []string{k})
+	id := k
 	now := nowRFC3339()
 	if err := p.insertLinkRow(tx, l, ctx.TenantID, id, fromMeta.EngineID, toMeta.EngineID, copyLinkProps(properties), now); err != nil {
 		return nil, err
@@ -490,10 +490,6 @@ func emptyTraversal() spi.TraversalResult {
 }
 
 func startTypeForPath(act *activation, startID string, step spi.TraversalStep) (string, error) {
-	got, _, err := obda.DecodeDirect(startID)
-	if err != nil {
-		return "", spi.ErrObjectNotFound
-	}
 	l, err := act.link(step.LinkType)
 	if err != nil {
 		return "", err
@@ -502,14 +498,10 @@ func startTypeForPath(act *activation, startID string, step spi.TraversalStep) (
 	if dir == "" {
 		dir = "outbound"
 	}
-	want := l.FromObject
 	if dir == "inbound" {
-		want = l.ToObject
+		return l.ToObject, nil
 	}
-	if got != want {
-		return "", spi.ErrObjectNotFound
-	}
-	return got, nil
+	return l.FromObject, nil
 }
 
 func (p *Provider) requireLiveEndpoint(tx DBTX, act *activation, tenant, typ, id string) (*metaRow, error) {
@@ -590,9 +582,6 @@ func (p *Provider) insertLinkRow(tx DBTX, l *obda.CompiledLink, tenant, id, from
 }
 
 func (p *Provider) loadLink(tx DBTX, l *obda.CompiledLink, tenant, id string) (spi.OntologyLink, error) {
-	if err := matchDirectID(l.Name, id); err != nil {
-		return nil, spi.ErrLinkNotFound
-	}
 	b := l.Binding()
 	sel, args, err := obda.PlanGetObject(b, tenant, []any{id})
 	if err != nil {

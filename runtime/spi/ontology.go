@@ -56,6 +56,10 @@ const (
 	LinkFieldFromType     = "_fromType"
 	LinkFieldToType       = "_toType"
 	LinkFieldEngineLinkID = "_engineLinkId"
+	// FieldEngineObjectID is the Engine→storage handoff for CreateObject,
+	// mirroring LinkFieldEngineLinkID. It is not an object reserved wire
+	// field (IsSystemField stays false) and must not appear on returned objects.
+	FieldEngineObjectID = "_engineObjectId"
 )
 
 // IsLinkSystemField reports whether k is reserved on a link: the seven object

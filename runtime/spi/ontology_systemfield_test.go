@@ -24,6 +24,7 @@ func TestReservedFieldConstantValues(t *testing.T) {
 		{"LinkFieldFromType", LinkFieldFromType, "_fromType"},
 		{"LinkFieldToType", LinkFieldToType, "_toType"},
 		{"LinkFieldEngineLinkID", LinkFieldEngineLinkID, "_engineLinkId"},
+		{"FieldEngineObjectID", FieldEngineObjectID, "_engineObjectId"},
 	}
 	for _, c := range cases {
 		if c.got != c.want {
@@ -56,6 +57,9 @@ func TestIsSystemField(t *testing.T) {
 	}
 	if IsSystemField("name") {
 		t.Errorf(`IsSystemField("name") = true, want false (user field)`)
+	}
+	if IsSystemField(FieldEngineObjectID) {
+		t.Errorf("IsSystemField(%q) = true, want false (handoff field, not object reserved)", FieldEngineObjectID)
 	}
 }
 

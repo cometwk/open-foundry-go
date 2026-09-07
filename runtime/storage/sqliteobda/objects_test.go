@@ -7,10 +7,35 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/openfoundry/runtime/obda"
 	"github.com/openfoundry/runtime/spi"
 	"github.com/openfoundry/runtime/storage/sqliteobda"
 )
+
+func TestCreateObjectHonorsEngineObjectID(t *testing.T) {
+	p, db := activatePatient(t)
+	ctx := spi.RequestContext{TenantID: "t1"}
+	want := "engine-object-1"
+	created, err := p.CreateObject(ctx, "Patient", map[string]any{
+		"name":                  "Ada",
+		spi.FieldEngineObjectID: want,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created[spi.FieldID] != want {
+		t.Fatalf("_id=%v want %s", created[spi.FieldID], want)
+	}
+	if _, ok := created[spi.FieldEngineObjectID]; ok {
+		t.Fatalf("leaked %s", spi.FieldEngineObjectID)
+	}
+	var stored string
+	if err := db.QueryRow(`SELECT id FROM patient WHERE id = ?`, want).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != want {
+		t.Fatalf("column=%s", stored)
+	}
+}
 
 func TestCreateGetSystemFieldsStable(t *testing.T) {
 	p, _ := activatePatient(t)
@@ -254,8 +279,8 @@ func TestSplitBrainNotFound(t *testing.T) {
 	if _, err := p.GetObject(ctx, "Patient", id); !errors.Is(err, spi.ErrObjectNotFound) {
 		t.Fatalf("deleted row err=%v", err)
 	}
-	if _, err := p.GetObject(ctx, "Patient", obda.EncodeDirect("Ward", []string{"x"})); !errors.Is(err, spi.ErrObjectNotFound) {
-		t.Fatalf("wrong type err=%v", err)
+	if _, err := p.GetObject(ctx, "Patient", "not-a-patient-row"); !errors.Is(err, spi.ErrObjectNotFound) {
+		t.Fatalf("wrong id err=%v", err)
 	}
 }
 
@@ -307,9 +332,8 @@ func TestDirectIdentityRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := created[spi.FieldID].(string)
-	typ, keys, err := obda.DecodeDirect(id)
-	if err != nil || typ != "Patient" || len(keys) != 1 || keys[0] == "" {
-		t.Fatalf("id=%q typ=%q keys=%v err=%v", id, typ, keys, err)
+	if len(id) != 36 || id[14] != '7' {
+		t.Fatalf("id=%q want UUIDv7", id)
 	}
 	got, err := p.GetObject(ctx, "Patient", id)
 	if err != nil {
@@ -323,19 +347,14 @@ func TestDirectIdentityRoundTrip(t *testing.T) {
 func TestWrongTypeIDNotFound(t *testing.T) {
 	p, _ := activatePatient(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	created, err := p.CreateObject(ctx, "Patient", map[string]any{"name": "Ada"})
-	if err != nil {
+	if _, err := p.CreateObject(ctx, "Patient", map[string]any{"name": "Ada"}); err != nil {
 		t.Fatal(err)
 	}
-	_, keys, err := obda.DecodeDirect(created[spi.FieldID].(string))
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = pGetErr(t, p, "t1", obda.EncodeDirect("Ward", keys))
+	err := pGetErr(t, p, "t1", "00000000-0000-7000-0000-000000000000")
 	if !errors.Is(err, spi.ErrObjectNotFound) {
-		t.Fatalf("wrong type err=%v", err)
+		t.Fatalf("wrong id err=%v", err)
 	}
-	err = pGetErr(t, p, "t1", "not-an-encoded-id")
+	err = pGetErr(t, p, "t1", "not-an-id")
 	if !errors.Is(err, spi.ErrObjectNotFound) {
 		t.Fatalf("garbage id err=%v", err)
 	}

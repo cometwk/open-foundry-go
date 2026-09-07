@@ -7,7 +7,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/openfoundry/runtime/obda"
 	"github.com/openfoundry/runtime/spi"
 	"github.com/openfoundry/runtime/storage/sqliteobda"
 )
@@ -261,9 +260,8 @@ func TestEngineLinkIDInDecodeK(t *testing.T) {
 		t.Fatal(err)
 	}
 	id, _ := link[spi.FieldID].(string)
-	typ, keys, err := obda.DecodeDirect(id)
-	if err != nil || typ != "AdmittedTo" || len(keys) != 1 || keys[0] != "engine-link-1" {
-		t.Fatalf("id=%q typ=%q keys=%v err=%v", id, typ, keys, err)
+	if id != "engine-link-1" {
+		t.Fatalf("id=%q want engine-link-1", id)
 	}
 }
 

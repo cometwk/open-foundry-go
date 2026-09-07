@@ -6,7 +6,6 @@ import (
 
 	"github.com/openfoundry/runtime/engine"
 	"github.com/openfoundry/runtime/ir"
-	"github.com/openfoundry/runtime/obda"
 	"github.com/openfoundry/runtime/spi"
 )
 
@@ -25,7 +24,7 @@ func TestCapabilitiesTemporalAndBulkOff(t *testing.T) {
 	}
 }
 
-func TestEngineSmokeDecodeDirect(t *testing.T) {
+func TestEngineSmokeRawIDs(t *testing.T) {
 	p, _, patientID, wardID := activateHospital(t, spi.CardinalityManyToMany)
 	ont := hospitalIR()
 	e, err := engine.New(p, ont)
@@ -38,18 +37,16 @@ func TestEngineSmokeDecodeDirect(t *testing.T) {
 		t.Fatal(err)
 	}
 	id, _ := obj[spi.FieldID].(string)
-	typ, keys, err := obda.DecodeDirect(id)
-	if err != nil || typ != "Patient" || len(keys) != 1 {
-		t.Fatalf("object id=%q typ=%q keys=%v err=%v", id, typ, keys, err)
+	if len(id) != 36 || id[14] != '7' {
+		t.Fatalf("object id=%q want UUIDv7", id)
 	}
 	link, err := e.CreateLink(ctx, "AdmittedTo", patientID, wardID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	lid, _ := link[spi.FieldID].(string)
-	ltyp, lkeys, err := obda.DecodeDirect(lid)
-	if err != nil || ltyp != "AdmittedTo" || len(lkeys) != 1 || lkeys[0] == "" {
-		t.Fatalf("link id=%q typ=%q keys=%v err=%v", lid, ltyp, lkeys, err)
+	if len(lid) != 36 || lid[14] != '7' {
+		t.Fatalf("link id=%q want UUIDv7", lid)
 	}
 }
 

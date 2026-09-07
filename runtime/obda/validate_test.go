@@ -24,6 +24,21 @@ func TestValidateEmptyIdentityColumns(t *testing.T) {
 	mustInvalid(t, raw)
 }
 
+func TestValidateMultiColumnIdentity(t *testing.T) {
+	raw := strings.Replace(validYAML, "columns: [id]", "columns: [a, b]", 1)
+	mustInvalid(t, raw)
+}
+
+func TestValidateMissingInsert(t *testing.T) {
+	raw := strings.Replace(validYAML, "strategy: direct\n      columns: [id]\n      insert: generated", "strategy: direct\n      columns: [id]", 1)
+	mustInvalid(t, raw)
+}
+
+func TestValidateIllegalInsert(t *testing.T) {
+	raw := strings.Replace(validYAML, "insert: generated", "insert: auto", 1)
+	mustInvalid(t, raw)
+}
+
 func TestValidateRejectsSidecarIdentity(t *testing.T) {
 	raw := strings.Replace(validYAML, "strategy: direct\n      columns: [id]\n      insert: generated", "strategy: sidecar\n      columns: [id]\n      insert: generated", 1)
 	mustInvalid(t, raw)

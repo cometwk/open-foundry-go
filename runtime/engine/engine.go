@@ -67,12 +67,86 @@ func (e *Engine) CreateObject(ctx spi.RequestContext, typ string, properties map
 	if err := e.validateObjectPayload(typ, properties, false); err != nil {
 		return nil, err
 	}
-	obj, err := e.storage.CreateObject(ctx, typ, properties)
+	props, err := e.withObjectID(typ, properties)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := e.storage.CreateObject(ctx, typ, props)
 	if err != nil {
 		return nil, err
 	}
 	// TODO(Phase 4): emitObjectCreated via event bus.
 	return obj, nil
+}
+
+// withObjectID copies caller properties and injects FieldEngineObjectID.
+func (e *Engine) withObjectID(typ string, properties map[string]any) (map[string]any, error) {
+	id, err := e.mintObjectID(typ, properties)
+	if err != nil {
+		return nil, err
+	}
+	n := 0
+	if properties != nil {
+		n = len(properties)
+	}
+	props := make(map[string]any, n+1)
+	for k, v := range properties {
+		props[k] = v
+	}
+	props[spi.FieldEngineObjectID] = id
+	return props, nil
+}
+
+func (e *Engine) mintObjectID(typ string, properties map[string]any) (string, error) {
+	m := e.compiledModel(typ)
+	if m != nil && m.IdentityInsert == "provided" {
+		return providedObjectID(m, properties)
+	}
+	if m != nil {
+		if err := rejectSuppliedIdentity(m, properties); err != nil {
+			return "", err
+		}
+	}
+	return uuidv7.New(), nil
+}
+
+func (e *Engine) compiledModel(typ string) *obda.CompiledModel {
+	if e.compiled == nil {
+		return nil
+	}
+	return e.compiled.Models[typ]
+}
+
+func providedObjectID(m *obda.CompiledModel, properties map[string]any) (string, error) {
+	if len(m.IdentityColumns) != 1 {
+		return "", fmt.Errorf("%w: identity columns", spi.ErrInvalidMapping)
+	}
+	cf, ok := m.FieldByColumn[m.IdentityColumns[0]]
+	if !ok {
+		return "", fmt.Errorf("%w: identity column %q is not a payload field", spi.ErrInvalidMapping, m.IdentityColumns[0])
+	}
+	v, ok := properties[cf.Logical]
+	if !ok || v == nil {
+		return "", fmt.Errorf("%w: missing identity field %q", spi.ErrInvalidMapping, cf.Logical)
+	}
+	s := fmt.Sprint(v)
+	if s == "" {
+		return "", fmt.Errorf("%w: missing identity field %q", spi.ErrInvalidMapping, cf.Logical)
+	}
+	return s, nil
+}
+
+func rejectSuppliedIdentity(m *obda.CompiledModel, properties map[string]any) error {
+	for _, col := range m.IdentityColumns {
+		cf, ok := m.FieldByColumn[col]
+		if !ok {
+			continue
+		}
+		if _, present := properties[cf.Logical]; present {
+			return fmt.Errorf("%w: generated identity field %q cannot be supplied", spi.ErrInvalidMapping, cf.Logical)
+		}
+	}
+	return nil
 }
 
 // GetObject is defined in computed.go (Phase 6). It reads through to
@@ -136,7 +210,7 @@ func (e *Engine) validateObjectPayload(typ string, properties map[string]any, is
 		return fmt.Errorf("%w: %s", spi.ErrInvalidObjectType, typ)
 	}
 	for name, val := range properties {
-		if spi.IsSystemField(name) {
+		if spi.IsSystemField(name) || name == spi.FieldEngineObjectID {
 			// System fields are SPI/Engine-managed; ignore them in the
 			// user-payload check (Create/Update strips them anyway).
 			continue

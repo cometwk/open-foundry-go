@@ -180,7 +180,7 @@ sqliteobda  →  runtime/obda  →  dialect.Dialect  ←  dialect/sqlite
 
 | 包 | 职责 | MUST NOT |
 |---|---|---|
-| `runtime/obda` | YAML 模型、parse / validate / compile / planner / `EncodeDirect` 编解码 | import `modernc.org/sqlite`；sidecar 策略；发射带方言 quoting / `fts5` / `MATCH` 的 SQL 文本 |
+| `runtime/obda` | YAML 模型、parse / validate / compile / planner | import `modernc.org/sqlite`；sidecar 策略；发射带方言 quoting / `fts5` / `MATCH` 的 SQL 文本 |
 | `runtime/obda/sqlast` | 封闭 AST（值只进 Param，标识符只进 Identifier），含 `Join` | 拼接运行时字面量 |
 | `runtime/obda/dialect` | `Dialect` 接口与 `SQLStatement{SQL, Args}` | 绑定某一驱动 |
 | `runtime/obda/dialect/sqlite` | 双引号 quoting、Render、introspect、**mapped-table** DDL 辅助、FTS helper、`Classify`、`NormalizeValue` | 生成 `of_*`；重定义 SPI 语义 |
@@ -435,7 +435,7 @@ models:
     identity:
       strategy: direct     # sidecar → ErrInvalidMapping
       columns: [id]
-      insert: generated    # provider 写入 EncodeDirect(type, UUIDv7)
+      insert: generated    # Engine 铸 UUIDv7；provider 把裸值写入该列
     tenant:
       strategy: column     # column | constant；connection 拒绝
       column: tenant_id
@@ -486,7 +486,7 @@ links:
 
 v3 中 Engine `_id` **就是**业务表 identity 列。因此物理表 MUST 包含：
 
-- identity 列（存储 `EncodeDirect` 编码后的字符串）
+- identity 列（存储 SPI `_id` 的原始值；`generated` 时为 Engine 铸造的 UUIDv7）
 - tenant 列（`strategy: column` 时）
 - 未 omit 的系统列（`version`、`created_at`、`updated_at`、`deleted_at`）
 - link 表额外包含 `from_id` / `to_id` 列
@@ -497,33 +497,19 @@ v3 中 Engine `_id` **就是**业务表 identity 列。因此物理表 MUST 包�
 
 ## 5. Identity
 
-### 5.1 `EncodeDirect`
+### 5.1 单列裸值
 
-`EncodeDirect(typ, keys)`：
+每个可执行绑定的 identity MUST 恰好一列。SPI `_id` 等于该列的原始存储值。非文本列取其规范字符串形式：整数为十进制无前导零；UUID 为小写带连字符。
 
-```text
-base64url( JSON{"t": "<object-or-link-type>", "k": ["<col0>", ...]} )
-```
+禁止类型信封、禁止 delimiter 拼接、禁止从 id 字符串解码类型。唯一性是 `(type, id)`，不要求跨类型全局唯一。
 
-无 padding（`RawURLEncoding`）。禁止 delimiter 拼接。
-
-v3 中 identity 列 **存储该字符串本身**。`GetObject(type, id)`：`DecodeDirect(id)` 校验 `t == type`，然后 `WHERE id = ?` 绑定原始 id 字符串。不必再经 meta 表翻译。
-
-### 5.2 复合键
-
-复合键：`k` 为有序分量。禁止 `type + ":" + key`。
-
-例如：
+`GetObject(type, id)` 在 `type` 对应表上：
 
 ```text
-hospital_id = 001
-patient_id  = 123
-
-↓
-
-EncodeDirect("Patient", ["001", "123"])
-→ base64url({"t":"Patient","k":["001","123"]})
+WHERE identity_col = ? AND tenant_id = ?
 ```
+
+类型不匹配、跨租户、缺行 → 与缺失相同的 not-found。不必再经 meta 表翻译，也不得先做纯内存类型校验。
 
 OBDA runtime MUST retain enough metadata to translate：
 
@@ -533,17 +519,30 @@ ODL ID
 SQL identity predicate (WHERE id = ?)
 ```
 
-### 5.3 Identity Transform 的限制
+### 5.2 不支持复合键
 
-v3 只允许 `insert: generated`（provider 写入 `EncodeDirect(type, UUIDv7)`）或用 payload 中已有列做 identity。
+多列 identity 在 validate / compile 失败，不得激活。本轮不编码、不拼接复合 PK。
+
+### 5.3 insert 策略
+
+v3 只允许：
+
+- `insert: generated`：Engine 铸造 UUIDv7，经 `_engineObjectId` 交给 provider。provider MUST 把该值写入 identity 列，不得另铸或改写。调用方不得用 payload 覆盖该 PK。
+- `insert: provided`：Engine 不铸造。`_id` 来自调用方提供的非 Primary 映射字段（ODL `id: ID! @primary` 不可写）。缺值失败。
 
 不可逆 transform（如 `hash`）MUST NOT 用于 identity。`hash` transform 本身在本 spec 中非法。
 
-解码失败、类型不匹配 → `ErrObjectNotFound` / `ErrLinkNotFound`。
+无 compiled mapping 时（memory 金路径 / 部分 seed）一律按 generated：Engine 铸 UUIDv7。
 
 ### 5.4 CreateLink
 
-CreateLink 可把 Engine 的 `_engineLinkId` 放进 `k`，或忽略后自铸；**返回的 `_id` 永远是编码后的 PK**，不是裸 UUID。
+表链接：`_id` 等于 Engine 注入的 `_engineLinkId`（裸 UUID），写入 link 表 identity 列。直调 SPI 且缺该字段时，provider 可自铸 UUIDv7。
+
+Inline link：SPI `_id` 等于 host 对象 `_id`。忽略 `_engineLinkId`。同一 host 上不同 inline type 可以共享同一 `_id`，寻址始终带 link `typ`。
+
+### 5.5 HTTP
+
+GraphQL 类型根字段（如 `patient(id:)`）与 REST `GET /api/v1/{type}/{id}` 的 `id` 等于 SPI `_id`。HTTP 边界不得编码或解码。本轮不加 `node(id:)`。若将来要全局 Node 查询，再在 resolver 入口补 `base64(type:id)`。
 
 ---
 
@@ -700,7 +699,7 @@ Engine `GetObject` 透传 SPI，因此注入 sqliteobda 后 Engine 能看见软�
 
 ### 8.3 GetLinks
 
-GetLinks：先解全局对象 id（`DecodeDirect`）。默认排除软删 link。
+GetLinks：从 `linkType + direction` 经 compiled mapping 推导端点类型，再按裸 `_id` 查表。禁止从 id 解码类型，禁止扫多表猜类型。默认排除软删 link。
 
 ### 8.4 Traverse
 
@@ -1619,7 +1618,7 @@ OBDA:
   patient.id
 
 Identity:
-  DecodeDirect → type=Patient, keys=[...]
+  patient.id = <raw _id>
 
 SQL:
   SELECT ...
@@ -1954,7 +1953,7 @@ Patient.name
 
 ```text
 runtime/obda/
-  doc.go mapping.go parse.go validate.go compiler.go planner.go identity.go
+  doc.go mapping.go parse.go validate.go compiler.go planner.go
   sqlast/
   dialect/dialect.go
   dialect/sqlite/          # dialect.go introspect.go ddl.go fts.go errors.go quote.go
@@ -2273,7 +2272,7 @@ OBDA Connector
 
 **第一：`models` 对应 ODL `ObjectType`，`links` 对应 ODL `LinkType`。**
 
-**第二：Identity Mapping 是核心，不是普通 Column Mapping。** 因为 `getObject()`、`getLinks()`、`traverse()` 都依赖 ODL ID → 物理 key 的可执行映射。v3 中 identity 列直接存储 `EncodeDirect` 编码后的字符串，无中间表。
+**第二：Identity Mapping 是核心，不是普通 Column Mapping。** 因为 `getObject()`、`getLinks()`、`traverse()` 都依赖 ODL ID → 物理 key 的可执行映射。v3 中 identity 恰好一列，列值就是 SPI `_id`，无中间表、无类型信封。
 
 **第三：Engine `_id` 就是业务表 identity 列。** 无 sidecar，无 `of_*` 表。`GetLinks` / `Traverse` 对业务表做参数化 JOIN。这是可注入 Engine 的完整读写存储。
 
@@ -2295,7 +2294,7 @@ obda-config.schema.json
 ✓ SQLite Source
 ✓ Table / View
 ✓ Object Mapping (direct identity)
-✓ Identity Mapping (direct, EncodeDirect)
+✓ Identity Mapping (direct, single-column raw value)
 ✓ Property Mapping
 ✓ Link Mapping
 ✓ Filter

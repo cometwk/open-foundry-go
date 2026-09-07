@@ -6,7 +6,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/openfoundry/runtime/obda"
 	"github.com/openfoundry/runtime/spi"
 	"github.com/openfoundry/runtime/storage/mysqlobda"
 )
@@ -25,6 +24,9 @@ func TestInlineOptionalCreateLinkGetLinks(t *testing.T) {
 	got, err := p.GetLink(ctx, "OwnedBy", id)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if got[spi.FieldID] != bookID {
+		t.Fatalf("inline _id=%v want host %s", got[spi.FieldID], bookID)
 	}
 	if got[spi.LinkFieldFromID] != bookID || got[spi.LinkFieldToID] != memberID {
 		t.Fatalf("%#v", got)
@@ -93,7 +95,7 @@ func TestInlineRequiredObjectAPIs(t *testing.T) {
 	if _, err := p.CreateLink(ctx, "OwnedBy", bookID, memberID, nil); !errors.Is(err, spi.ErrUnsupportedCapability) {
 		t.Fatalf("CreateLink err=%v", err)
 	}
-	if err := p.DeleteLink(ctx, "OwnedBy", obda.EncodeDirect("OwnedBy", []string{bookID})); !errors.Is(err, spi.ErrUnsupportedCapability) {
+	if err := p.DeleteLink(ctx, "OwnedBy", bookID); !errors.Is(err, spi.ErrUnsupportedCapability) {
 		t.Fatalf("DeleteLink err=%v", err)
 	}
 	mem2, err := p.CreateObject(ctx, "Member", map[string]any{"name": "Bob"})
