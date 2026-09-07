@@ -1,0 +1,85 @@
+# Library Domain Pack — OBDA mapping (SQLite direct-native)
+#
+# Maps Book, Member, and BorrowedBy onto business tables.
+# Loaded by the pack loader via pack.yaml `obda:`.
+
+apiVersion: openfoundry.io/obda/v1
+kind: OBDAConfig
+metadata:
+  name: library
+  namespace: example.library
+  version: 1
+schema:
+  namespace: example.library
+  version: 1
+models:
+  Book:
+    relation:
+      kind: table
+      name: book
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+    fields:
+      isbn:
+        column: isbn
+      title:
+        column: title
+      author:
+        column: author
+      status:
+        column: status
+  Member:
+    relation:
+      kind: table
+      name: member
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+    fields:
+      memberNumber:
+        column: member_number
+      name:
+        column: name
+      email:
+        column: email
+links:
+  BorrowedBy:
+    relation:
+      kind: table
+      name: borrowed_by
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    from:
+      object: Book
+      columns: [from_id]
+    to:
+      object: Member
+      columns: [to_id]
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+    fields:
+      borrowedAt:
+        column: borrowed_at
+      dueAt:
+        column: due_at

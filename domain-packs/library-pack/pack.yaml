@@ -24,6 +24,9 @@ actions:
   - actions/borrow-book.yaml
   - actions/return-book.yaml
 
+obda:
+  - obda/library.obda.yaml
+
 # Only .fga files are listed here. permissions/field-permissions.yaml is
 # discovered by convention if present.
 permissions:

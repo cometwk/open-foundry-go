@@ -328,6 +328,49 @@ func TestLoadSupplyChainMappings(t *testing.T) {
 	}
 }
 
+func TestLoadLibraryPackMappings(t *testing.T) {
+	dir, err := pack.LibraryPackDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	onto, err := pack.LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir: %v", err)
+	}
+	got, err := pack.LoadMappings(dir, onto)
+	if err != nil {
+		t.Fatalf("LoadMappings: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1", len(got))
+	}
+	if got[0].Path != "obda/library.obda.yaml" {
+		t.Fatalf("Path = %q", got[0].Path)
+	}
+	if got[0].Doc == nil {
+		t.Fatal("Doc is nil")
+	}
+	if n := len(got[0].Doc.Models); n != 2 {
+		t.Fatalf("models = %d, want 2", n)
+	}
+	if _, ok := got[0].Doc.Models["Book"]; !ok {
+		t.Fatal("missing Book model")
+	}
+	if _, ok := got[0].Doc.Models["Member"]; !ok {
+		t.Fatal("missing Member model")
+	}
+	if n := len(got[0].Doc.Links); n != 1 {
+		t.Fatalf("links = %d, want 1", n)
+	}
+	link, ok := got[0].Doc.Links["BorrowedBy"]
+	if !ok {
+		t.Fatal("missing BorrowedBy link")
+	}
+	if link.From.Object != "Book" || link.To.Object != "Member" {
+		t.Fatalf("BorrowedBy ends = %s -> %s", link.From.Object, link.To.Object)
+	}
+}
+
 func TestLoadMappings_NestedPath(t *testing.T) {
 	dir := writePack(t, map[string]string{
 		"pack.yaml":               schemaPackYAML("obda:\n  - obda/nested/x.obda.yaml\n"),

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/openfoundry/runtime/bootstrap"
 	"github.com/urfave/cli/v3"
@@ -53,9 +55,14 @@ var cmd = &cli.Command{
 					Name:  "dialect",
 					Usage: "打印用的 SQL 方言（mysql 或 sqlite）。默认用配置的 DB_DRIVER",
 				},
+				&cli.StringFlag{
+					Name:    "output",
+					Aliases: []string{"o"},
+					Usage:   "将 DDL 写到指定文件；省略则打印到 stdout",
+				},
 			},
 			Action: func(ctx context.Context, cmd *cli.Command) error {
-				return ddl(cmd.String("dialect"))
+				return ddl(cmd.String("dialect"), cmd.String("output"))
 			},
 		},
 		{
@@ -102,14 +109,51 @@ func run() error {
 	return nil
 }
 
-func ddl(dialect string) error {
+func ddl(dialect, output string) error {
 	stmts, err := bootstrap.PrintMappedDDL(conf, dialect)
 	if err != nil {
 		slog.Error("print ddl failed", "error", err)
 		return err
 	}
-	for _, s := range stmts {
-		fmt.Println(s)
+	if err := writeDDL(stmts, output); err != nil {
+		slog.Error("write ddl failed", "error", err, "output", output)
+		return err
 	}
 	return nil
+}
+
+func writeDDL(stmts []string, output string) error {
+	if output == "" {
+		for _, s := range stmts {
+			fmt.Println(s)
+		}
+		return nil
+	}
+	path, err := resolveOutputPath(output)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	body := strings.Join(stmts, "\n")
+	if body != "" {
+		body += "\n"
+	}
+	return os.WriteFile(path, []byte(body), 0o644)
+}
+
+func resolveOutputPath(output string) (string, error) {
+	if filepath.IsAbs(output) {
+		return output, nil
+	}
+	if wd, err := os.Getwd(); err == nil {
+		if st, statErr := os.Stat(wd); statErr == nil && st.IsDir() {
+			return filepath.Join(wd, output), nil
+		}
+	}
+	if conf != nil && conf.BaseDir != "" {
+		return filepath.Join(conf.BaseDir, output), nil
+	}
+	return filepath.Abs(output)
 }

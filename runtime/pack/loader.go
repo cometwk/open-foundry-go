@@ -92,6 +92,15 @@ func FindRepoRoot(start string) (string, error) {
 
 // SupplyChainDir resolves domain-packs/supply-chain relative to the repo root.
 func SupplyChainDir() (string, error) {
+	return domainPackDir("supply-chain")
+}
+
+// LibraryPackDir resolves domain-packs/library-pack relative to the repo root.
+func LibraryPackDir() (string, error) {
+	return domainPackDir("library-pack")
+}
+
+func domainPackDir(name string) (string, error) {
 	wd, err := os.Getwd()
 	if err != nil {
 		return "", err
@@ -104,7 +113,7 @@ func SupplyChainDir() (string, error) {
 			return "", err
 		}
 	}
-	return filepath.Join(root, "domain-packs", "supply-chain"), nil
+	return filepath.Join(root, "domain-packs", name), nil
 }
 
 // StripNamespaceForTest exposes namespace stripping for tests.
