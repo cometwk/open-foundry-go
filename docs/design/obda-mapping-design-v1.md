@@ -226,7 +226,7 @@ sources:
     kind: sql
     dialect: mysql
     connection:
-      dsnRef: secret://hospital/mysql-dsn
+      dsnRef: primary
 
 models:
   Patient:

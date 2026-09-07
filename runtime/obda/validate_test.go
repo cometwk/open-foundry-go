@@ -19,11 +19,6 @@ func TestValidateHashTransform(t *testing.T) {
 	mustInvalid(t, raw)
 }
 
-func TestValidateMissingSourceRef(t *testing.T) {
-	raw := strings.Replace(validYAML, "sourceRef: primary\n    relation:\n      kind: table\n      name: patient", "relation:\n      kind: table\n      name: patient", 1)
-	mustInvalid(t, raw)
-}
-
 func TestValidateEmptyIdentityColumns(t *testing.T) {
 	raw := strings.Replace(validYAML, "strategy: direct\n      columns: [id]\n      insert: generated", "strategy: direct\n      columns: []", 1)
 	mustInvalid(t, raw)
@@ -49,13 +44,8 @@ func TestValidateViewWithoutTenant(t *testing.T) {
 apiVersion: openfoundry.io/obda/v1
 kind: OBDAConfig
 metadata: {name: v}
-sources:
-  primary:
-    dialect: sqlite
-    connection: {dsnRef: secret://x}
 models:
   Patient:
-    sourceRef: primary
     relation: {kind: view, name: patient_v}
     access: read
     identity: {strategy: direct, columns: [id], insert: generated}

@@ -24,7 +24,6 @@ var readOnlyTransforms = map[string]struct{}{
 }
 
 // Validate checks mapping semantics that do not need a database.
-// Dialect remains an opaque identifier; adapter binding happens at Open.
 func Validate(doc *Document) error {
 	if doc == nil {
 		return fmt.Errorf("%w: empty document", spi.ErrInvalidMapping)
@@ -38,27 +37,16 @@ func Validate(doc *Document) error {
 	if doc.Metadata.Name == "" {
 		return fmt.Errorf("%w: metadata.name required", spi.ErrInvalidMapping)
 	}
-	if len(doc.Sources) == 0 {
-		return fmt.Errorf("%w: sources required", spi.ErrInvalidMapping)
-	}
-	for name, src := range doc.Sources {
-		if src.Kind != "" && src.Kind != "sql" {
-			return fmt.Errorf("%w: source %q kind %q", spi.ErrInvalidMapping, name, src.Kind)
-		}
-		if src.Connection.DSNRef == "" {
-			return fmt.Errorf("%w: source %q missing connection.dsnRef", spi.ErrInvalidMapping, name)
-		}
-	}
 	if len(doc.Models) == 0 && len(doc.Links) == 0 {
 		return fmt.Errorf("%w: models or links required", spi.ErrInvalidMapping)
 	}
 	for name, m := range doc.Models {
-		if err := validateBinding(doc, name, m.SourceRef, m.Relation, m.Access, m.Identity, m.Tenant, m.System, m.Fields); err != nil {
+		if err := validateBinding(name, m.Relation, m.Access, m.Identity, m.Tenant, m.System, m.Fields); err != nil {
 			return err
 		}
 	}
 	for name, l := range doc.Links {
-		if err := validateBinding(doc, name, l.SourceRef, l.Relation, l.Access, l.Identity, l.Tenant, l.System, l.Fields); err != nil {
+		if err := validateBinding(name, l.Relation, l.Access, l.Identity, l.Tenant, l.System, l.Fields); err != nil {
 			return err
 		}
 		if l.From.Object == "" || len(l.From.Columns) == 0 {
@@ -71,13 +59,7 @@ func Validate(doc *Document) error {
 	return nil
 }
 
-func validateBinding(doc *Document, name, sourceRef string, rel Relation, access string, id Identity, tenant Tenant, system System, fields map[string]Field) error {
-	if sourceRef == "" {
-		return fmt.Errorf("%w: %q missing sourceRef", spi.ErrInvalidMapping, name)
-	}
-	if _, ok := doc.Sources[sourceRef]; !ok {
-		return fmt.Errorf("%w: %q unknown sourceRef %q", spi.ErrInvalidMapping, name, sourceRef)
-	}
+func validateBinding(name string, rel Relation, access string, id Identity, tenant Tenant, system System, fields map[string]Field) error {
 	if rel.Name == "" {
 		return fmt.Errorf("%w: %q missing relation.name", spi.ErrInvalidMapping, name)
 	}

@@ -7,15 +7,8 @@ metadata:
 schema:
   namespace: nhs.acute
   version: 1
-sources:
-  primary:
-    kind: sql
-    dialect: mysql
-    connection:
-      dsnRef: secret://hospital/mysql-dsn
 models:
   Patient:
-    sourceRef: primary
     relation:
       kind: table
       name: patient
@@ -33,7 +26,6 @@ models:
       name:
         column: patient_name
   Ward:
-    sourceRef: primary
     relation:
       kind: table
       name: ward
@@ -51,7 +43,6 @@ models:
       name:
         column: ward_name
   Trust:
-    sourceRef: primary
     relation:
       kind: table
       name: trust
@@ -70,7 +61,6 @@ models:
         column: trust_name
 links:
   AdmittedTo:
-    sourceRef: primary
     relation:
       kind: table
       name: admission
@@ -91,7 +81,6 @@ links:
     system:
       strategy: native
   BelongsTo:
-    sourceRef: primary
     relation:
       kind: table
       name: ward_trust

@@ -74,6 +74,25 @@ func TestMappedTableStatementsModel(t *testing.T) {
 	}
 }
 
+func TestPhysicalSchemaOmitsDialectSyntax(t *testing.T) {
+	c := compiledFixture(spi.CardinalityManyToOne)
+	expect := obda.PhysicalSchema(c)
+	for _, tbl := range expect.Tables {
+		for _, col := range tbl.Columns {
+			if col == mysqldialect.ActiveKeyColumn {
+				t.Fatalf("of_active leaked into expectation: %v", tbl.Columns)
+			}
+		}
+	}
+	stmts, err := mysqldialect.MappedTableStatements(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(stmts, "\n"), "`of_active`") {
+		t.Fatal("mysql DDL must still emit of_active")
+	}
+}
+
 func TestMappedTableStatementsLinkActiveKey(t *testing.T) {
 	stmts, err := mysqldialect.MappedTableStatements(compiledFixture(spi.CardinalityManyToOne))
 	if err != nil {

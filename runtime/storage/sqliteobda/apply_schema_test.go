@@ -66,6 +66,20 @@ func TestApplySchemaAfterHelperSucceeds(t *testing.T) {
 	assertNoOfTables(t, db)
 }
 
+func TestApplySchemaPlainUniqueFails(t *testing.T) {
+	p, db := openProvider(t, testdata(t, "hospital.obda.yaml"))
+	mustExec(t, db, `CREATE TABLE patient (id TEXT PRIMARY KEY, tenant_id TEXT, patient_name TEXT, version INTEGER, created_at TEXT, updated_at TEXT, deleted_at TEXT)`)
+	mustExec(t, db, `CREATE TABLE ward (id TEXT PRIMARY KEY, tenant_id TEXT, ward_name TEXT, version INTEGER, created_at TEXT, updated_at TEXT, deleted_at TEXT)`)
+	mustExec(t, db, `CREATE TABLE admission (id TEXT PRIMARY KEY, tenant_id TEXT, from_id TEXT, to_id TEXT, version INTEGER, created_at TEXT, updated_at TEXT, deleted_at TEXT)`)
+	mustExec(t, db, `CREATE UNIQUE INDEX admission_from_active ON admission (tenant_id, from_id)`)
+	mustExec(t, db, `CREATE TABLE trust (id TEXT PRIMARY KEY, tenant_id TEXT, trust_name TEXT, version INTEGER, created_at TEXT, updated_at TEXT, deleted_at TEXT)`)
+	mustExec(t, db, `CREATE TABLE ward_trust (id TEXT PRIMARY KEY, tenant_id TEXT, from_id TEXT, to_id TEXT, version INTEGER, created_at TEXT, updated_at TEXT, deleted_at TEXT)`)
+	_, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, hospitalSchema(spi.CardinalityManyToOne))
+	if !errors.Is(err, spi.ErrSourceSchemaDrift) {
+		t.Fatalf("err=%v want ErrSourceSchemaDrift", err)
+	}
+}
+
 func TestApplySchemaMissingUniqueFails(t *testing.T) {
 	p, db := openProvider(t, testdata(t, "hospital.obda.yaml"))
 	mustExec(t, db, `CREATE TABLE patient (id TEXT PRIMARY KEY, tenant_id TEXT, patient_name TEXT, version INTEGER, created_at TEXT, updated_at TEXT, deleted_at TEXT)`)
@@ -109,16 +123,6 @@ func TestApplySchemaRequiresTenant(t *testing.T) {
 	mustInit(t, db, testdata(t, "patient.obda.yaml"), patientSchema())
 	_, err := p.ApplySchema(spi.RequestContext{}, patientSchema())
 	if !errors.Is(err, spi.ErrTenantRequired) {
-		t.Fatalf("err=%v", err)
-	}
-}
-
-func TestOpenRejectsMySQLDialect(t *testing.T) {
-	db := openDB(t)
-	raw := testdata(t, "patient.obda.yaml")
-	raw = []byte(strings.Replace(string(raw), "dialect: sqlite", "dialect: mysql", 1))
-	_, err := sqliteobda.Open(db, raw, sqliteobda.Options{DSNRefs: map[string]string{"secret://hospital/sqlite-dsn": "x"}})
-	if !errors.Is(err, spi.ErrInvalidMapping) {
 		t.Fatalf("err=%v", err)
 	}
 }
@@ -226,9 +230,7 @@ func assertNoOfTables(t *testing.T, db *sql.DB) {
 func openProvider(t *testing.T, mapping []byte) (*sqliteobda.Provider, *sql.DB) {
 	t.Helper()
 	db := openDB(t)
-	p, err := sqliteobda.Open(db, mapping, sqliteobda.Options{
-		DSNRefs: map[string]string{"secret://hospital/sqlite-dsn": "ignored"},
-	})
+	p, err := sqliteobda.Open(db, mapping, sqliteobda.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -84,7 +84,7 @@ spi.StorageProvider on business tables only
 
 它是**可注入 Engine 的读写存储**。它**不是** Sync Engine overlay、不是 JDBC connector、不是第四个图数据库、也不做 ReBAC。
 
-v1 只交付一个方言：**SQLite**（`modernc.org/sqlite`）。Core 把 `sources.*.dialect` 当不透明字符串；`sqliteobda.Open` 在无 sqlite 适配器时返回 `ErrInvalidMapping`。
+v1 只交付一个方言：**SQLite**（`modernc.org/sqlite`）。方言由所选 provider 包决定（选 `sqliteobda` 即 SQLite），不出现在 YAML 中。
 
 ### 1.3 设计原则
 
@@ -191,7 +191,7 @@ sqliteobda  →  runtime/obda  →  dialect.Dialect  ←  dialect/sqlite
 构造：
 
 ```go
-sqliteobda.Open(db *sql.DB, mapping []byte, opts sqliteobda.Options{DSNRefs: map[string]string{...}})
+sqliteobda.Open(db *sql.DB, mapping []byte, opts sqliteobda.Options{})
 ```
 
 未 `ApplySchema` 成功激活前，除 `HealthCheck` / `Capabilities` 外返回 `ErrMappingNotActive`。
@@ -387,7 +387,6 @@ metadata:
 schema:
   namespace: nhs.acute
   version: 1                         # integer，不是 semver 字符串
-sources: { ... }                     # MUST，至少一个
 models: { ... }                      # models 与 links 至少一个非空
 links: { ... }
 ```
@@ -400,7 +399,6 @@ links: { ... }
 | `metadata.namespace` | MAY | Open Foundry namespace |
 | `metadata.version` | MUST | Mapping 版本（独立于 ODL schema 版本） |
 | `schema` | MUST | 对应 ODL schema |
-| `sources` | MUST | 数据源定义 |
 | `models` | MUST | ObjectType 映射 |
 | `links` | MAY | LinkType 映射 |
 
@@ -408,29 +406,27 @@ links: { ... }
 
 `dsn` · `password` · `uri` · `url` · `token` · `secret` · `user`
 
-DSN 只通过 `connection.dsnRef` 命名；真实值在 `Options.DSNRefs` 解析。未解析的 `dsnRef` → `ErrInvalidMapping`。
+DSN 不进入 `*.obda.yaml`，由组装层从环境配置注入。YAML 只描述逻辑映射，不持有任何连接信息。
 
-### 4.3 Source
+### 4.3 全局 DSN
 
-```yaml
-sources:
-  primary:
-    kind: sql              # 空或 sql；其他 kind 非法
-    dialect: sqlite        # Core 不解释；Open 要求 sqlite 或空
-    connection:
-      dsnRef: secret://hospital/sqlite-dsn
+连接由组装层打开后注入 provider：
+
+```text
+环境配置（如 DB_URL）
+  → sql.Open(dialect, dsn)
+  → provider.Open(db, mapping, opts)
 ```
 
-v3 所有可写绑定必须落在**同一个 SQLite 连接/文件**（一个事务域）。跨域写入返回 `ErrTransactionDomain`（表已定义；当前单文件 Open 路径不会主动跨域）。
+方言由所选 provider 包决定：选 `sqliteobda` 即 SQLite，选 `mysqlobda` 即 MySQL。YAML 不设 dialect 字段。
+
+v3 所有可写绑定必须落在**同一个连接**（一个事务域）。跨域写入返回 `ErrTransactionDomain`（哨兵保留；当前单连接 Open 路径不会触发）。
 
 ### 4.4 Model / Link 绑定
-
-每个 model 与 link MUST 声明 `sourceRef`，且指向 `sources` 中已有名字。
 
 ```yaml
 models:
   Patient:
-    sourceRef: primary
     relation:
       kind: table          # table | view；缺省 table
       catalog:             # 空或 main；其他 → ErrInvalidMapping
@@ -461,7 +457,7 @@ Link 额外 MUST：
 ```yaml
 links:
   AdmittedTo:
-    # …与 model 相同的 sourceRef / relation / access / identity / tenant / system / fields
+    # …与 model 相同的 relation / access / identity / tenant / system / fields
     from:
       object: Patient
       columns: [from_id]   # 存 Patient 的 engine id（即 patient.id）
@@ -1029,7 +1025,7 @@ OBDA 加法（`errors.Is`）：
 
 ### 9.3 安全边界
 
-v3 仍强制：租户隔离、参数化值、标识符白名单、dsnRef 而非明文、公开错误脱敏、Query limit / Traverse 深度上界。
+v3 仍强制：租户隔离、参数化值、标识符白名单、DSN 不进 YAML、公开错误脱敏、Query limit / Traverse 深度上界。
 
 完整查询执行链：
 
@@ -1059,7 +1055,7 @@ SQL
 
 能调用 `StorageProvider` 即视为存储层可信调用方。授权与 consent 在 SPI 之上。无 ReBAC。
 
-参数化 SQL、标识符白名单、dsnRef、公开错误不含路径/DSN/SQL。
+参数化 SQL、标识符白名单、DSN 不进 YAML、公开错误不含路径/DSN/SQL。
 
 ### 9.4 Permission 不放进 `obda.yaml`
 
@@ -1582,7 +1578,6 @@ Mapping：
 ```yaml
 links:
   WorksAt:
-    sourceRef: primary
     relation:
       kind: table
       name: doctor_ward
@@ -1689,13 +1684,12 @@ obda validate hospital.obda.yaml
 ✓ System fields valid
 ```
 
-### 16.4 Source Introspection
+### 16.4 Connection Introspection
 
-因为 v2.0 Connector 已定义 `discoverSchema()`，所以可以：
+introspection 面向组装层已注入的连接，而不是 YAML 里的数据源名。
 
 ```bash
-obda introspect \
-  --source hospital-db
+obda introspect
 ```
 
 产生：
@@ -1722,8 +1716,7 @@ Candidate OBDA
 
 ```bash
 obda generate \
-  --odl schema/ \
-  --source hospital-db
+  --odl schema/
 ```
 
 生成：
@@ -1887,8 +1880,6 @@ interface SemanticSchemaCache {
   objects: Map<string, ObjectMapping>;
 
   links: Map<string, LinkMapping>;
-
-  sources: Map<string, SourceMapping>;
 }
 ```
 
@@ -1940,7 +1931,7 @@ Patient.name
 
 - 完整 `StorageProvider`，不是 OVERLAY read-through
 - 没有 PostgreSQL+AGE 本体存储、没有 Sync Engine、没有 `sync.mode`
-- YAML 形状是 `sourceRef` + `relation` + `identity.strategy: direct`，不是 `source.kind` + `identity.fields[].target`
+- YAML 形状是 `relation` + `identity.strategy: direct`，不是 `sourceRef` + `source.kind` + `identity.fields[].target`
 - 无 ReBAC 谓词注入
 - Traverse 为链式 JOIN（只交终点 Nodes），不是 BFS on `of_link_meta`
 - 对象物理键唯一索引是全量 unique，不是仅 active 部分唯一（v2 sidecar）
@@ -2004,15 +1995,8 @@ metadata:
 schema:
   namespace: nhs.acute
   version: 1
-sources:
-  primary:
-    kind: sql
-    dialect: sqlite
-    connection:
-      dsnRef: secret://hospital/sqlite-dsn
 models:
   Patient:
-    sourceRef: primary
     relation:
       kind: table
       name: patient
@@ -2030,7 +2014,6 @@ models:
       name:
         column: patient_name
   Ward:
-    sourceRef: primary
     relation:
       kind: table
       name: ward
@@ -2049,7 +2032,6 @@ models:
         column: ward_name
 links:
   AdmittedTo:
-    sourceRef: primary
     relation:
       kind: table
       name: admission
@@ -2194,7 +2176,6 @@ Writeback
         │ Property Mapping    │
         │ Link Mapping        │
         │ Identity Mapping    │
-        │ Source Mapping      │
         └──────────┬──────────┘
                    │
                    ▼

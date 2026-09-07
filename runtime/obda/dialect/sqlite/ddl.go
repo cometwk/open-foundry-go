@@ -2,12 +2,10 @@ package sqlite
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/openfoundry/runtime/obda"
 	"github.com/openfoundry/runtime/obda/sqlast"
-	"github.com/openfoundry/runtime/spi"
 )
 
 // MappedTableStatements generates CREATE TABLE / UNIQUE INDEX for compiled
@@ -16,39 +14,83 @@ func MappedTableStatements(compiled *obda.Compiled) ([]string, error) {
 	if compiled == nil {
 		return nil, fmt.Errorf("sqlite: nil compiled mapping")
 	}
+	expect := obda.PhysicalSchema(compiled)
+	models := tablesByName(compiled.Models)
+	links := linksByName(compiled.Links)
 	var stmts []string
-	modelNames := make([]string, 0, len(compiled.Models))
-	for name := range compiled.Models {
-		modelNames = append(modelNames, name)
-	}
-	sort.Strings(modelNames)
-	for _, name := range modelNames {
-		m := compiled.Models[name]
-		s, err := createTableStmt(m.Table, modelColumns(m), m.IdentityColumns)
+	for _, tbl := range expect.Tables {
+		if m, ok := models[tbl.Name]; ok {
+			s, err := createTableStmt(tbl.Name, modelDDLColumns(m, tbl.Columns), m.IdentityColumns)
+			if err != nil {
+				return nil, err
+			}
+			stmts = append(stmts, s)
+			continue
+		}
+		l, ok := links[tbl.Name]
+		if !ok {
+			return nil, fmt.Errorf("sqlite: unexpected table %q", tbl.Name)
+		}
+		s, err := createTableStmt(tbl.Name, linkDDLColumns(l, tbl.Columns), l.IdentityColumns)
 		if err != nil {
 			return nil, err
 		}
 		stmts = append(stmts, s)
-	}
-	linkNames := make([]string, 0, len(compiled.Links))
-	for name := range compiled.Links {
-		linkNames = append(linkNames, name)
-	}
-	sort.Strings(linkNames)
-	for _, name := range linkNames {
-		l := compiled.Links[name]
-		s, err := createTableStmt(l.Table, linkColumns(l), l.IdentityColumns)
-		if err != nil {
-			return nil, err
+		for _, spec := range tbl.Uniques {
+			name := uniqueIndexName(tbl.Name, spec, l.FromColumns, l.ToColumns)
+			idx, err := uniqueIndex(tbl.Name, name, spec.Columns, spec.ExcludeSoftDeleted)
+			if err != nil {
+				return nil, err
+			}
+			stmts = append(stmts, idx)
 		}
-		stmts = append(stmts, s)
-		idx, err := cardinalityIndexes(l)
-		if err != nil {
-			return nil, err
-		}
-		stmts = append(stmts, idx...)
 	}
 	return stmts, nil
+}
+
+func tablesByName(models map[string]*obda.CompiledModel) map[string]*obda.CompiledModel {
+	out := make(map[string]*obda.CompiledModel, len(models))
+	for _, m := range models {
+		out[m.Table] = m
+	}
+	return out
+}
+
+func linksByName(links map[string]*obda.CompiledLink) map[string]*obda.CompiledLink {
+	out := make(map[string]*obda.CompiledLink, len(links))
+	for _, l := range links {
+		out[l.Table] = l
+	}
+	return out
+}
+
+func uniqueIndexName(table string, spec obda.UniqueSpec, from, to []string) string {
+	if uniqueMatches(spec.Columns, from) {
+		return table + "_from_active"
+	}
+	if uniqueMatches(spec.Columns, to) {
+		return table + "_to_active"
+	}
+	return table + "_from_active"
+}
+
+func uniqueMatches(spec, endpoint []string) bool {
+	if eqStrings(spec, endpoint) {
+		return true
+	}
+	return len(spec) == len(endpoint)+1 && eqStrings(spec[1:], endpoint)
+}
+
+func eqStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 type ddlColumn struct {
@@ -58,84 +100,50 @@ type ddlColumn struct {
 	defaultSQL string
 }
 
-func modelColumns(m *obda.CompiledModel) []ddlColumn {
-	seen := map[string]struct{}{}
-	var cols []ddlColumn
-	add := func(c ddlColumn) {
-		if c.name == "" {
-			return
-		}
-		if _, ok := seen[c.name]; ok {
-			return
-		}
-		seen[c.name] = struct{}{}
-		cols = append(cols, c)
+func modelDDLColumns(m *obda.CompiledModel, names []string) []ddlColumn {
+	out := make([]ddlColumn, 0, len(names))
+	for _, name := range names {
+		out = append(out, typedColumn(name, m.IdentityColumns, m.TenantColumn, nil, nil, m.Fields, m.PropertyTypes))
 	}
-	for _, name := range m.IdentityColumns {
-		add(ddlColumn{name: name, typ: "TEXT", notNull: true})
-	}
-	if m.TenantColumn != "" {
-		add(ddlColumn{name: m.TenantColumn, typ: "TEXT", notNull: true})
-	}
-	for _, f := range m.Fields {
-		add(ddlColumn{name: f.Column, typ: sqlType(m.PropertyTypes[f.Logical])})
-	}
-	addSystemColumns(&cols, seen, m.Omit)
-	return cols
+	return out
 }
 
-func linkColumns(l *obda.CompiledLink) []ddlColumn {
-	seen := map[string]struct{}{}
-	var cols []ddlColumn
-	add := func(c ddlColumn) {
-		if c.name == "" {
-			return
-		}
-		if _, ok := seen[c.name]; ok {
-			return
-		}
-		seen[c.name] = struct{}{}
-		cols = append(cols, c)
+func linkDDLColumns(l *obda.CompiledLink, names []string) []ddlColumn {
+	out := make([]ddlColumn, 0, len(names))
+	for _, name := range names {
+		out = append(out, typedColumn(name, l.IdentityColumns, l.TenantColumn, l.FromColumns, l.ToColumns, l.Fields, l.PropertyTypes))
 	}
-	for _, name := range l.IdentityColumns {
-		add(ddlColumn{name: name, typ: "TEXT", notNull: true})
-	}
-	if l.TenantColumn != "" {
-		add(ddlColumn{name: l.TenantColumn, typ: "TEXT", notNull: true})
-	}
-	for _, name := range l.FromColumns {
-		add(ddlColumn{name: name, typ: "TEXT", notNull: true})
-	}
-	for _, name := range l.ToColumns {
-		add(ddlColumn{name: name, typ: "TEXT", notNull: true})
-	}
-	for _, f := range l.Fields {
-		add(ddlColumn{name: f.Column, typ: sqlType(l.PropertyTypes[f.Logical])})
-	}
-	addSystemColumns(&cols, seen, l.Omit)
-	return cols
+	return out
 }
 
-func addSystemColumns(cols *[]ddlColumn, seen map[string]struct{}, omit obda.OmitFlags) {
-	add := func(c ddlColumn) {
-		if _, ok := seen[c.name]; ok {
-			return
+func typedColumn(name string, identity []string, tenant string, from, to []string, fields []obda.CompiledField, types map[string]string) ddlColumn {
+	if in(identity, name) || name == tenant || in(from, name) || in(to, name) {
+		return ddlColumn{name: name, typ: "TEXT", notNull: true}
+	}
+	for _, f := range fields {
+		if f.Column == name {
+			return ddlColumn{name: name, typ: sqlType(types[f.Logical])}
 		}
-		seen[c.name] = struct{}{}
-		*cols = append(*cols, c)
 	}
-	if !omit.Version {
-		add(ddlColumn{name: "version", typ: "INTEGER", notNull: true, defaultSQL: "1"})
+	switch name {
+	case "version":
+		return ddlColumn{name: name, typ: "INTEGER", notNull: true, defaultSQL: "1"}
+	case "created_at", "updated_at":
+		return ddlColumn{name: name, typ: "TEXT", notNull: true}
+	case "deleted_at":
+		return ddlColumn{name: name, typ: "TEXT"}
+	default:
+		return ddlColumn{name: name, typ: "TEXT"}
 	}
-	if !omit.CreatedAt {
-		add(ddlColumn{name: "created_at", typ: "TEXT", notNull: true})
+}
+
+func in(xs []string, name string) bool {
+	for _, x := range xs {
+		if x == name {
+			return true
+		}
 	}
-	if !omit.UpdatedAt {
-		add(ddlColumn{name: "updated_at", typ: "TEXT", notNull: true})
-	}
-	if !omit.DeletedAt {
-		add(ddlColumn{name: "deleted_at", typ: "TEXT"})
-	}
+	return false
 }
 
 func createTableStmt(table string, cols []ddlColumn, identity []string) (string, error) {
@@ -174,50 +182,12 @@ func createTableStmt(table string, cols []ddlColumn, identity []string) (string,
 	return "CREATE TABLE IF NOT EXISTS " + tbl + " (\n  " + strings.Join(parts, ",\n  ") + "\n)", nil
 }
 
-func cardinalityIndexes(l *obda.CompiledLink) ([]string, error) {
-	switch l.Cardinality {
-	case spi.CardinalityManyToOne:
-		s, err := uniqueIndex(l, l.Table+"_from_active", appendTenant(l.TenantColumn, l.FromColumns), l.Omit.DeletedAt)
-		if err != nil {
-			return nil, err
-		}
-		return []string{s}, nil
-	case spi.CardinalityOneToMany:
-		s, err := uniqueIndex(l, l.Table+"_to_active", appendTenant(l.TenantColumn, l.ToColumns), l.Omit.DeletedAt)
-		if err != nil {
-			return nil, err
-		}
-		return []string{s}, nil
-	case spi.CardinalityOneToOne:
-		from, err := uniqueIndex(l, l.Table+"_from_active", appendTenant(l.TenantColumn, l.FromColumns), l.Omit.DeletedAt)
-		if err != nil {
-			return nil, err
-		}
-		to, err := uniqueIndex(l, l.Table+"_to_active", appendTenant(l.TenantColumn, l.ToColumns), l.Omit.DeletedAt)
-		if err != nil {
-			return nil, err
-		}
-		return []string{from, to}, nil
-	default:
-		return nil, nil
-	}
-}
-
-func appendTenant(tenant string, cols []string) []string {
-	if tenant == "" {
-		return append([]string(nil), cols...)
-	}
-	out := make([]string, 0, len(cols)+1)
-	out = append(out, tenant)
-	return append(out, cols...)
-}
-
-func uniqueIndex(l *obda.CompiledLink, name string, columns []string, omitDeleted bool) (string, error) {
+func uniqueIndex(table, name string, columns []string, omitDeleted bool) (string, error) {
 	idx, err := quote(sqlast.Identifier{Name: name})
 	if err != nil {
 		return "", err
 	}
-	tbl, err := quote(sqlast.Identifier{Name: l.Table})
+	tbl, err := quote(sqlast.Identifier{Name: table})
 	if err != nil {
 		return "", err
 	}
@@ -230,7 +200,7 @@ func uniqueIndex(l *obda.CompiledLink, name string, columns []string, omitDelete
 		quoted[i] = q
 	}
 	sql := "CREATE UNIQUE INDEX IF NOT EXISTS " + idx + "\n  ON " + tbl + " (" + strings.Join(quoted, ", ") + ")"
-	if !omitDeleted {
+	if omitDeleted {
 		del, err := quote(sqlast.Identifier{Name: "deleted_at"})
 		if err != nil {
 			return "", err
