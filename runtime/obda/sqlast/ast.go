@@ -119,6 +119,7 @@ type AggregateSelect struct {
 	GroupBy []Identifier
 	Aggs    []Aggregate
 	Where   *Predicate
+	Order   []Order
 	Limit   *LimitOffset
 }
 

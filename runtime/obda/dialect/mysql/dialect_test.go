@@ -150,6 +150,70 @@ func TestNormalizeBool(t *testing.T) {
 	}
 }
 
+func TestRenderAggregateSelect(t *testing.T) {
+	stmt, err := mysqldialect.New().Render(&sqlast.AggregateSelect{
+		From:    sqlast.Identifier{Name: "patient"},
+		GroupBy: []sqlast.Identifier{{Name: "city"}},
+		Aggs: []sqlast.Aggregate{
+			{Fn: "count", Field: &sqlast.Identifier{Name: "x"}, Alias: sqlast.Identifier{Name: "count_x"}},
+			{Fn: "sum", Field: &sqlast.Identifier{Name: "amount"}, Alias: sqlast.Identifier{Name: "sum_amount"}},
+		},
+		Where: &sqlast.Predicate{Op: "eq", Field: &sqlast.Identifier{Name: "tenant_id"}, Value: sqlast.Param{Position: 1}},
+		Order: []sqlast.Order{
+			{Field: sqlast.Identifier{Name: "city"}},
+			{Field: sqlast.Identifier{Name: "of_tiebreak"}},
+		},
+		Limit: &sqlast.LimitOffset{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "SELECT `city`, COUNT(`x`) AS `count_x`, SUM(`amount`) AS `sum_amount` FROM `patient` WHERE `tenant_id` = ? GROUP BY `city` ORDER BY `city` ASC, `of_tiebreak` ASC LIMIT ? OFFSET ?"
+	if stmt.SQL != want {
+		t.Fatalf("sql=%s\nwant=%s", stmt.SQL, want)
+	}
+}
+
+func TestRenderAggregateNoGroupBy(t *testing.T) {
+	stmt, err := mysqldialect.New().Render(&sqlast.AggregateSelect{
+		From: sqlast.Identifier{Name: "patient"},
+		Aggs: []sqlast.Aggregate{
+			{Fn: "count", Field: &sqlast.Identifier{Name: "*"}, Alias: sqlast.Identifier{Name: "count"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "SELECT COUNT(*) AS `count` FROM `patient`"
+	if stmt.SQL != want {
+		t.Fatalf("sql=%s\nwant=%s", stmt.SQL, want)
+	}
+}
+
+func TestRenderAggregateUnknownFn(t *testing.T) {
+	_, err := mysqldialect.New().Render(&sqlast.AggregateSelect{
+		From: sqlast.Identifier{Name: "patient"},
+		Aggs: []sqlast.Aggregate{
+			{Fn: "median", Field: &sqlast.Identifier{Name: "x"}, Alias: sqlast.Identifier{Name: "median_x"}},
+		},
+	})
+	if !errors.Is(err, spi.ErrUnsupportedCapability) {
+		t.Fatalf("err=%v want ErrUnsupportedCapability", err)
+	}
+}
+
+func TestRenderAggregateSumStar(t *testing.T) {
+	_, err := mysqldialect.New().Render(&sqlast.AggregateSelect{
+		From: sqlast.Identifier{Name: "patient"},
+		Aggs: []sqlast.Aggregate{
+			{Fn: "sum", Field: &sqlast.Identifier{Name: "*"}, Alias: sqlast.Identifier{Name: "sum_all"}},
+		},
+	})
+	if !errors.Is(err, spi.ErrUnsupportedCapability) {
+		t.Fatalf("sum(*) should return ErrUnsupportedCapability, got %v", err)
+	}
+}
+
 func TestClassify(t *testing.T) {
 	dup := errors.New("Error 1062: Duplicate entry 't1-p1' for key 'admission.admission_from_active'")
 	if err := mysqldialect.Classify(dup); !errors.Is(err, spi.ErrCardinalityViolation) {
