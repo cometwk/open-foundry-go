@@ -29,3 +29,5 @@ models:
         column: patient_name
       city:
         column: city_name
+      notes:
+        column: notes

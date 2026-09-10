@@ -29,50 +29,47 @@ func TestLoadPackSeeds_LibraryDemo(t *testing.T) {
 	if seed.PackName != "library" {
 		t.Fatalf("packName=%q, want library", seed.PackName)
 	}
-	if len(seed.Objects) != 3 {
-		t.Fatalf("objects=%d, want 3", len(seed.Objects))
+	if len(seed.Objects) != 14 {
+		t.Fatalf("objects=%d, want 14", len(seed.Objects))
 	}
-	if len(seed.Links) != 2 {
-		t.Fatalf("links=%d, want 2", len(seed.Links))
-	}
-
-	dune := seed.Objects[0]
-	if dune.Type != "Book" || dune.Ref != "book-dune" {
-		t.Fatalf("first object = %+v", dune)
-	}
-	if dune.Fields["title"] != "Dune" || dune.Fields["author"] != "Frank Herbert" {
-		t.Fatalf("dune fields = %#v", dune.Fields)
-	}
-	if dune.Fields["isbn"] != "9780441013593" || dune.Fields["status"] != "AVAILABLE" {
-		t.Fatalf("dune fields = %#v", dune.Fields)
+	if len(seed.Links) != 21 {
+		t.Fatalf("links=%d, want 21", len(seed.Links))
 	}
 
-	ubik := seed.Objects[1]
-	if ubik.Ref != "book-ubik" || ubik.Fields["title"] != "Ubik" || ubik.Fields["status"] != "ON_LOAN" {
-		t.Fatalf("second object = %+v", ubik)
+	byRef := map[string]bootstrap.SeedObject{}
+	for _, obj := range seed.Objects {
+		byRef[obj.Ref] = obj
+	}
+	sapiens, ok := byRef["book_sapiens"]
+	if !ok || sapiens.Type != "Book" {
+		t.Fatalf("book_sapiens = %+v", sapiens)
+	}
+	if sapiens.Fields["title"] != "人类简史" {
+		t.Fatalf("sapiens fields = %#v", sapiens.Fields)
+	}
+	hong, ok := byRef["xiao_hong"]
+	if !ok || hong.Type != "Reader" {
+		t.Fatalf("xiao_hong = %+v", hong)
+	}
+	if hong.Fields["membershipLevel"] != "BASIC" {
+		t.Fatalf("xiao_hong fields = %#v", hong.Fields)
 	}
 
-	ada := seed.Objects[2]
-	if ada.Type != "Member" || ada.Ref != "member-ada" {
-		t.Fatalf("third object = %+v", ada)
+	var registered, borrows, available int
+	for _, link := range seed.Links {
+		switch link.Type {
+		case "RegisteredAt":
+			registered++
+		case "Borrows":
+			borrows++
+		case "AvailableAt":
+			available++
+		default:
+			t.Fatalf("unexpected simplified link %s", link.Type)
+		}
 	}
-	if ada.Fields["name"] != "Ada Lovelace" || ada.Fields["memberNumber"] != "M-0001" {
-		t.Fatalf("ada fields = %#v", ada.Fields)
-	}
-
-	owned := seed.Links[0]
-	if owned.Type != "OwnedBy" || owned.From != "book-dune" || owned.To != "member-ada" {
-		t.Fatalf("owned link = %+v", owned)
-	}
-	borrowed := seed.Links[1]
-	if borrowed.Type != "BorrowedBy" || borrowed.From != "book-ubik" || borrowed.To != "member-ada" {
-		t.Fatalf("borrowed link = %+v", borrowed)
-	}
-	if borrowed.Fields["borrowedAt"] != "2026-09-01T10:00:00Z" {
-		t.Fatalf("borrowedAt = %#v", borrowed.Fields["borrowedAt"])
-	}
-	if borrowed.Fields["dueAt"] != "2026-09-15T10:00:00Z" {
-		t.Fatalf("dueAt = %#v", borrowed.Fields["dueAt"])
+	if registered != 4 || borrows != 6 || available != 11 {
+		t.Fatalf("links registered=%d borrows=%d available=%d", registered, borrows, available)
 	}
 }
 
@@ -203,46 +200,46 @@ func TestApplySeeds_LibraryDemoIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ApplySeeds: %v", err)
 	}
-	if first.CreatedObjects != 3 || first.CreatedLinks != 2 || first.SkippedObjects != 0 {
-		t.Fatalf("first apply = %+v, want 3 objects + 2 links", first)
+	if first.CreatedObjects != 14 || first.CreatedLinks != 21 || first.SkippedObjects != 0 {
+		t.Fatalf("first apply = %+v, want 14 objects + 21 links", first)
 	}
 
 	second, err := bootstrap.ApplySeeds(eng, seeds, ctx)
 	if err != nil {
 		t.Fatalf("ApplySeeds rerun: %v", err)
 	}
-	if second.CreatedObjects != 0 || second.SkippedObjects != 3 {
-		t.Fatalf("second apply = %+v, want 3 skipped objects", second)
+	if second.CreatedObjects != 0 || second.SkippedObjects != 14 {
+		t.Fatalf("second apply = %+v, want 14 skipped objects", second)
 	}
 
 	books, err := eng.QueryObjects(ctx, "Book", spi.FilterExpression{
-		Field: "title", Operator: "eq", Value: "Dune",
+		Field: "title", Operator: "eq", Value: "人类简史",
 	}, &spi.QueryOptions{Limit: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if books.TotalCount != 1 {
-		t.Fatalf("Dune count=%d, want 1", books.TotalCount)
+		t.Fatalf("人类简史 count=%d, want 1", books.TotalCount)
 	}
-	members, err := eng.QueryObjects(ctx, "Member", spi.FilterExpression{
-		Field: "name", Operator: "eq", Value: "Ada Lovelace",
+	readers, err := eng.QueryObjects(ctx, "Reader", spi.FilterExpression{
+		Field: "membershipLevel", Operator: "eq", Value: "BASIC",
 	}, &spi.QueryOptions{Limit: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if members.TotalCount != 1 {
-		t.Fatalf("Ada count=%d, want 1", members.TotalCount)
+	if readers.TotalCount != 1 {
+		t.Fatalf("BASIC reader count=%d, want 1", readers.TotalCount)
 	}
 
 	other := spi.RequestContext{TenantID: "other", ActorID: "boot"}
 	hidden, err := eng.QueryObjects(other, "Book", spi.FilterExpression{
-		Field: "title", Operator: "eq", Value: "Dune",
+		Field: "title", Operator: "eq", Value: "人类简史",
 	}, &spi.QueryOptions{Limit: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if hidden.TotalCount != 0 {
-		t.Fatalf("cross-tenant Dune count=%d, want 0", hidden.TotalCount)
+		t.Fatalf("cross-tenant 人类简史 count=%d, want 0", hidden.TotalCount)
 	}
 }
 

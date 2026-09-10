@@ -1,5 +1,5 @@
-# Full seed for human testing. Same Reader/Book/Branch refs as simple.yaml,
-# plus Author / Category / Series and the remaining seven link types.
+# Simplified seed: Reader / Book / Branch and borrows / registered_at / available_at.
+# Projection of seeds/demo.yaml — same refs, no Author/Category/Series or extra links.
 objects:
   - type: Branch
     ref: branch_central
@@ -16,53 +16,6 @@ objects:
       maxBorrowPerReader: 3
       newBookProtectionDays: 7
       allowInterLibraryLoan: true
-
-  - type: Category
-    ref: cat_science
-    fields:
-      name: 科学
-      isRestricted: true
-      requiredMembershipLevel: GOLD
-
-  - type: Category
-    ref: cat_fiction
-    fields:
-      name: 文学
-      isRestricted: false
-      requiredMembershipLevel: BASIC
-
-  - type: Category
-    ref: cat_history
-    fields:
-      name: 历史
-      isRestricted: false
-      requiredMembershipLevel: BASIC
-
-  - type: Author
-    ref: author_liu
-    fields:
-      name: 刘慈欣
-      nationality: CN
-      activeBookCount: 4
-
-  - type: Author
-    ref: author_rowling
-    fields:
-      name: J.K.罗琳
-      nationality: GB
-      activeBookCount: 3
-
-  - type: Series
-    ref: series_three_body
-    fields:
-      name: 三体三部曲
-      totalVolumes: 3
-
-  - type: Series
-    ref: series_hp
-    fields:
-      name: 哈利波特
-      totalVolumes: 7
 
   - type: Book
     ref: book_tb1
@@ -169,22 +122,6 @@ objects:
       registeredDays: 180
 
 links:
-  - type: PartnersWith
-    from: branch_central
-    to: branch_west
-
-  - type: PartnersWith
-    from: branch_west
-    to: branch_central
-
-  - type: SpecializesIn
-    from: author_liu
-    to: cat_science
-
-  - type: SpecializesIn
-    from: author_rowling
-    to: cat_fiction
-
   - type: RegisteredAt
     from: xiao_ming
     to: branch_central
@@ -200,90 +137,6 @@ links:
   - type: RegisteredAt
     from: xiao_li
     to: branch_west
-
-  - type: WrittenBy
-    from: book_tb1
-    to: author_liu
-
-  - type: WrittenBy
-    from: book_tb2
-    to: author_liu
-
-  - type: WrittenBy
-    from: book_tb3
-    to: author_liu
-
-  - type: WrittenBy
-    from: book_quantum
-    to: author_liu
-
-  - type: WrittenBy
-    from: book_hp1
-    to: author_rowling
-
-  - type: WrittenBy
-    from: book_hp2
-    to: author_rowling
-
-  - type: WrittenBy
-    from: book_hp3
-    to: author_rowling
-
-  - type: BelongsTo
-    from: book_tb1
-    to: cat_science
-
-  - type: BelongsTo
-    from: book_tb2
-    to: cat_science
-
-  - type: BelongsTo
-    from: book_tb3
-    to: cat_science
-
-  - type: BelongsTo
-    from: book_quantum
-    to: cat_science
-
-  - type: BelongsTo
-    from: book_hp1
-    to: cat_fiction
-
-  - type: BelongsTo
-    from: book_hp2
-    to: cat_fiction
-
-  - type: BelongsTo
-    from: book_hp3
-    to: cat_fiction
-
-  - type: BelongsTo
-    from: book_sapiens
-    to: cat_history
-
-  - type: PartOf
-    from: book_tb1
-    to: series_three_body
-
-  - type: PartOf
-    from: book_tb2
-    to: series_three_body
-
-  - type: PartOf
-    from: book_tb3
-    to: series_three_body
-
-  - type: PartOf
-    from: book_hp1
-    to: series_hp
-
-  - type: PartOf
-    from: book_hp2
-    to: series_hp
-
-  - type: PartOf
-    from: book_hp3
-    to: series_hp
 
   - type: Borrows
     from: xiao_ming
@@ -309,10 +162,6 @@ links:
     from: xiao_li
     to: book_hp1
 
-  - type: Overdue
-    from: xiao_li
-    to: book_hp2
-
   - type: AvailableAt
     from: book_tb1
     to: branch_central
@@ -356,27 +205,3 @@ links:
   - type: AvailableAt
     from: book_sapiens
     to: branch_west
-
-  - type: Reserves
-    from: xiao_hong
-    to: book_hp3
-
-  - type: Reserves
-    from: xiao_ming
-    to: book_hp3
-
-  - type: Reserves
-    from: lao_wang
-    to: book_hp3
-
-  - type: Reserves
-    from: xiao_li
-    to: book_hp3
-
-  - type: Reserves
-    from: xiao_hong
-    to: book_hp3
-
-  - type: Reserves
-    from: xiao_ming
-    to: book_hp3

@@ -1,11 +1,11 @@
 # Follow seed links. IDs are Engine-minted UUIDv7 — paste from gql query.gql.
-# GET the way runtime/e2e/graphql_rest_test.go rest() does:
+# GET:
 #   /api/v1/{lowerFirst}/{id}/follow?path=comma,separated,@link,fields
-# Library analogue of facility/{id}/follow?path=inventoryRecords,trackedProduct:
-# Member --books--> Book --owner--> Member.
+#
+# Reader --borrowedBooks--> Book --branches--> Branch
 #
 #   rest                                          # this file
-#   rest member <id> follow books,owner           # same request, id on CLI
-#   rest book <id>                                # GET /api/v1/book/{id}
+#   rest reader <id> follow borrowedBooks,branches
+#   rest book <id>
 
 /api/v1/book/01a07b3b-b76c-75d0-baf1-4202e599f2da

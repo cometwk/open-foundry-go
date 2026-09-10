@@ -1,0 +1,14 @@
+extend schema @namespace(name: "example.library", version: "0.1.0")
+
+type Branch @objectType {
+  id: ID! @primary
+  name: String! @indexed
+  maxBorrowPerReader: Int!
+  newBookProtectionDays: Int!
+  allowInterLibraryLoan: Boolean!
+
+  readers: [Reader!]! @link(type: "RegisteredAt", direction: INBOUND)
+  books: [Book!]! @link(type: "AvailableAt", direction: INBOUND)
+  partners: [Branch!]! @link(type: "PartnersWith", direction: OUTBOUND)
+  partneredBy: [Branch!]! @link(type: "PartnersWith", direction: INBOUND)
+}

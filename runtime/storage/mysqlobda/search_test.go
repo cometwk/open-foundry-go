@@ -11,9 +11,9 @@ import (
 func TestSearchRelevanceAndHighlights(t *testing.T) {
 	p := activateSearch(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	mustCreate(t, p, ctx, map[string]any{"name": "clinic clinic clinic", "city": "london"})
-	mustCreate(t, p, ctx, map[string]any{"name": "clinic hospital", "city": "paris"})
-	mustCreate(t, p, ctx, map[string]any{"name": "banana", "city": "tokyo"})
+	mustCreate(t, p, ctx, map[string]any{"name": "clinic clinic clinic", "city": "london", "notes": "internal only"})
+	mustCreate(t, p, ctx, map[string]any{"name": "clinic hospital", "city": "paris", "notes": "internal only"})
+	mustCreate(t, p, ctx, map[string]any{"name": "banana", "city": "tokyo", "notes": "internal only"})
 
 	res, err := p.SearchObjects(ctx, "Patient", spi.SearchQuery{Query: "clinic"})
 	if err != nil {
@@ -29,15 +29,19 @@ func TestSearchRelevanceAndHighlights(t *testing.T) {
 		if h.Score <= 0 {
 			t.Fatalf("score=%v want > 0", h.Score)
 		}
-		if got := h.Highlights["name"]; len(got) != 1 || got[0] == "" {
-			t.Fatalf("name highlights=%v", h.Highlights)
+		// Highlights must be the whole declared-field value, not a snippet.
+		wantName, _ := h.Object["name"].(string)
+		if got := h.Highlights["name"]; len(got) != 1 || got[0] != wantName {
+			t.Fatalf("name highlights=%v want [%q]", got, wantName)
 		}
-		if _, ok := h.Highlights["city"]; !ok {
-			t.Fatalf("city should be highlighted: %v", h.Highlights)
+		wantCity, _ := h.Object["city"].(string)
+		if got := h.Highlights["city"]; len(got) != 1 || got[0] != wantCity {
+			t.Fatalf("city highlights=%v want [%q]", got, wantCity)
 		}
-	}
-	if _, ok := res.Hits[0].Highlights["score"]; ok {
-		t.Fatal("undeclared field must not appear in highlights")
+		// "notes" is a mapped field but not in search.fields — never highlighted.
+		if _, ok := h.Highlights["notes"]; ok {
+			t.Fatal("undeclared field must not appear in highlights")
+		}
 	}
 }
 
@@ -172,6 +176,7 @@ func activateSearch(t *testing.T) *mysqlobda.Provider {
 			{Name: "Patient", Properties: []spi.PropertyDefinition{
 				{Name: "name", Type: "String"},
 				{Name: "city", Type: "String"},
+				{Name: "notes", Type: "String"},
 			}},
 		},
 	}

@@ -188,14 +188,6 @@ func TestAggregateOrderByAndPagination(t *testing.T) {
 		t.Fatalf("first city=%v want A", got)
 	}
 
-	if _, err := p.AggregateObjects(ctx, "Patient", spi.AggregateQuery{
-		Fields:  []spi.AggregateField{{Field: "*", Fn: "count", Alias: "cnt"}},
-		GroupBy: []string{"city"},
-		OrderBy: []spi.OrderBy{{Field: "cnt", Direction: "desc"}},
-	}); err != nil {
-		t.Fatalf("order by alias: %v", err)
-	}
-
 	res, err = p.AggregateObjects(ctx, "Patient", spi.AggregateQuery{
 		Fields:  []spi.AggregateField{{Field: "*", Fn: "count", Alias: "cnt"}},
 		GroupBy: []string{"city"},
@@ -226,6 +218,51 @@ func TestAggregateOrderByAndPagination(t *testing.T) {
 	}
 }
 
+// TestAggregateOrderByAlias uses counts that differ per group so ordering by
+// the aggregate alias (not just the group key) is actually observable.
+func TestAggregateOrderByAlias(t *testing.T) {
+	p := activateAgg(t)
+	ctx := spi.RequestContext{TenantID: "t1"}
+	mustCreate(t, p, ctx, map[string]any{"name": "a1", "city": "A"})
+	mustCreate(t, p, ctx, map[string]any{"name": "a2", "city": "A"})
+	mustCreate(t, p, ctx, map[string]any{"name": "b1", "city": "B"})
+
+	res, err := p.AggregateObjects(ctx, "Patient", spi.AggregateQuery{
+		Fields:  []spi.AggregateField{{Field: "*", Fn: "count", Alias: "cnt"}},
+		GroupBy: []string{"city"},
+		OrderBy: []spi.OrderBy{{Field: "cnt", Direction: "desc"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Groups) != 2 {
+		t.Fatalf("groups=%d want 2", len(res.Groups))
+	}
+	if got := res.Groups[0].Keys["city"]; got != "A" {
+		t.Fatalf("first city (order by alias desc)=%v want A (cnt=2)", got)
+	}
+	wantNum(t, res.Groups[0].Values["cnt"], 2)
+	if got := res.Groups[1].Keys["city"]; got != "B" {
+		t.Fatalf("second city=%v want B (cnt=1)", got)
+	}
+}
+
+// TestAggregateDefaultAlias covers R3: an omitted Alias defaults to fn_field.
+func TestAggregateDefaultAlias(t *testing.T) {
+	p := activateAgg(t)
+	ctx := spi.RequestContext{TenantID: "t1"}
+	mustCreate(t, p, ctx, map[string]any{"name": "A", "score": 10})
+	mustCreate(t, p, ctx, map[string]any{"name": "B", "score": 20})
+
+	res, err := p.AggregateObjects(ctx, "Patient", spi.AggregateQuery{
+		Fields: []spi.AggregateField{{Field: "score", Fn: "sum"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantNum(t, res.Groups[0].Values["sum_score"], 30)
+}
+
 func TestAggregateValidationAndFilter(t *testing.T) {
 	p := activateAgg(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
@@ -251,6 +288,13 @@ func TestAggregateValidationAndFilter(t *testing.T) {
 	if !errors.Is(err, spi.ErrInvalidMapping) {
 		t.Fatalf("unknown field err=%v want ErrInvalidMapping", err)
 	}
+	_, err = p.AggregateObjects(ctx, "Patient", spi.AggregateQuery{
+		Fields:  []spi.AggregateField{{Field: "*", Fn: "count", Alias: "cnt"}},
+		GroupBy: []string{"nope"},
+	})
+	if !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("unknown groupBy err=%v want ErrInvalidMapping", err)
+	}
 
 	eq := spi.FilterExpression{Field: "city", Operator: "eq", Value: "X"}
 	res, err := p.AggregateObjects(ctx, "Patient", spi.AggregateQuery{
@@ -261,6 +305,25 @@ func TestAggregateValidationAndFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantNum(t, res.Groups[0].Values["cnt"], 1)
+
+	// AE7/R13: non-eq operators and compound filters must be rejected, not
+	// silently ignored, matching Query/Search's filter-unification behavior.
+	ne := spi.FilterExpression{Field: "city", Operator: "ne", Value: "X"}
+	_, err = p.AggregateObjects(ctx, "Patient", spi.AggregateQuery{
+		Fields: []spi.AggregateField{{Field: "*", Fn: "count", Alias: "cnt"}},
+		Filter: &ne,
+	})
+	if !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("ne filter err=%v want ErrInvalidMapping (AE7)", err)
+	}
+	and := spi.FilterExpression{And: []spi.FilterExpression{eq}}
+	_, err = p.AggregateObjects(ctx, "Patient", spi.AggregateQuery{
+		Fields: []spi.AggregateField{{Field: "*", Fn: "count", Alias: "cnt"}},
+		Filter: &and,
+	})
+	if !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("And filter err=%v want ErrInvalidMapping (AE7)", err)
+	}
 }
 
 func activateAgg(t *testing.T) *mysqlobda.Provider {

@@ -1,7 +1,8 @@
 # Library Domain Pack — OBDA mapping
 #
-# BorrowedBy is a junction table (has borrowedAt/dueAt).
-# OwnedBy is a host FK on book (property-less). SQLite refuses inline.
+# ObjectTypes and LinkTypes in example.library. Cardinality is defined in ODL.
+# Property-less non-MANY_TO_MANY links map as host-table FKs (kind: inline).
+# MANY_TO_MANY links map as junction tables. SQLite refuses inline.
 
 apiVersion: openfoundry.io/obda/v1
 kind: OBDAConfig
@@ -13,6 +14,29 @@ schema:
   namespace: example.library
   version: 1
 models:
+  Reader:
+    relation:
+      kind: table
+      name: reader
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+    fields:
+      name:
+        column: name
+      membershipLevel:
+        column: membership_level
+      currentBorrowCount:
+        column: current_borrow_count
+      registeredDays:
+        column: registered_days
   Book:
     relation:
       kind: table
@@ -32,14 +56,16 @@ models:
         column: isbn
       title:
         column: title
-      author:
-        column: author
-      status:
-        column: status
-  Member:
+      daysOnShelf:
+        column: days_on_shelf
+      totalCopies:
+        column: total_copies
+      availableCopies:
+        column: available_copies
+  Branch:
     relation:
       kind: table
-      name: member
+      name: branch
     access: readWrite
     identity:
       strategy: direct
@@ -51,19 +77,105 @@ models:
     system:
       strategy: native
     fields:
-      memberNumber:
-        column: member_number
       name:
         column: name
-      email:
-        column: email
-# BorrowedBy keeps kind: table because it carries borrowedAt/dueAt.
-# OwnedBy is property-less and defaults to an inline FK on book.
-links:
-  BorrowedBy:
+      maxBorrowPerReader:
+        column: max_borrow_per_reader
+      newBookProtectionDays:
+        column: new_book_protection_days
+      allowInterLibraryLoan:
+        column: allow_inter_library_loan
+  Author:
     relation:
       kind: table
-      name: borrowed_by
+      name: author
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+    fields:
+      name:
+        column: name
+      nationality:
+        column: nationality
+      activeBookCount:
+        column: active_book_count
+  Category:
+    relation:
+      kind: table
+      name: category
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+    fields:
+      name:
+        column: name
+      isRestricted:
+        column: is_restricted
+      requiredMembershipLevel:
+        column: required_membership_level
+  Series:
+    relation:
+      kind: table
+      name: series
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+    fields:
+      name:
+        column: name
+      totalVolumes:
+        column: total_volumes
+links:
+  Borrows:
+    relation:
+      kind: table
+      name: borrows
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    from:
+      object: Reader
+      columns: [from_id]
+    to:
+      object: Book
+      columns: [to_id]
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+  RegisteredAt:
+    relation: {kind: inline}
+    access: readWrite
+    from: {object: Reader}
+    to: {object: Branch, columns: [branch_id]}
+  AvailableAt:
+    relation:
+      kind: table
+      name: available_at
     access: readWrite
     identity:
       strategy: direct
@@ -73,20 +185,90 @@ links:
       object: Book
       columns: [from_id]
     to:
-      object: Member
+      object: Branch
       columns: [to_id]
     tenant:
       strategy: column
       column: tenant_id
     system:
       strategy: native
-    fields:
-      borrowedAt:
-        column: borrowed_at
-      dueAt:
-        column: due_at
-  OwnedBy:
+  Overdue:
+    relation:
+      kind: table
+      name: overdue
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    from:
+      object: Reader
+      columns: [from_id]
+    to:
+      object: Book
+      columns: [to_id]
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+  Reserves:
+    relation:
+      kind: table
+      name: reserves
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    from:
+      object: Reader
+      columns: [from_id]
+    to:
+      object: Book
+      columns: [to_id]
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+  WrittenBy:
     relation: {kind: inline}
     access: readWrite
     from: {object: Book}
-    to: {object: Member, columns: [owner_id]}
+    to: {object: Author, columns: [author_id]}
+  BelongsTo:
+    relation: {kind: inline}
+    access: readWrite
+    from: {object: Book}
+    to: {object: Category, columns: [category_id]}
+  PartOf:
+    relation: {kind: inline}
+    access: readWrite
+    from: {object: Book}
+    to: {object: Series, columns: [series_id]}
+  SpecializesIn:
+    relation: {kind: inline}
+    access: readWrite
+    from: {object: Author}
+    to: {object: Category, columns: [category_id]}
+  PartnersWith:
+    relation:
+      kind: table
+      name: partners_with
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    from:
+      object: Branch
+      columns: [from_id]
+    to:
+      object: Branch
+      columns: [to_id]
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native

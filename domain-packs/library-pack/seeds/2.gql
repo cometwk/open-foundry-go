@@ -1,5 +1,5 @@
 query GetBookByTitle {
-  searchBooks(query: "Dune", fields: ["title"]) {
+  searchBooks(query: "人类简史", fields: ["title"]) {
     hits {
       node {
         id

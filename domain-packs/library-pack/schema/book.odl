@@ -4,10 +4,15 @@ type Book @objectType {
   id: ID! @primary
   isbn: String @unique @indexed
   title: String! @indexed @searchable(weight: 2.0)
-  author: String!
-  status: BookStatus!
+  daysOnShelf: Int!
+  totalCopies: Int!
+  availableCopies: Int!
 
-  # Link fields are resolved through the link type named in the directive.
-  borrower: Member @link(type: "BorrowedBy", direction: OUTBOUND)
-  owner: Member @link(type: "OwnedBy", direction: OUTBOUND)
+  branches: [Branch!]! @link(type: "AvailableAt", direction: OUTBOUND)
+  borrowers: [Reader!]! @link(type: "Borrows", direction: INBOUND)
+  overdueReaders: [Reader!]! @link(type: "Overdue", direction: INBOUND)
+  reservedBy: [Reader!]! @link(type: "Reserves", direction: INBOUND)
+  author: Author @link(type: "WrittenBy", direction: OUTBOUND)
+  category: Category @link(type: "BelongsTo", direction: OUTBOUND)
+  series: Series @link(type: "PartOf", direction: OUTBOUND)
 }

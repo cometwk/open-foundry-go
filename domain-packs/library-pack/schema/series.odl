@@ -1,0 +1,9 @@
+extend schema @namespace(name: "example.library", version: "0.1.0")
+
+type Series @objectType {
+  id: ID! @primary
+  name: String! @indexed
+  totalVolumes: Int!
+
+  books: [Book!]! @link(type: "PartOf", direction: INBOUND)
+}

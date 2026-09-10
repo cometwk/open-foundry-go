@@ -1,4 +1,4 @@
-# List seed rows. IDs are Engine-minted UUIDv7, not demo.yaml refs.
+# List seed rows. IDs are Engine-minted UUIDv7, not yaml refs.
 # Posted as {"query": <this file>} — same shape as runtime/e2e gql().
 
 {
@@ -11,12 +11,22 @@
       }
     }
   }
-  members {
+  readers {
+    edges {
+      node {
+        id
+        membershipLevel
+        currentBorrowCount
+        name
+      }
+    }
+  }
+  branches {
     edges {
       node {
         id
         name
-        memberNumber
+        maxBorrowPerReader
       }
     }
   }
