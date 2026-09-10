@@ -125,6 +125,41 @@ func PlanSearch(b ObjectBinding, tenant, query string) (*sqlast.Select, []any, e
 	return sel, []any{query, tenant, query}, nil
 }
 
+// PlanAggregate builds a GROUP BY plan. Tenant is arg position 1; filter args follow.
+// Order and Limit are left unset for the provider to fill (tiebreak, pagination).
+func PlanAggregate(b ObjectBinding, tenant string, groupBy []string, aggs []sqlast.Aggregate, filter spi.FilterExpression) (*sqlast.AggregateSelect, []any, error) {
+	if tenant == "" {
+		return nil, nil, spi.ErrTenantRequired
+	}
+	known := map[string]struct{}{b.TenantColumn: {}}
+	for _, c := range b.IdentityColumns {
+		known[c] = struct{}{}
+	}
+	for _, c := range b.SelectColumns {
+		known[c] = struct{}{}
+	}
+	args := []any{tenant}
+	where := eq(ident(b.TenantColumn), 1)
+	pred, extra, err := compileFilter(filter, known, 2)
+	if err != nil {
+		return nil, nil, err
+	}
+	args = append(args, extra...)
+	if pred != nil {
+		where = and(where, pred)
+	}
+	gb := make([]sqlast.Identifier, len(groupBy))
+	for i, c := range groupBy {
+		gb[i] = ident(c)
+	}
+	return &sqlast.AggregateSelect{
+		From:    ident(b.Table),
+		GroupBy: gb,
+		Aggs:    append([]sqlast.Aggregate(nil), aggs...),
+		Where:   where,
+	}, args, nil
+}
+
 // PlanQuery selects with tenant and a compiled filter. Unknown fields fail before SQL.
 func PlanQuery(b ObjectBinding, tenant string, filter spi.FilterExpression) (*sqlast.Select, []any, error) {
 	if tenant == "" {

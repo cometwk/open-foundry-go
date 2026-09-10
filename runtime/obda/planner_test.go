@@ -131,6 +131,30 @@ func TestPlanSearchEmptySearchableFields(t *testing.T) {
 	}
 }
 
+func TestPlanAggregateTenantFirst(t *testing.T) {
+	stmt, args, err := obda.PlanAggregate(patientBinding(), "t1", []string{"city_name"}, []sqlast.Aggregate{
+		{Fn: "count", Field: &sqlast.Identifier{Name: "*"}, Alias: sqlast.Identifier{Name: "cnt"}},
+	}, spi.FilterExpression{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(args) != 1 || args[0] != "t1" {
+		t.Fatalf("args=%v want [tenant]", args)
+	}
+	if stmt.From.Name != "patient" {
+		t.Fatalf("from=%s", stmt.From.Name)
+	}
+	if len(stmt.GroupBy) != 1 || stmt.GroupBy[0].Name != "city_name" {
+		t.Fatalf("groupBy=%+v", stmt.GroupBy)
+	}
+	if stmt.Where == nil || stmt.Where.Op != "eq" || stmt.Where.Field == nil || stmt.Where.Field.Name != "tenant_id" {
+		t.Fatalf("where=%+v", stmt.Where)
+	}
+	if len(stmt.Aggs) != 1 || stmt.Aggs[0].Fn != "count" {
+		t.Fatalf("aggs=%+v", stmt.Aggs)
+	}
+}
+
 func namesOf(ids []sqlast.Identifier) []string {
 	out := make([]string, len(ids))
 	for i, id := range ids {
