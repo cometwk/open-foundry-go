@@ -11,11 +11,11 @@ import (
 func TestSearchRelevanceAndHighlights(t *testing.T) {
 	p := activateSearch(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	mustCreate(t, p, ctx, map[string]any{"name": "clinic clinic clinic", "city": "london", "notes": "internal only"})
-	mustCreate(t, p, ctx, map[string]any{"name": "clinic hospital", "city": "paris", "notes": "internal only"})
-	mustCreate(t, p, ctx, map[string]any{"name": "banana", "city": "tokyo", "notes": "internal only"})
+	mustCreate(t, p, ctx, "Book", map[string]any{"title": "physics physics physics", "isbn": "9781000000001", "daysOnShelf": 100})
+	mustCreate(t, p, ctx, "Book", map[string]any{"title": "physics cosmology", "isbn": "9781000000002", "daysOnShelf": 200})
+	mustCreate(t, p, ctx, "Book", map[string]any{"title": "gardening manual", "isbn": "9781000000003", "daysOnShelf": 300})
 
-	res, err := p.SearchObjects(ctx, "Patient", spi.SearchQuery{Query: "clinic"})
+	res, err := p.SearchObjects(ctx, "Book", spi.SearchQuery{Query: "physics"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,16 +30,16 @@ func TestSearchRelevanceAndHighlights(t *testing.T) {
 			t.Fatalf("score=%v want > 0", h.Score)
 		}
 		// Highlights must be the whole declared-field value, not a snippet.
-		wantName, _ := h.Object["name"].(string)
-		if got := h.Highlights["name"]; len(got) != 1 || got[0] != wantName {
-			t.Fatalf("name highlights=%v want [%q]", got, wantName)
+		wantTitle, _ := h.Object["title"].(string)
+		if got := h.Highlights["title"]; len(got) != 1 || got[0] != wantTitle {
+			t.Fatalf("title highlights=%v want [%q]", got, wantTitle)
 		}
-		wantCity, _ := h.Object["city"].(string)
-		if got := h.Highlights["city"]; len(got) != 1 || got[0] != wantCity {
-			t.Fatalf("city highlights=%v want [%q]", got, wantCity)
+		wantISBN, _ := h.Object["isbn"].(string)
+		if got := h.Highlights["isbn"]; len(got) != 1 || got[0] != wantISBN {
+			t.Fatalf("isbn highlights=%v want [%q]", got, wantISBN)
 		}
-		// "notes" is a mapped field but not in search.fields — never highlighted.
-		if _, ok := h.Highlights["notes"]; ok {
+		// "daysOnShelf" is a mapped field but not in search.fields — never highlighted.
+		if _, ok := h.Highlights["daysOnShelf"]; ok {
 			t.Fatal("undeclared field must not appear in highlights")
 		}
 	}
@@ -48,9 +48,9 @@ func TestSearchRelevanceAndHighlights(t *testing.T) {
 func TestSearchBlankQueryEmpty(t *testing.T) {
 	p := activateSearch(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	mustCreate(t, p, ctx, map[string]any{"name": "clinic", "city": "london"})
+	mustCreate(t, p, ctx, "Book", map[string]any{"title": "physics", "isbn": "9781000000001"})
 	for _, q := range []string{"", "   "} {
-		res, err := p.SearchObjects(ctx, "Patient", spi.SearchQuery{Query: q})
+		res, err := p.SearchObjects(ctx, "Book", spi.SearchQuery{Query: q})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -59,8 +59,8 @@ func TestSearchBlankQueryEmpty(t *testing.T) {
 		}
 	}
 	// Blank query is empty even without a searchable mapping (AE2).
-	p2, _ := activatePatient(t)
-	res, err := p2.SearchObjects(ctx, "Patient", spi.SearchQuery{Query: "   "})
+	p2, _ := activateReader(t)
+	res, err := p2.SearchObjects(ctx, "Reader", spi.SearchQuery{Query: "   "})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,8 +70,8 @@ func TestSearchBlankQueryEmpty(t *testing.T) {
 }
 
 func TestSearchUnmappedNonEmpty(t *testing.T) {
-	p, _ := activatePatient(t)
-	_, err := p.SearchObjects(spi.RequestContext{TenantID: "t1"}, "Patient", spi.SearchQuery{Query: "clinic"})
+	p, _ := activateReader(t)
+	_, err := p.SearchObjects(spi.RequestContext{TenantID: "t1"}, "Reader", spi.SearchQuery{Query: "physics"})
 	if !errors.Is(err, spi.ErrUnsupportedCapability) {
 		t.Fatalf("err=%v want ErrUnsupportedCapability (AE1)", err)
 	}
@@ -80,19 +80,19 @@ func TestSearchUnmappedNonEmpty(t *testing.T) {
 func TestSearchFieldsMustEqualDeclared(t *testing.T) {
 	p := activateSearch(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	_, err := p.SearchObjects(ctx, "Patient", spi.SearchQuery{Query: "clinic", Fields: []string{"name"}})
+	_, err := p.SearchObjects(ctx, "Book", spi.SearchQuery{Query: "physics", Fields: []string{"title"}})
 	if !errors.Is(err, spi.ErrUnsupportedCapability) {
 		t.Fatalf("subset err=%v want ErrUnsupportedCapability (AE3)", err)
 	}
-	_, err = p.SearchObjects(ctx, "Patient", spi.SearchQuery{Query: "clinic", Fields: []string{"name", "city", "addr"}})
+	_, err = p.SearchObjects(ctx, "Book", spi.SearchQuery{Query: "physics", Fields: []string{"title", "isbn", "daysOnShelf"}})
 	if !errors.Is(err, spi.ErrUnsupportedCapability) {
 		t.Fatalf("superset err=%v want ErrUnsupportedCapability (AE3)", err)
 	}
-	_, err = p.SearchObjects(ctx, "Patient", spi.SearchQuery{Query: "clinic", Fields: []string{"nope"}})
+	_, err = p.SearchObjects(ctx, "Book", spi.SearchQuery{Query: "physics", Fields: []string{"nope"}})
 	if !errors.Is(err, spi.ErrUnsupportedCapability) {
 		t.Fatalf("unknown field err=%v want ErrUnsupportedCapability", err)
 	}
-	if _, err := p.SearchObjects(ctx, "Patient", spi.SearchQuery{Query: "clinic", Fields: []string{"city", "name"}}); err != nil {
+	if _, err := p.SearchObjects(ctx, "Book", spi.SearchQuery{Query: "physics", Fields: []string{"isbn", "title"}}); err != nil {
 		t.Fatalf("same set different order should pass: %v", err)
 	}
 }
@@ -100,15 +100,15 @@ func TestSearchFieldsMustEqualDeclared(t *testing.T) {
 func TestSearchSoftDeleteAndTenant(t *testing.T) {
 	p := activateSearch(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	obj, err := p.CreateObject(ctx, "Patient", map[string]any{"name": "clinic", "city": "london"})
+	obj, err := p.CreateObject(ctx, "Book", map[string]any{"title": "physics", "isbn": "9781000000001"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.DeleteObject(ctx, "Patient", obj[spi.FieldID].(string), "soft"); err != nil {
+	if err := p.DeleteObject(ctx, "Book", obj[spi.FieldID].(string), "soft"); err != nil {
 		t.Fatal(err)
 	}
-	mustCreate(t, p, spi.RequestContext{TenantID: "t2"}, map[string]any{"name": "clinic", "city": "paris"})
-	res, err := p.SearchObjects(ctx, "Patient", spi.SearchQuery{Query: "clinic"})
+	mustCreate(t, p, spi.RequestContext{TenantID: "t2"}, "Book", map[string]any{"title": "physics", "isbn": "9781000000002"})
+	res, err := p.SearchObjects(ctx, "Book", spi.SearchQuery{Query: "physics"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,12 +120,12 @@ func TestSearchSoftDeleteAndTenant(t *testing.T) {
 func TestSearchFilterAndPagination(t *testing.T) {
 	p := activateSearch(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	mustCreate(t, p, ctx, map[string]any{"name": "clinic", "city": "london"})
-	mustCreate(t, p, ctx, map[string]any{"name": "clinic", "city": "paris"})
-	mustCreate(t, p, ctx, map[string]any{"name": "clinic", "city": "tokyo"})
+	mustCreate(t, p, ctx, "Book", map[string]any{"title": "physics volume", "isbn": "9781000000001"})
+	mustCreate(t, p, ctx, "Book", map[string]any{"title": "physics revised", "isbn": "9781000000002"})
+	mustCreate(t, p, ctx, "Book", map[string]any{"title": "physics primer", "isbn": "9781000000003"})
 
-	eq := spi.FilterExpression{Field: "city", Operator: "eq", Value: "london"}
-	res, err := p.SearchObjects(ctx, "Patient", spi.SearchQuery{Query: "clinic", Filter: &eq})
+	eq := spi.FilterExpression{Field: "isbn", Operator: "eq", Value: "9781000000002"}
+	res, err := p.SearchObjects(ctx, "Book", spi.SearchQuery{Query: "physics", Filter: &eq})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,18 +133,18 @@ func TestSearchFilterAndPagination(t *testing.T) {
 		t.Fatalf("eq filter hits=%d want 1", len(res.Hits))
 	}
 
-	ne := spi.FilterExpression{Field: "city", Operator: "ne", Value: "london"}
-	_, err = p.SearchObjects(ctx, "Patient", spi.SearchQuery{Query: "clinic", Filter: &ne})
+	ne := spi.FilterExpression{Field: "isbn", Operator: "ne", Value: "9781000000002"}
+	_, err = p.SearchObjects(ctx, "Book", spi.SearchQuery{Query: "physics", Filter: &ne})
 	if !errors.Is(err, spi.ErrInvalidMapping) {
 		t.Fatalf("ne filter err=%v want ErrInvalidMapping (AE7)", err)
 	}
 	and := spi.FilterExpression{And: []spi.FilterExpression{eq}}
-	_, err = p.SearchObjects(ctx, "Patient", spi.SearchQuery{Query: "clinic", Filter: &and})
+	_, err = p.SearchObjects(ctx, "Book", spi.SearchQuery{Query: "physics", Filter: &and})
 	if !errors.Is(err, spi.ErrInvalidMapping) {
 		t.Fatalf("And filter err=%v want ErrInvalidMapping (AE7)", err)
 	}
 
-	page, err := p.SearchObjects(ctx, "Patient", spi.SearchQuery{Query: "clinic", Limit: 1, Offset: 0})
+	page, err := p.SearchObjects(ctx, "Book", spi.SearchQuery{Query: "physics", Limit: 1, Offset: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestSearchFilterAndPagination(t *testing.T) {
 	if len(page.Hits) != 1 || !page.HasNextPage {
 		t.Fatalf("hits=%d hasNext=%v", len(page.Hits), page.HasNextPage)
 	}
-	page2, err := p.SearchObjects(ctx, "Patient", spi.SearchQuery{Query: "clinic", Limit: 1, Offset: 1})
+	page2, err := p.SearchObjects(ctx, "Book", spi.SearchQuery{Query: "physics", Limit: 1, Offset: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,20 +168,10 @@ func TestSearchFilterAndPagination(t *testing.T) {
 
 func activateSearch(t *testing.T) *mysqlobda.Provider {
 	t.Helper()
-	raw := testdata(t, "patient_fts.obda.yaml")
+	raw := testdata(t, "library_fts.obda.yaml")
 	p, db := openProvider(t, raw)
-	schema := spi.OntologySchema{
-		Version: 1,
-		ObjectTypes: []spi.ObjectTypeDefinition{
-			{Name: "Patient", Properties: []spi.PropertyDefinition{
-				{Name: "name", Type: "String"},
-				{Name: "city", Type: "String"},
-				{Name: "notes", Type: "String"},
-			}},
-		},
-	}
-	mustInit(t, db, raw, schema)
-	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, schema); err != nil {
+	mustInit(t, db, raw, bookSchema())
+	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, bookSchema()); err != nil {
 		t.Fatal(err)
 	}
 	return p

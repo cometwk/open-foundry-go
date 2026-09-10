@@ -12,11 +12,11 @@ import (
 )
 
 func TestCreateObjectHonorsEngineObjectID(t *testing.T) {
-	p, db := activatePatient(t)
+	p, db := activateReader(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
 	want := "engine-object-1"
-	created, err := p.CreateObject(ctx, "Patient", map[string]any{
-		"name":                  "Ada",
+	created, err := p.CreateObject(ctx, "Reader", map[string]any{
+		"name":                  "Xiao Ming",
 		spi.FieldEngineObjectID: want,
 	})
 	if err != nil {
@@ -29,7 +29,7 @@ func TestCreateObjectHonorsEngineObjectID(t *testing.T) {
 		t.Fatalf("leaked %s", spi.FieldEngineObjectID)
 	}
 	var stored string
-	if err := db.QueryRow(`SELECT id FROM patient WHERE id = ?`, want).Scan(&stored); err != nil {
+	if err := db.QueryRow(`SELECT id FROM reader WHERE id = ?`, want).Scan(&stored); err != nil {
 		t.Fatal(err)
 	}
 	if stored != want {
@@ -38,9 +38,9 @@ func TestCreateObjectHonorsEngineObjectID(t *testing.T) {
 }
 
 func TestCreateGetSystemFieldsStable(t *testing.T) {
-	p, _ := activatePatient(t)
+	p, _ := activateReader(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	created, err := p.CreateObject(ctx, "Patient", map[string]any{"name": "Ada"})
+	created, err := p.CreateObject(ctx, "Reader", map[string]any{"name": "Xiao Ming"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,11 +51,11 @@ func TestCreateGetSystemFieldsStable(t *testing.T) {
 	if created[spi.FieldVersion] != 1 {
 		t.Fatalf("version=%v", created[spi.FieldVersion])
 	}
-	got, err := p.GetObject(ctx, "Patient", id)
+	got, err := p.GetObject(ctx, "Reader", id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := p.GetObject(ctx, "Patient", id)
+	again, err := p.GetObject(ctx, "Reader", id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,34 +68,32 @@ func TestCreateGetSystemFieldsStable(t *testing.T) {
 }
 
 func TestBooleanIsGoBool(t *testing.T) {
-	raw := testdata(t, "patient_bool.obda.yaml")
+	raw := testdata(t, "library_bool.obda.yaml")
 	p, db := openProvider(t, raw)
-	schema := patientSchema()
-	schema.ObjectTypes[0].Properties = append(schema.ObjectTypes[0].Properties, spi.PropertyDefinition{Name: "active", Type: "Boolean"})
-	mustInit(t, db, raw, schema)
-	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, schema); err != nil {
+	mustInit(t, db, raw, branchSchema())
+	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, branchSchema()); err != nil {
 		t.Fatal(err)
 	}
 	ctx := spi.RequestContext{TenantID: "t1"}
-	created, err := p.CreateObject(ctx, "Patient", map[string]any{"name": "Ada", "active": true})
+	created, err := p.CreateObject(ctx, "Branch", map[string]any{"name": "Central", "allowInterLibraryLoan": true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	id := created[spi.FieldID].(string)
-	got, err := p.GetObject(ctx, "Patient", id)
+	got, err := p.GetObject(ctx, "Branch", id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	v, ok := got["active"].(bool)
+	v, ok := got["allowInterLibraryLoan"].(bool)
 	if !ok || !v {
-		t.Fatalf("active=%T %#v", got["active"], got["active"])
+		t.Fatalf("allowInterLibraryLoan=%T %#v", got["allowInterLibraryLoan"], got["allowInterLibraryLoan"])
 	}
 }
 
 func TestOCCConflict(t *testing.T) {
-	p, _ := activatePatient(t)
+	p, _ := activateReader(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	created, err := p.CreateObject(ctx, "Patient", map[string]any{"name": "Ada"})
+	created, err := p.CreateObject(ctx, "Reader", map[string]any{"name": "Xiao Ming"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +105,7 @@ func TestOCCConflict(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := p.UpdateObject(ctx, "Patient", id, map[string]any{"name": "X"}, &exp)
+			_, err := p.UpdateObject(ctx, "Reader", id, map[string]any{"name": "Xiao Hong"}, &exp)
 			errs <- err
 		}()
 	}
@@ -131,8 +129,8 @@ func TestOCCConflict(t *testing.T) {
 }
 
 func TestCrossTenantGetIsNotFound(t *testing.T) {
-	p, _ := activatePatient(t)
-	created, err := p.CreateObject(spi.RequestContext{TenantID: "t1"}, "Patient", map[string]any{"name": "Ada"})
+	p, _ := activateReader(t)
+	created, err := p.CreateObject(spi.RequestContext{TenantID: "t1"}, "Reader", map[string]any{"name": "Xiao Ming"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,27 +146,27 @@ func TestCrossTenantGetIsNotFound(t *testing.T) {
 }
 
 func TestReadOnlyMapping(t *testing.T) {
-	raw := testdata(t, "patient_read.obda.yaml")
+	raw := testdata(t, "library_read.obda.yaml")
 	p, db := openProvider(t, raw)
-	mustInit(t, db, raw, patientSchema())
-	mustExec(t, db, `INSERT INTO patient (id, tenant_id, patient_name, version, created_at, updated_at) VALUES ('p1','t1','Ada', 1, 't', 't')`)
-	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, patientSchema()); err != nil {
+	mustInit(t, db, raw, readerSchema())
+	mustExec(t, db, `INSERT INTO reader (id, tenant_id, name, version, created_at, updated_at) VALUES ('r1','t1','Xiao Ming', 1, 't', 't')`)
+	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, readerSchema()); err != nil {
 		t.Fatal(err)
 	}
 	ctx := spi.RequestContext{TenantID: "t1"}
-	page, err := p.QueryObjects(ctx, "Patient", spi.FilterExpression{}, nil)
+	page, err := p.QueryObjects(ctx, "Reader", spi.FilterExpression{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(page.Items) != 1 {
 		t.Fatalf("items=%d", len(page.Items))
 	}
-	_, err = p.CreateObject(ctx, "Patient", map[string]any{"name": "Bob"})
+	_, err = p.CreateObject(ctx, "Reader", map[string]any{"name": "Xiao Hong"})
 	if !errors.Is(err, spi.ErrReadOnlyMapping) {
 		t.Fatalf("err=%v", err)
 	}
 	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM patient`).Scan(&n); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM reader`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {
@@ -177,31 +175,31 @@ func TestReadOnlyMapping(t *testing.T) {
 }
 
 func TestSoftDeleteGetAndQuery(t *testing.T) {
-	p, _ := activatePatient(t)
+	p, _ := activateReader(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	created, err := p.CreateObject(ctx, "Patient", map[string]any{"name": "Ada"})
+	created, err := p.CreateObject(ctx, "Reader", map[string]any{"name": "Xiao Ming"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	id := created[spi.FieldID].(string)
-	if err := p.DeleteObject(ctx, "Patient", id, "soft"); err != nil {
+	if err := p.DeleteObject(ctx, "Reader", id, "soft"); err != nil {
 		t.Fatal(err)
 	}
-	got, err := p.GetObject(ctx, "Patient", id)
+	got, err := p.GetObject(ctx, "Reader", id)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got[spi.FieldDeletedAt] == nil || got[spi.FieldDeletedAt] == "" {
 		t.Fatalf("missing deletedAt: %#v", got)
 	}
-	page, err := p.QueryObjects(ctx, "Patient", spi.FilterExpression{}, nil)
+	page, err := p.QueryObjects(ctx, "Reader", spi.FilterExpression{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(page.Items) != 0 {
 		t.Fatalf("default query included deleted: %+v", page.Items)
 	}
-	page, err = p.QueryObjects(ctx, "Patient", spi.FilterExpression{}, &spi.QueryOptions{IncludeDeleted: true})
+	page, err = p.QueryObjects(ctx, "Reader", spi.FilterExpression{}, &spi.QueryOptions{IncludeDeleted: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,20 +209,20 @@ func TestSoftDeleteGetAndQuery(t *testing.T) {
 }
 
 func TestHardDeleteRemovesRow(t *testing.T) {
-	p, _ := activatePatient(t)
+	p, _ := activateReader(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	created, err := p.CreateObject(ctx, "Patient", map[string]any{"name": "Ada"})
+	created, err := p.CreateObject(ctx, "Reader", map[string]any{"name": "Xiao Ming"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	id := created[spi.FieldID].(string)
-	if err := p.DeleteObject(ctx, "Patient", id, "hard"); err != nil {
+	if err := p.DeleteObject(ctx, "Reader", id, "hard"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.GetObject(ctx, "Patient", id); !errors.Is(err, spi.ErrObjectNotFound) {
+	if _, err := p.GetObject(ctx, "Reader", id); !errors.Is(err, spi.ErrObjectNotFound) {
 		t.Fatalf("err=%v", err)
 	}
-	page, err := p.QueryObjects(ctx, "Patient", spi.FilterExpression{}, &spi.QueryOptions{IncludeDeleted: true})
+	page, err := p.QueryObjects(ctx, "Reader", spi.FilterExpression{}, &spi.QueryOptions{IncludeDeleted: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,18 +232,18 @@ func TestHardDeleteRemovesRow(t *testing.T) {
 }
 
 func TestEmptyTenantRejected(t *testing.T) {
-	p, _ := activatePatient(t)
-	_, err := p.CreateObject(spi.RequestContext{}, "Patient", map[string]any{"name": "Ada"})
+	p, _ := activateReader(t)
+	_, err := p.CreateObject(spi.RequestContext{}, "Reader", map[string]any{"name": "Xiao Ming"})
 	if !errors.Is(err, spi.ErrTenantRequired) {
 		t.Fatalf("err=%v", err)
 	}
 }
 
 func TestTenantOverrideIgnored(t *testing.T) {
-	p, db := activatePatient(t)
+	p, db := activateReader(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	created, err := p.CreateObject(ctx, "Patient", map[string]any{
-		"name":            "Ada",
+	created, err := p.CreateObject(ctx, "Reader", map[string]any{
+		"name":            "Xiao Ming",
 		spi.FieldTenantID: "INTRUDER",
 	})
 	if err != nil {
@@ -255,46 +253,46 @@ func TestTenantOverrideIgnored(t *testing.T) {
 		t.Fatalf("tenant=%v", created[spi.FieldTenantID])
 	}
 	var stored string
-	if err := db.QueryRow(`SELECT tenant_id FROM patient WHERE id = ?`, created[spi.FieldID]).Scan(&stored); err != nil {
+	if err := db.QueryRow(`SELECT tenant_id FROM reader WHERE id = ?`, created[spi.FieldID]).Scan(&stored); err != nil {
 		t.Fatal(err)
 	}
 	if stored != "t1" {
 		t.Fatalf("stored tenant=%s", stored)
 	}
-	_, err = p.GetObject(spi.RequestContext{TenantID: "INTRUDER"}, "Patient", created[spi.FieldID].(string))
+	_, err = p.GetObject(spi.RequestContext{TenantID: "INTRUDER"}, "Reader", created[spi.FieldID].(string))
 	if !errors.Is(err, spi.ErrObjectNotFound) {
 		t.Fatalf("err=%v", err)
 	}
 }
 
 func TestSplitBrainNotFound(t *testing.T) {
-	p, db := activatePatient(t)
+	p, db := activateReader(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	created, err := p.CreateObject(ctx, "Patient", map[string]any{"name": "Ada"})
+	created, err := p.CreateObject(ctx, "Reader", map[string]any{"name": "Xiao Ming"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	id := created[spi.FieldID].(string)
-	mustExec(t, db, `DELETE FROM patient WHERE id = ?`, id)
-	if _, err := p.GetObject(ctx, "Patient", id); !errors.Is(err, spi.ErrObjectNotFound) {
+	mustExec(t, db, `DELETE FROM reader WHERE id = ?`, id)
+	if _, err := p.GetObject(ctx, "Reader", id); !errors.Is(err, spi.ErrObjectNotFound) {
 		t.Fatalf("deleted row err=%v", err)
 	}
-	if _, err := p.GetObject(ctx, "Patient", "not-a-patient-row"); !errors.Is(err, spi.ErrObjectNotFound) {
+	if _, err := p.GetObject(ctx, "Reader", "not-a-reader-row"); !errors.Is(err, spi.ErrObjectNotFound) {
 		t.Fatalf("wrong id err=%v", err)
 	}
 }
 
 func TestSoftDeletedCreateStillAllowsNewRow(t *testing.T) {
-	p, _ := activatePatient(t)
+	p, _ := activateReader(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	created, err := p.CreateObject(ctx, "Patient", map[string]any{"name": "Ada"})
+	created, err := p.CreateObject(ctx, "Reader", map[string]any{"name": "Xiao Ming"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.DeleteObject(ctx, "Patient", created[spi.FieldID].(string), "soft"); err != nil {
+	if err := p.DeleteObject(ctx, "Reader", created[spi.FieldID].(string), "soft"); err != nil {
 		t.Fatal(err)
 	}
-	again, err := p.CreateObject(ctx, "Patient", map[string]any{"name": "Ada2"})
+	again, err := p.CreateObject(ctx, "Reader", map[string]any{"name": "Xiao Hong"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,18 +302,18 @@ func TestSoftDeletedCreateStillAllowsNewRow(t *testing.T) {
 }
 
 func TestSoftDeletedUpdateNotFound(t *testing.T) {
-	p, _ := activatePatient(t)
+	p, _ := activateReader(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	created, err := p.CreateObject(ctx, "Patient", map[string]any{"name": "Ada"})
+	created, err := p.CreateObject(ctx, "Reader", map[string]any{"name": "Xiao Ming"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	id := created[spi.FieldID].(string)
-	if err := p.DeleteObject(ctx, "Patient", id, "soft"); err != nil {
+	if err := p.DeleteObject(ctx, "Reader", id, "soft"); err != nil {
 		t.Fatal(err)
 	}
 	exp := 1
-	_, err = p.UpdateObject(ctx, "Patient", id, map[string]any{"name": "X"}, &exp)
+	_, err = p.UpdateObject(ctx, "Reader", id, map[string]any{"name": "Xiao Hong"}, &exp)
 	if !errors.Is(err, spi.ErrObjectNotFound) {
 		t.Fatalf("err=%v", err)
 	}
@@ -325,9 +323,9 @@ func TestSoftDeletedUpdateNotFound(t *testing.T) {
 }
 
 func TestDirectIdentityRoundTrip(t *testing.T) {
-	p, _ := activatePatient(t)
+	p, _ := activateReader(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	created, err := p.CreateObject(ctx, "Patient", map[string]any{"name": "Ada"})
+	created, err := p.CreateObject(ctx, "Reader", map[string]any{"name": "Xiao Ming"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,19 +333,19 @@ func TestDirectIdentityRoundTrip(t *testing.T) {
 	if len(id) != 36 || id[14] != '7' {
 		t.Fatalf("id=%q want UUIDv7", id)
 	}
-	got, err := p.GetObject(ctx, "Patient", id)
+	got, err := p.GetObject(ctx, "Reader", id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got["name"] != "Ada" {
+	if got["name"] != "Xiao Ming" {
 		t.Fatalf("%#v", got)
 	}
 }
 
 func TestWrongTypeIDNotFound(t *testing.T) {
-	p, _ := activatePatient(t)
+	p, _ := activateReader(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	if _, err := p.CreateObject(ctx, "Patient", map[string]any{"name": "Ada"}); err != nil {
+	if _, err := p.CreateObject(ctx, "Reader", map[string]any{"name": "Xiao Ming"}); err != nil {
 		t.Fatal(err)
 	}
 	err := pGetErr(t, p, "t1", "00000000-0000-7000-0000-000000000000")
@@ -361,37 +359,37 @@ func TestWrongTypeIDNotFound(t *testing.T) {
 }
 
 func TestOmitDeletedAtRejectsSoftDelete(t *testing.T) {
-	raw := []byte(strings.Replace(string(testdata(t, "patient.obda.yaml")), "strategy: native", "strategy: native\n      omit: [deletedAt]", 1))
+	raw := []byte(strings.Replace(string(testdata(t, "library.obda.yaml")), "strategy: native", "strategy: native\n      omit: [deletedAt]", 1))
 	p, db := openProvider(t, raw)
-	mustInit(t, db, raw, patientSchema())
-	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, patientSchema()); err != nil {
+	mustInit(t, db, raw, readerSchema())
+	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, readerSchema()); err != nil {
 		t.Fatal(err)
 	}
 	ctx := spi.RequestContext{TenantID: "t1"}
-	created, err := p.CreateObject(ctx, "Patient", map[string]any{"name": "Ada"})
+	created, err := p.CreateObject(ctx, "Reader", map[string]any{"name": "Xiao Ming"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = p.DeleteObject(ctx, "Patient", created[spi.FieldID].(string), "soft")
+	err = p.DeleteObject(ctx, "Reader", created[spi.FieldID].(string), "soft")
 	if !errors.Is(err, spi.ErrUnsupportedCapability) {
 		t.Fatalf("err=%v", err)
 	}
 }
 
 func TestOmitVersionRejectsExpectedVersion(t *testing.T) {
-	raw := []byte(strings.Replace(string(testdata(t, "patient.obda.yaml")), "strategy: native", "strategy: native\n      omit: [version]", 1))
+	raw := []byte(strings.Replace(string(testdata(t, "library.obda.yaml")), "strategy: native", "strategy: native\n      omit: [version]", 1))
 	p, db := openProvider(t, raw)
-	mustInit(t, db, raw, patientSchema())
-	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, patientSchema()); err != nil {
+	mustInit(t, db, raw, readerSchema())
+	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, readerSchema()); err != nil {
 		t.Fatal(err)
 	}
 	ctx := spi.RequestContext{TenantID: "t1"}
-	created, err := p.CreateObject(ctx, "Patient", map[string]any{"name": "Ada"})
+	created, err := p.CreateObject(ctx, "Reader", map[string]any{"name": "Xiao Ming"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	exp := 1
-	_, err = p.UpdateObject(ctx, "Patient", created[spi.FieldID].(string), map[string]any{"name": "X"}, &exp)
+	_, err = p.UpdateObject(ctx, "Reader", created[spi.FieldID].(string), map[string]any{"name": "Xiao Hong"}, &exp)
 	if !errors.Is(err, spi.ErrUnsupportedCapability) {
 		t.Fatalf("err=%v", err)
 	}
@@ -399,16 +397,16 @@ func TestOmitVersionRejectsExpectedVersion(t *testing.T) {
 
 func pGetErr(t *testing.T, p *mysqlobda.Provider, tenant, id string) error {
 	t.Helper()
-	_, err := p.GetObject(spi.RequestContext{TenantID: tenant}, "Patient", id)
+	_, err := p.GetObject(spi.RequestContext{TenantID: tenant}, "Reader", id)
 	return err
 }
 
-func activatePatient(t *testing.T) (*mysqlobda.Provider, *sql.DB) {
+func activateReader(t *testing.T) (*mysqlobda.Provider, *sql.DB) {
 	t.Helper()
-	raw := testdata(t, "patient.obda.yaml")
+	raw := testdata(t, "library.obda.yaml")
 	p, db := openProvider(t, raw)
-	mustInit(t, db, raw, patientSchema())
-	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, patientSchema()); err != nil {
+	mustInit(t, db, raw, readerSchema())
+	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, readerSchema()); err != nil {
 		t.Fatal(err)
 	}
 	return p, db

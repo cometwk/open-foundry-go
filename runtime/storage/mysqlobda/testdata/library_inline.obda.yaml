@@ -1,23 +1,26 @@
+# Simplified library-pack case: RegisteredAt (Reader→Branch, MANY_TO_ONE)
+# mapped as a host-table FK on reader.branch_id, mirroring the pack OBDA
+# (简化版). SQLite refuses inline; MySQL hosts it.
 apiVersion: openfoundry.io/obda/v1
 kind: OBDAConfig
 metadata:
-  name: library
+  name: library-inline
   namespace: example.library
   version: 1
 schema:
   namespace: example.library
   version: 1
 models:
-  Book:
-    relation: {kind: table, name: book}
+  Reader:
+    relation: {kind: table, name: reader}
     access: readWrite
     identity: {strategy: direct, columns: [id], insert: generated}
     tenant: {strategy: column, column: tenant_id}
     system: {strategy: native}
     fields:
-      title: {column: title}
-  Member:
-    relation: {kind: table, name: member}
+      name: {column: name}
+  Branch:
+    relation: {kind: table, name: branch}
     access: readWrite
     identity: {strategy: direct, columns: [id], insert: generated}
     tenant: {strategy: column, column: tenant_id}
@@ -25,8 +28,8 @@ models:
     fields:
       name: {column: name}
 links:
-  OwnedBy:
+  RegisteredAt:
     relation: {kind: inline}
     access: readWrite
-    from: {object: Book}
-    to: {object: Member, columns: [owner_id]}
+    from: {object: Reader}
+    to: {object: Branch, columns: [branch_id]}

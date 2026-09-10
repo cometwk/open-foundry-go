@@ -1,17 +1,19 @@
+# Simplified library-pack case: Book with a single-field FULLTEXT contract
+# (title only) for schema-drift verification (简化版).
 apiVersion: openfoundry.io/obda/v1
 kind: OBDAConfig
 metadata:
-  name: hospital
-  namespace: nhs.acute
+  name: library-search
+  namespace: example.library
   version: 1
 schema:
-  namespace: nhs.acute
+  namespace: example.library
   version: 1
 models:
-  Patient:
+  Book:
     relation:
       kind: table
-      name: patient
+      name: book
     access: readWrite
     identity:
       strategy: direct
@@ -23,7 +25,7 @@ models:
     system:
       strategy: native
     search:
-      fields: [name]
+      fields: [title]
     fields:
-      name:
-        column: patient_name
+      title:
+        column: title

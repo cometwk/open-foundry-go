@@ -1,17 +1,20 @@
+# Simplified library-pack case: Reader / Book / Branch with the two
+# junction-table links Borrows (Reader→Book) and AvailableAt (Book→Branch).
+# RegisteredAt is covered separately by library_inline.obda.yaml (简化版).
 apiVersion: openfoundry.io/obda/v1
 kind: OBDAConfig
 metadata:
-  name: hospital
-  namespace: nhs.acute
+  name: library-links
+  namespace: example.library
   version: 1
 schema:
-  namespace: nhs.acute
+  namespace: example.library
   version: 1
 models:
-  Patient:
+  Reader:
     relation:
       kind: table
-      name: patient
+      name: reader
     access: readWrite
     identity:
       strategy: direct
@@ -24,11 +27,28 @@ models:
       strategy: native
     fields:
       name:
-        column: patient_name
-  Ward:
+        column: name
+  Book:
     relation:
       kind: table
-      name: ward
+      name: book
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+    fields:
+      title:
+        column: title
+  Branch:
+    relation:
+      kind: table
+      name: branch
     access: readWrite
     identity:
       strategy: direct
@@ -41,59 +61,42 @@ models:
       strategy: native
     fields:
       name:
-        column: ward_name
-  Trust:
-    relation:
-      kind: table
-      name: trust
-    access: readWrite
-    identity:
-      strategy: direct
-      columns: [id]
-      insert: generated
-    tenant:
-      strategy: column
-      column: tenant_id
-    system:
-      strategy: native
-    fields:
-      name:
-        column: trust_name
+        column: name
 links:
-  AdmittedTo:
+  Borrows:
     relation:
       kind: table
-      name: admission
+      name: borrows
     access: readWrite
     identity:
       strategy: direct
       columns: [id]
       insert: generated
     from:
-      object: Patient
+      object: Reader
       columns: [from_id]
     to:
-      object: Ward
+      object: Book
       columns: [to_id]
     tenant:
       strategy: column
       column: tenant_id
     system:
       strategy: native
-  BelongsTo:
+  AvailableAt:
     relation:
       kind: table
-      name: ward_trust
+      name: available_at
     access: readWrite
     identity:
       strategy: direct
       columns: [id]
       insert: generated
     from:
-      object: Ward
+      object: Book
       columns: [from_id]
     to:
-      object: Trust
+      object: Branch
       columns: [to_id]
     tenant:
       strategy: column

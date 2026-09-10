@@ -1,0 +1,35 @@
+# Simplified library-pack case: Book searched over title + isbn, with the
+# non-searched mapped field daysOnShelf (简化版).
+apiVersion: openfoundry.io/obda/v1
+kind: OBDAConfig
+metadata:
+  name: library-fts
+  namespace: example.library
+  version: 1
+schema:
+  namespace: example.library
+  version: 1
+models:
+  Book:
+    relation:
+      kind: table
+      name: book
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+    search:
+      fields: [title, isbn]
+    fields:
+      title:
+        column: title
+      isbn:
+        column: isbn
+      daysOnShelf:
+        column: days_on_shelf

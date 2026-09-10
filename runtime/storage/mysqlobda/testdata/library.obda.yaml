@@ -1,0 +1,35 @@
+# Simplified library-pack case: Reader with its full simplified field set.
+# See domain-packs/library-pack/library-pack.md (简化版).
+apiVersion: openfoundry.io/obda/v1
+kind: OBDAConfig
+metadata:
+  name: library
+  namespace: example.library
+  version: 1
+schema:
+  namespace: example.library
+  version: 1
+models:
+  Reader:
+    relation:
+      kind: table
+      name: reader
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+    fields:
+      name:
+        column: name
+      membershipLevel:
+        column: membership_level
+      currentBorrowCount:
+        column: current_borrow_count
+      registeredDays:
+        column: registered_days

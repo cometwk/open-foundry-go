@@ -11,9 +11,9 @@ import (
 )
 
 func TestInlineOptionalCreateLinkGetLinks(t *testing.T) {
-	p, _, bookID, memberID := activateInline(t)
+	p, _, readerID, branchID := activateInline(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	link, err := p.CreateLink(ctx, "OwnedBy", bookID, memberID, nil)
+	link, err := p.CreateLink(ctx, "RegisteredAt", readerID, branchID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,47 +21,47 @@ func TestInlineOptionalCreateLinkGetLinks(t *testing.T) {
 	if id == "" {
 		t.Fatal("missing link id")
 	}
-	got, err := p.GetLink(ctx, "OwnedBy", id)
+	got, err := p.GetLink(ctx, "RegisteredAt", id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got[spi.FieldID] != bookID {
-		t.Fatalf("inline _id=%v want host %s", got[spi.FieldID], bookID)
+	if got[spi.FieldID] != readerID {
+		t.Fatalf("inline _id=%v want host %s", got[spi.FieldID], readerID)
 	}
-	if got[spi.LinkFieldFromID] != bookID || got[spi.LinkFieldToID] != memberID {
+	if got[spi.LinkFieldFromID] != readerID || got[spi.LinkFieldToID] != branchID {
 		t.Fatalf("%#v", got)
 	}
-	out, err := p.GetLinks(ctx, bookID, "OwnedBy", "outbound", nil)
+	out, err := p.GetLinks(ctx, readerID, "RegisteredAt", "outbound", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(out.Items) != 1 {
 		t.Fatalf("outbound=%d", len(out.Items))
 	}
-	in, err := p.GetLinks(ctx, memberID, "OwnedBy", "inbound", nil)
+	in, err := p.GetLinks(ctx, branchID, "RegisteredAt", "inbound", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(in.Items) != 1 {
 		t.Fatalf("inbound=%d", len(in.Items))
 	}
-	_, err = p.CreateLink(ctx, "OwnedBy", bookID, memberID, nil)
+	_, err = p.CreateLink(ctx, "RegisteredAt", readerID, branchID, nil)
 	if !errors.Is(err, spi.ErrCardinalityViolation) {
 		t.Fatalf("second create err=%v", err)
 	}
 }
 
 func TestInlineDeleteLink(t *testing.T) {
-	p, _, bookID, memberID := activateInline(t)
+	p, _, readerID, branchID := activateInline(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	link, err := p.CreateLink(ctx, "OwnedBy", bookID, memberID, nil)
+	link, err := p.CreateLink(ctx, "RegisteredAt", readerID, branchID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.DeleteLink(ctx, "OwnedBy", link[spi.FieldID].(string)); err != nil {
+	if err := p.DeleteLink(ctx, "RegisteredAt", link[spi.FieldID].(string)); err != nil {
 		t.Fatal(err)
 	}
-	page, err := p.GetLinks(ctx, bookID, "OwnedBy", "outbound", nil)
+	page, err := p.GetLinks(ctx, readerID, "RegisteredAt", "outbound", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,39 +71,39 @@ func TestInlineDeleteLink(t *testing.T) {
 }
 
 func TestInlineRequiredObjectAPIs(t *testing.T) {
-	p, db := openProvider(t, testdata(t, "inline.obda.yaml"))
+	p, db := openProvider(t, testdata(t, "library_inline.obda.yaml"))
 	schema := inlineRequiredSchema()
-	mustInit(t, db, testdata(t, "inline.obda.yaml"), schema)
+	mustInit(t, db, testdata(t, "library_inline.obda.yaml"), schema)
 	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, schema); err != nil {
 		t.Fatal(err)
 	}
 	ctx := spi.RequestContext{TenantID: "t1"}
-	mem, err := p.CreateObject(ctx, "Member", map[string]any{"name": "Ada"})
+	br, err := p.CreateObject(ctx, "Branch", map[string]any{"name": "Central"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	memberID := mem[spi.FieldID].(string)
-	_, err = p.CreateObject(ctx, "Book", map[string]any{"title": "Go"})
+	branchID := br[spi.FieldID].(string)
+	_, err = p.CreateObject(ctx, "Reader", map[string]any{"name": "Xiao Ming"})
 	if !errors.Is(err, spi.ErrInvalidMapping) {
 		t.Fatalf("missing nav err=%v", err)
 	}
-	book, err := p.CreateObject(ctx, "Book", map[string]any{"title": "Go", "owner": memberID})
+	reader, err := p.CreateObject(ctx, "Reader", map[string]any{"name": "Xiao Ming", "branch": branchID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	bookID := book[spi.FieldID].(string)
-	if _, err := p.CreateLink(ctx, "OwnedBy", bookID, memberID, nil); !errors.Is(err, spi.ErrUnsupportedCapability) {
+	readerID := reader[spi.FieldID].(string)
+	if _, err := p.CreateLink(ctx, "RegisteredAt", readerID, branchID, nil); !errors.Is(err, spi.ErrUnsupportedCapability) {
 		t.Fatalf("CreateLink err=%v", err)
 	}
-	if err := p.DeleteLink(ctx, "OwnedBy", bookID); !errors.Is(err, spi.ErrUnsupportedCapability) {
+	if err := p.DeleteLink(ctx, "RegisteredAt", readerID); !errors.Is(err, spi.ErrUnsupportedCapability) {
 		t.Fatalf("DeleteLink err=%v", err)
 	}
-	mem2, err := p.CreateObject(ctx, "Member", map[string]any{"name": "Bob"})
+	br2, err := p.CreateObject(ctx, "Branch", map[string]any{"name": "West"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	before := asIntVer(book[spi.FieldVersion])
-	updated, err := p.UpdateObject(ctx, "Book", bookID, map[string]any{"owner": mem2[spi.FieldID]}, nil)
+	before := asIntVer(reader[spi.FieldVersion])
+	updated, err := p.UpdateObject(ctx, "Reader", readerID, map[string]any{"branch": br2[spi.FieldID]}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,45 +113,45 @@ func TestInlineRequiredObjectAPIs(t *testing.T) {
 }
 
 func TestInlineHardDeletePeer(t *testing.T) {
-	p, _, bookID, memberID := activateInline(t)
+	p, _, readerID, branchID := activateInline(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	if _, err := p.CreateLink(ctx, "OwnedBy", bookID, memberID, nil); err != nil {
+	if _, err := p.CreateLink(ctx, "RegisteredAt", readerID, branchID, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.DeleteObject(ctx, "Member", memberID, "hard"); err != nil {
+	if err := p.DeleteObject(ctx, "Branch", branchID, "hard"); err != nil {
 		t.Fatal(err)
 	}
-	page, err := p.GetLinks(ctx, bookID, "OwnedBy", "outbound", nil)
+	page, err := p.GetLinks(ctx, readerID, "RegisteredAt", "outbound", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(page.Items) != 0 {
 		t.Fatalf("fk should be cleared: %d", len(page.Items))
 	}
-	if _, err := p.GetObject(ctx, "Book", bookID); err != nil {
+	if _, err := p.GetObject(ctx, "Reader", readerID); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestInlineUpdateLinkUnsupported(t *testing.T) {
-	p, _, bookID, memberID := activateInline(t)
+	p, _, readerID, branchID := activateInline(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	link, err := p.CreateLink(ctx, "OwnedBy", bookID, memberID, nil)
+	link, err := p.CreateLink(ctx, "RegisteredAt", readerID, branchID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = p.UpdateLink(ctx, "OwnedBy", link[spi.FieldID].(string), map[string]any{"x": 1}, nil)
+	_, err = p.UpdateLink(ctx, "RegisteredAt", link[spi.FieldID].(string), map[string]any{"x": 1}, nil)
 	if !errors.Is(err, spi.ErrUnsupportedCapability) {
 		t.Fatalf("err=%v", err)
 	}
-	_, err = p.CreateLink(ctx, "OwnedBy", bookID, memberID, map[string]any{"extra": "no"})
+	_, err = p.CreateLink(ctx, "RegisteredAt", readerID, branchID, map[string]any{"extra": "no"})
 	if !errors.Is(err, spi.ErrInvalidMapping) && !errors.Is(err, spi.ErrCardinalityViolation) {
 		t.Fatalf("properties err=%v", err)
 	}
 }
 
 func TestInlineConcurrentCreateLink(t *testing.T) {
-	p, _, bookID, memberID := activateInline(t)
+	p, _, readerID, branchID := activateInline(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
 	var ok, fail int
 	var mu sync.Mutex
@@ -160,7 +160,7 @@ func TestInlineConcurrentCreateLink(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		go func() {
 			defer wg.Done()
-			_, err := p.CreateLink(ctx, "OwnedBy", bookID, memberID, nil)
+			_, err := p.CreateLink(ctx, "RegisteredAt", readerID, branchID, nil)
 			mu.Lock()
 			defer mu.Unlock()
 			if err == nil {
@@ -177,23 +177,23 @@ func TestInlineConcurrentCreateLink(t *testing.T) {
 }
 
 func TestInlineTraverseOneHop(t *testing.T) {
-	p, _, bookID, memberID := activateInline(t)
+	p, _, readerID, branchID := activateInline(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	if _, err := p.CreateLink(ctx, "OwnedBy", bookID, memberID, nil); err != nil {
+	if _, err := p.CreateLink(ctx, "RegisteredAt", readerID, branchID, nil); err != nil {
 		t.Fatal(err)
 	}
-	tr, err := p.Traverse(ctx, bookID, spi.TraversalPath{Steps: []spi.TraversalStep{{LinkType: "OwnedBy"}}}, nil)
+	tr, err := p.Traverse(ctx, readerID, spi.TraversalPath{Steps: []spi.TraversalStep{{LinkType: "RegisteredAt"}}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tr.Nodes) != 1 || tr.Nodes[0][spi.FieldID] != memberID {
+	if len(tr.Nodes) != 1 || tr.Nodes[0][spi.FieldID] != branchID {
 		t.Fatalf("%+v", tr.Nodes)
 	}
 }
 
 func activateInline(t *testing.T) (*mysqlobda.Provider, *sql.DB, string, string) {
 	t.Helper()
-	raw := testdata(t, "inline.obda.yaml")
+	raw := testdata(t, "library_inline.obda.yaml")
 	p, db := openProvider(t, raw)
 	schema := inlineSchema()
 	mustInit(t, db, raw, schema)
@@ -201,15 +201,15 @@ func activateInline(t *testing.T) (*mysqlobda.Provider, *sql.DB, string, string)
 		t.Fatal(err)
 	}
 	ctx := spi.RequestContext{TenantID: "t1"}
-	mem, err := p.CreateObject(ctx, "Member", map[string]any{"name": "Ada"})
+	br, err := p.CreateObject(ctx, "Branch", map[string]any{"name": "Central"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	book, err := p.CreateObject(ctx, "Book", map[string]any{"title": "Go"})
+	reader, err := p.CreateObject(ctx, "Reader", map[string]any{"name": "Xiao Ming"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return p, db, book[spi.FieldID].(string), mem[spi.FieldID].(string)
+	return p, db, reader[spi.FieldID].(string), br[spi.FieldID].(string)
 }
 
 func inlineRequiredSchema() spi.OntologySchema {

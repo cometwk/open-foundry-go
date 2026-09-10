@@ -1,17 +1,18 @@
+# Simplified library-pack case: Reader mapped read-only (简化版).
 apiVersion: openfoundry.io/obda/v1
 kind: OBDAConfig
 metadata:
-  name: hospital
-  namespace: nhs.acute
+  name: library-read
+  namespace: example.library
   version: 1
 schema:
-  namespace: nhs.acute
+  namespace: example.library
   version: 1
 models:
-  Patient:
+  Reader:
     relation:
       kind: table
-      name: patient
+      name: reader
     access: read
     identity:
       strategy: direct
@@ -24,4 +25,4 @@ models:
       strategy: native
     fields:
       name:
-        column: patient_name
+        column: name

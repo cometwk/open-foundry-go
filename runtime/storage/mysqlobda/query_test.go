@@ -9,15 +9,15 @@ import (
 )
 
 func TestQueryLimitZeroMeansHundred(t *testing.T) {
-	p, _ := activatePatient(t)
+	p, _ := activateReader(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
 	for i := 0; i < 3; i++ {
 		id := string(rune('a' + i))
-		if _, err := p.CreateObject(ctx, "Patient", map[string]any{"name": id}); err != nil {
+		if _, err := p.CreateObject(ctx, "Reader", map[string]any{"name": id}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	page, err := p.QueryObjects(ctx, "Patient", spi.FilterExpression{}, &spi.QueryOptions{Limit: 0})
+	page, err := p.QueryObjects(ctx, "Reader", spi.FilterExpression{}, &spi.QueryOptions{Limit: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,9 +30,9 @@ func TestQueryLimitZeroMeansHundred(t *testing.T) {
 }
 
 func TestOrderByInvalidRejected(t *testing.T) {
-	p, _ := activatePatient(t)
-	_, err := p.QueryObjects(spi.RequestContext{TenantID: "t1"}, "Patient", spi.FilterExpression{}, &spi.QueryOptions{
-		OrderBy: []spi.OrderBy{{Field: "patient;drop"}},
+	p, _ := activateReader(t)
+	_, err := p.QueryObjects(spi.RequestContext{TenantID: "t1"}, "Reader", spi.FilterExpression{}, &spi.QueryOptions{
+		OrderBy: []spi.OrderBy{{Field: "name;drop"}},
 	})
 	if err == nil {
 		t.Fatal("expected reject")
@@ -43,13 +43,13 @@ func TestOrderByInvalidRejected(t *testing.T) {
 }
 
 func TestAsOfTimeNotLiveRow(t *testing.T) {
-	p, _ := activatePatient(t)
+	p, _ := activateReader(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	if _, err := p.CreateObject(ctx, "Patient", map[string]any{"name": "Ada"}); err != nil {
+	if _, err := p.CreateObject(ctx, "Reader", map[string]any{"name": "Xiao Ming"}); err != nil {
 		t.Fatal(err)
 	}
 	asOf := time.Now().UTC()
-	page, err := p.QueryObjects(ctx, "Patient", spi.FilterExpression{}, &spi.QueryOptions{AsOfTime: &asOf})
+	page, err := p.QueryObjects(ctx, "Reader", spi.FilterExpression{}, &spi.QueryOptions{AsOfTime: &asOf})
 	if err == nil && len(page.Items) > 0 {
 		t.Fatal("AsOfTime must not return live rows")
 	}
@@ -59,16 +59,16 @@ func TestAsOfTimeNotLiveRow(t *testing.T) {
 }
 
 func TestQueryFilterNonEqRejected(t *testing.T) {
-	p, _ := activatePatient(t)
+	p, _ := activateReader(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
 	// ne must be rejected — it must not be silently compiled as eq (the old bug).
-	_, err := p.QueryObjects(ctx, "Patient", spi.FilterExpression{Field: "name", Operator: "ne", Value: "Ada"}, nil)
+	_, err := p.QueryObjects(ctx, "Reader", spi.FilterExpression{Field: "name", Operator: "ne", Value: "Xiao Ming"}, nil)
 	if !errors.Is(err, spi.ErrInvalidMapping) {
 		t.Fatalf("ne filter should return ErrInvalidMapping, got %v", err)
 	}
 	// And compound must also be rejected.
-	_, err = p.QueryObjects(ctx, "Patient", spi.FilterExpression{And: []spi.FilterExpression{
-		{Field: "name", Operator: "eq", Value: "Ada"},
+	_, err = p.QueryObjects(ctx, "Reader", spi.FilterExpression{And: []spi.FilterExpression{
+		{Field: "name", Operator: "eq", Value: "Xiao Ming"},
 	}}, nil)
 	if !errors.Is(err, spi.ErrInvalidMapping) {
 		t.Fatalf("And compound should return ErrInvalidMapping, got %v", err)

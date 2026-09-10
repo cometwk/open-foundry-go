@@ -1,17 +1,19 @@
+# Simplified library-pack case: Branch carries the Boolean field
+# allowInterLibraryLoan (简化版).
 apiVersion: openfoundry.io/obda/v1
 kind: OBDAConfig
 metadata:
-  name: hospital
-  namespace: nhs.acute
+  name: library-bool
+  namespace: example.library
   version: 1
 schema:
-  namespace: nhs.acute
+  namespace: example.library
   version: 1
 models:
-  Patient:
+  Branch:
     relation:
       kind: table
-      name: patient
+      name: branch
     access: readWrite
     identity:
       strategy: direct
@@ -24,6 +26,6 @@ models:
       strategy: native
     fields:
       name:
-        column: patient_name
-      active:
-        column: is_active
+        column: name
+      allowInterLibraryLoan:
+        column: allow_inter_library_loan

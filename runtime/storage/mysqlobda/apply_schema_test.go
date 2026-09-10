@@ -21,12 +21,12 @@ import (
 )
 
 func TestApplySchemaEmptyDatabaseFails(t *testing.T) {
-	p, db := openProvider(t, testdata(t, "patient.obda.yaml"))
-	_, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, patientSchema())
+	p, db := openProvider(t, testdata(t, "library.obda.yaml"))
+	_, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, readerSchema())
 	if !errors.Is(err, spi.ErrInvalidMapping) {
 		t.Fatalf("err=%v want ErrInvalidMapping", err)
 	}
-	_, err = p.GetObject(spi.RequestContext{TenantID: "t1"}, "Patient", "x")
+	_, err = p.GetObject(spi.RequestContext{TenantID: "t1"}, "Reader", "x")
 	if !errors.Is(err, spi.ErrMappingNotActive) {
 		t.Fatalf("err=%v want ErrMappingNotActive", err)
 	}
@@ -34,22 +34,22 @@ func TestApplySchemaEmptyDatabaseFails(t *testing.T) {
 }
 
 func TestApplySchemaGeneratedDDLNotExecutedFails(t *testing.T) {
-	p, _ := openProvider(t, testdata(t, "patient.obda.yaml"))
-	compiled := compileMapping(t, testdata(t, "patient.obda.yaml"), patientSchema())
+	p, _ := openProvider(t, testdata(t, "library.obda.yaml"))
+	compiled := compileMapping(t, testdata(t, "library.obda.yaml"), readerSchema())
 	stmts, err := mysqldialect.MappedTableStatements(compiled)
 	if err != nil || len(stmts) == 0 {
 		t.Fatalf("stmts=%v err=%v", stmts, err)
 	}
-	_, err = p.ApplySchema(spi.RequestContext{TenantID: "t1"}, patientSchema())
+	_, err = p.ApplySchema(spi.RequestContext{TenantID: "t1"}, readerSchema())
 	if !errors.Is(err, spi.ErrInvalidMapping) {
 		t.Fatalf("err=%v want ErrInvalidMapping", err)
 	}
 }
 
 func TestApplySchemaAfterHelperSucceeds(t *testing.T) {
-	p, db := openProvider(t, testdata(t, "patient.obda.yaml"))
-	mustInit(t, db, testdata(t, "patient.obda.yaml"), patientSchema())
-	res, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, patientSchema())
+	p, db := openProvider(t, testdata(t, "library.obda.yaml"))
+	mustInit(t, db, testdata(t, "library.obda.yaml"), readerSchema())
+	res, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, readerSchema())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestApplySchemaAfterHelperSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.ObjectTypes) != 1 || got.ObjectTypes[0].Name != "Patient" {
+	if len(got.ObjectTypes) != 1 || got.ObjectTypes[0].Name != "Reader" {
 		t.Fatalf("%+v", got)
 	}
 	other := 999
@@ -71,26 +71,26 @@ func TestApplySchemaAfterHelperSucceeds(t *testing.T) {
 }
 
 func TestApplySchemaFulltextVerify(t *testing.T) {
-	raw := testdata(t, "patient_search.obda.yaml")
+	raw := testdata(t, "library_search.obda.yaml")
 	p, db := openProvider(t, raw)
-	mustInit(t, db, raw, patientSchema())
+	mustInit(t, db, raw, bookSchema())
 	// Init + ApplySchema should succeed — FULLTEXT index exists and is verified.
-	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, patientSchema()); err != nil {
+	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, bookSchema()); err != nil {
 		t.Fatal(err)
 	}
 	// Drop the FULLTEXT index; ApplySchema must catch the drift. Covers AE8.
-	if _, err := db.Exec("DROP INDEX `ft_patient` ON `patient`"); err != nil {
+	if _, err := db.Exec("DROP INDEX `ft_book` ON `book`"); err != nil {
 		t.Fatal(err)
 	}
-	_, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, patientSchema())
+	_, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, bookSchema())
 	if !errors.Is(err, spi.ErrSourceSchemaDrift) {
 		t.Fatalf("missing FULLTEXT should return ErrSourceSchemaDrift, got %v", err)
 	}
 }
 
 func TestApplySchemaInlineHostFK(t *testing.T) {
-	p, db := openProvider(t, testdata(t, "inline.obda.yaml"))
-	mustInit(t, db, testdata(t, "inline.obda.yaml"), inlineSchema())
+	p, db := openProvider(t, testdata(t, "library_inline.obda.yaml"))
+	mustInit(t, db, testdata(t, "library_inline.obda.yaml"), inlineSchema())
 	res, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, inlineSchema())
 	if err != nil {
 		t.Fatal(err)
@@ -99,69 +99,69 @@ func TestApplySchemaInlineHostFK(t *testing.T) {
 		t.Fatalf("%+v", res)
 	}
 	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'owned_by'`).Scan(&n); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'registered_at'`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 0 {
-		t.Fatal("owned_by must not exist")
+		t.Fatal("registered_at must not exist")
 	}
-	if err := db.QueryRow(`SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'book' AND COLUMN_NAME = 'owner_id'`).Scan(&n); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'reader' AND COLUMN_NAME = 'branch_id'`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {
-		t.Fatal("book.owner_id missing")
+		t.Fatal("reader.branch_id missing")
 	}
 }
 
 func TestApplySchemaMissingUniqueFails(t *testing.T) {
-	p, db := openProvider(t, testdata(t, "hospital.obda.yaml"))
-	mustExec(t, db, `CREATE TABLE patient (id VARCHAR(255) PRIMARY KEY, tenant_id VARCHAR(255), patient_name TEXT, version BIGINT, created_at VARCHAR(64), updated_at VARCHAR(64), deleted_at VARCHAR(64))`)
-	mustExec(t, db, `CREATE TABLE ward (id VARCHAR(255) PRIMARY KEY, tenant_id VARCHAR(255), ward_name TEXT, version BIGINT, created_at VARCHAR(64), updated_at VARCHAR(64), deleted_at VARCHAR(64))`)
-	mustExec(t, db, `CREATE TABLE admission (id VARCHAR(255) PRIMARY KEY, tenant_id VARCHAR(255), from_id VARCHAR(255), to_id VARCHAR(255), version BIGINT, created_at VARCHAR(64), updated_at VARCHAR(64), deleted_at VARCHAR(64))`)
-	mustExec(t, db, `CREATE TABLE trust (id VARCHAR(255) PRIMARY KEY, tenant_id VARCHAR(255), trust_name TEXT, version BIGINT, created_at VARCHAR(64), updated_at VARCHAR(64), deleted_at VARCHAR(64))`)
-	mustExec(t, db, `CREATE TABLE ward_trust (id VARCHAR(255) PRIMARY KEY, tenant_id VARCHAR(255), from_id VARCHAR(255), to_id VARCHAR(255), version BIGINT, created_at VARCHAR(64), updated_at VARCHAR(64), deleted_at VARCHAR(64))`)
-	_, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, hospitalSchema(spi.CardinalityManyToOne))
+	p, db := openProvider(t, testdata(t, "library_links.obda.yaml"))
+	mustExec(t, db, `CREATE TABLE reader (id VARCHAR(255) PRIMARY KEY, tenant_id VARCHAR(255), name TEXT, version BIGINT, created_at VARCHAR(64), updated_at VARCHAR(64), deleted_at VARCHAR(64))`)
+	mustExec(t, db, `CREATE TABLE book (id VARCHAR(255) PRIMARY KEY, tenant_id VARCHAR(255), title TEXT, version BIGINT, created_at VARCHAR(64), updated_at VARCHAR(64), deleted_at VARCHAR(64))`)
+	mustExec(t, db, `CREATE TABLE borrows (id VARCHAR(255) PRIMARY KEY, tenant_id VARCHAR(255), from_id VARCHAR(255), to_id VARCHAR(255), version BIGINT, created_at VARCHAR(64), updated_at VARCHAR(64), deleted_at VARCHAR(64))`)
+	mustExec(t, db, `CREATE TABLE branch (id VARCHAR(255) PRIMARY KEY, tenant_id VARCHAR(255), name TEXT, version BIGINT, created_at VARCHAR(64), updated_at VARCHAR(64), deleted_at VARCHAR(64))`)
+	mustExec(t, db, `CREATE TABLE available_at (id VARCHAR(255) PRIMARY KEY, tenant_id VARCHAR(255), from_id VARCHAR(255), to_id VARCHAR(255), version BIGINT, created_at VARCHAR(64), updated_at VARCHAR(64), deleted_at VARCHAR(64))`)
+	_, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, librarySchema(spi.CardinalityManyToOne))
 	if !errors.Is(err, spi.ErrSourceSchemaDrift) {
 		t.Fatalf("err=%v want ErrSourceSchemaDrift", err)
 	}
-	_, err = p.GetObject(spi.RequestContext{TenantID: "t1"}, "Patient", "x")
+	_, err = p.GetObject(spi.RequestContext{TenantID: "t1"}, "Reader", "x")
 	if !errors.Is(err, spi.ErrMappingNotActive) {
 		t.Fatalf("err=%v", err)
 	}
 }
 
 func TestApplySchemaMissingColumnIsDrift(t *testing.T) {
-	p, db := openProvider(t, testdata(t, "patient.obda.yaml"))
-	mustExec(t, db, `CREATE TABLE patient (id VARCHAR(255) PRIMARY KEY, tenant_id VARCHAR(255))`)
-	_, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, patientSchema())
+	p, db := openProvider(t, testdata(t, "library.obda.yaml"))
+	mustExec(t, db, `CREATE TABLE reader (id VARCHAR(255) PRIMARY KEY, tenant_id VARCHAR(255))`)
+	_, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, readerSchema())
 	if !errors.Is(err, spi.ErrSourceSchemaDrift) {
 		t.Fatalf("err=%v want ErrSourceSchemaDrift", err)
 	}
 }
 
 func TestCreateBeforeActivate(t *testing.T) {
-	p, _ := openProvider(t, testdata(t, "patient.obda.yaml"))
-	_, err := p.CreateObject(spi.RequestContext{TenantID: "t1"}, "Patient", nil)
+	p, _ := openProvider(t, testdata(t, "library.obda.yaml"))
+	_, err := p.CreateObject(spi.RequestContext{TenantID: "t1"}, "Reader", nil)
 	if !errors.Is(err, spi.ErrMappingNotActive) {
 		t.Fatalf("err=%v", err)
 	}
-	_, err = p.GetObject(spi.RequestContext{TenantID: "t1"}, "Patient", "x")
+	_, err = p.GetObject(spi.RequestContext{TenantID: "t1"}, "Reader", "x")
 	if !errors.Is(err, spi.ErrMappingNotActive) {
 		t.Fatalf("err=%v", err)
 	}
 }
 
 func TestApplySchemaRequiresTenant(t *testing.T) {
-	p, db := openProvider(t, testdata(t, "patient.obda.yaml"))
-	mustInit(t, db, testdata(t, "patient.obda.yaml"), patientSchema())
-	_, err := p.ApplySchema(spi.RequestContext{}, patientSchema())
+	p, db := openProvider(t, testdata(t, "library.obda.yaml"))
+	mustInit(t, db, testdata(t, "library.obda.yaml"), readerSchema())
+	_, err := p.ApplySchema(spi.RequestContext{}, readerSchema())
 	if !errors.Is(err, spi.ErrTenantRequired) {
 		t.Fatalf("err=%v", err)
 	}
 }
 
 func TestHealthCheckOmitsPath(t *testing.T) {
-	p, _ := openProvider(t, testdata(t, "patient.obda.yaml"))
+	p, _ := openProvider(t, testdata(t, "library.obda.yaml"))
 	st, err := p.HealthCheck()
 	if err != nil {
 		t.Fatal(err)
@@ -175,12 +175,12 @@ func TestHealthCheckOmitsPath(t *testing.T) {
 }
 
 func TestHealthCheckDriftFailClosed(t *testing.T) {
-	p, db := openProvider(t, testdata(t, "patient.obda.yaml"))
-	mustInit(t, db, testdata(t, "patient.obda.yaml"), patientSchema())
-	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, patientSchema()); err != nil {
+	p, db := openProvider(t, testdata(t, "library.obda.yaml"))
+	mustInit(t, db, testdata(t, "library.obda.yaml"), readerSchema())
+	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, readerSchema()); err != nil {
 		t.Fatal(err)
 	}
-	mustExec(t, db, `ALTER TABLE patient ADD COLUMN extra TEXT`)
+	mustExec(t, db, `ALTER TABLE reader ADD COLUMN extra TEXT`)
 	st, err := p.HealthCheck()
 	if err != nil {
 		t.Fatal(err)
@@ -188,62 +188,99 @@ func TestHealthCheckDriftFailClosed(t *testing.T) {
 	if st.Healthy {
 		t.Fatal("expected degraded health after drift")
 	}
-	_, err = p.GetObject(spi.RequestContext{TenantID: "t1"}, "Patient", "x")
+	_, err = p.GetObject(spi.RequestContext{TenantID: "t1"}, "Reader", "x")
 	if !errors.Is(err, spi.ErrSourceSchemaDrift) {
 		t.Fatalf("err=%v want ErrSourceSchemaDrift", err)
 	}
 }
 
-func inlineSchema() spi.OntologySchema {
+// readerSchema is the simplified library-pack Reader: fields identical to the
+// full case, per domain-packs/library-pack/library-pack.md (简化版).
+func readerSchema() spi.OntologySchema {
 	return spi.OntologySchema{
 		Version: 1,
 		ObjectTypes: []spi.ObjectTypeDefinition{
-			{
-				Name:       "Book",
-				Properties: []spi.PropertyDefinition{{Name: "title", Type: "String"}},
-				Navigations: []spi.LinkNavigation{{
-					Field: "owner", LinkType: "OwnedBy", Direction: "OUTBOUND",
-				}},
-			},
-			{
-				Name:       "Member",
-				Properties: []spi.PropertyDefinition{{Name: "name", Type: "String"}},
-				Navigations: []spi.LinkNavigation{{
-					Field: "ownedBooks", LinkType: "OwnedBy", Direction: "INBOUND",
-				}},
-			},
-		},
-		LinkTypes: []spi.LinkTypeDefinition{{
-			Name: "OwnedBy", FromType: "Book", ToType: "Member",
-			Cardinality: spi.CardinalityManyToOne,
-			Properties:  []spi.PropertyDefinition{{Name: "id", Type: "ID", Required: true}},
-		}},
-	}
-}
-
-func patientSchema() spi.OntologySchema {
-	return spi.OntologySchema{
-		Version: 1,
-		ObjectTypes: []spi.ObjectTypeDefinition{
-			{Name: "Patient", Properties: []spi.PropertyDefinition{
+			{Name: "Reader", Properties: []spi.PropertyDefinition{
 				{Name: "name", Type: "String"},
+				{Name: "membershipLevel", Type: "String"},
+				{Name: "currentBorrowCount", Type: "Integer"},
+				{Name: "registeredDays", Type: "Integer"},
 			}},
 		},
 	}
 }
 
-func hospitalSchema(card spi.Cardinality) spi.OntologySchema {
+// bookSchema is the simplified library-pack Book field set.
+func bookSchema() spi.OntologySchema {
 	return spi.OntologySchema{
 		Version: 1,
 		ObjectTypes: []spi.ObjectTypeDefinition{
-			{Name: "Patient", Properties: []spi.PropertyDefinition{{Name: "name", Type: "String"}}},
-			{Name: "Ward", Properties: []spi.PropertyDefinition{{Name: "name", Type: "String"}}},
-			{Name: "Trust", Properties: []spi.PropertyDefinition{{Name: "name", Type: "String"}}},
+			{Name: "Book", Properties: []spi.PropertyDefinition{
+				{Name: "title", Type: "String"},
+				{Name: "isbn", Type: "String"},
+				{Name: "daysOnShelf", Type: "Integer"},
+			}},
+		},
+	}
+}
+
+// branchSchema is the simplified library-pack Branch field set.
+func branchSchema() spi.OntologySchema {
+	return spi.OntologySchema{
+		Version: 1,
+		ObjectTypes: []spi.ObjectTypeDefinition{
+			{Name: "Branch", Properties: []spi.PropertyDefinition{
+				{Name: "name", Type: "String"},
+				{Name: "maxBorrowPerReader", Type: "Integer"},
+				{Name: "newBookProtectionDays", Type: "Integer"},
+				{Name: "allowInterLibraryLoan", Type: "Boolean"},
+			}},
+		},
+	}
+}
+
+// librarySchema is the simplified library-pack graph: Reader/Book/Branch with
+// Borrows (cardinality injected per test) and AvailableAt.
+func librarySchema(card spi.Cardinality) spi.OntologySchema {
+	return spi.OntologySchema{
+		Version: 1,
+		ObjectTypes: []spi.ObjectTypeDefinition{
+			{Name: "Reader", Properties: []spi.PropertyDefinition{{Name: "name", Type: "String"}}},
+			{Name: "Book", Properties: []spi.PropertyDefinition{{Name: "title", Type: "String"}}},
+			{Name: "Branch", Properties: []spi.PropertyDefinition{{Name: "name", Type: "String"}}},
 		},
 		LinkTypes: []spi.LinkTypeDefinition{
-			{Name: "AdmittedTo", FromType: "Patient", ToType: "Ward", Cardinality: card},
-			{Name: "BelongsTo", FromType: "Ward", ToType: "Trust", Cardinality: spi.CardinalityManyToMany},
+			{Name: "Borrows", FromType: "Reader", ToType: "Book", Cardinality: card},
+			{Name: "AvailableAt", FromType: "Book", ToType: "Branch", Cardinality: spi.CardinalityManyToMany},
 		},
+	}
+}
+
+// inlineSchema is RegisteredAt (Reader→Branch, MANY_TO_ONE) as a host-table FK.
+func inlineSchema() spi.OntologySchema {
+	return spi.OntologySchema{
+		Version: 1,
+		ObjectTypes: []spi.ObjectTypeDefinition{
+			{
+				Name:       "Reader",
+				Properties: []spi.PropertyDefinition{{Name: "name", Type: "String"}},
+				Navigations: []spi.LinkNavigation{{
+					Field: "branch", LinkType: "RegisteredAt", Direction: "OUTBOUND",
+				}},
+			},
+			{
+				Name:       "Branch",
+				Properties: []spi.PropertyDefinition{{Name: "name", Type: "String"}},
+				Navigations: []spi.LinkNavigation{{
+					Field: "readers", LinkType: "RegisteredAt", Direction: "INBOUND",
+				}},
+			},
+		},
+		LinkTypes: []spi.LinkTypeDefinition{{
+			Name: "RegisteredAt", FromType: "Reader", ToType: "Branch",
+			Cardinality: spi.CardinalityManyToOne,
+			Properties:  []spi.PropertyDefinition{{Name: "id", Type: "ID", Required: true}},
+		}},
 	}
 }
 
@@ -326,7 +363,7 @@ func openDB(t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() {
 		_ = db.Close()
-		_, _ = admin.Exec("DROP DATABASE IF EXISTS `" + name + "`")
+		_, _ = admin.Exec("DROP DATABASE IF EXISTS `" + name + `"`)
 		_ = admin.Close()
 	})
 	return db
