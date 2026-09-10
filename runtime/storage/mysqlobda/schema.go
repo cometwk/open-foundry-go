@@ -92,6 +92,8 @@ func (p *Provider) verifyFulltext(ctx context.Context, tbl obda.PhysicalTable) e
 	if err != nil {
 		return err
 	}
+	// Declared search.fields is a schema contract: missing FULLTEXT is
+	// fail-closed (ErrSourceSchemaDrift), matching unique-index verify.
 	if !mysqldialect.HasFulltextIndex(idx, tbl.FulltextColumns) {
 		return fmt.Errorf("%w: table %q missing FULLTEXT index on %v", spi.ErrSourceSchemaDrift, tbl.Name, tbl.FulltextColumns)
 	}
