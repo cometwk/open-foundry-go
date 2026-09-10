@@ -80,13 +80,15 @@ func TableExists(ctx context.Context, db *sql.DB, table sqlast.Identifier) (bool
 }
 
 // Index is one index on a table. Partial is always false on MySQL; CreateSQL
-// is not surfaced by information_schema and stays empty.
+// is not surfaced by information_schema and stays empty. Type is the
+// INDEX_TYPE from information_schema (BTREE, FULLTEXT, etc.).
 type Index struct {
 	Name      string
 	Unique    bool
 	Partial   bool
 	Columns   []string
 	CreateSQL string
+	Type      string
 }
 
 // InspectIndexes reads information_schema.STATISTICS.
@@ -95,7 +97,7 @@ func InspectIndexes(ctx context.Context, db *sql.DB, table sqlast.Identifier) ([
 		return nil, err
 	}
 	rows, err := db.QueryContext(ctx, `
-		SELECT INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME
+		SELECT INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME, INDEX_TYPE
 		FROM information_schema.STATISTICS
 		WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
 		ORDER BY INDEX_NAME, SEQ_IN_INDEX`, table.Name)
@@ -106,16 +108,14 @@ func InspectIndexes(ctx context.Context, db *sql.DB, table sqlast.Identifier) ([
 	byName := map[string]*Index{}
 	var order []string
 	for rows.Next() {
-		var name string
-		var nonUnique int
-		var seq int
-		var col string
-		if err := rows.Scan(&name, &nonUnique, &seq, &col); err != nil {
+		var name, col, idxType string
+		var nonUnique, seq int
+		if err := rows.Scan(&name, &nonUnique, &seq, &col, &idxType); err != nil {
 			return nil, err
 		}
 		idx, ok := byName[name]
 		if !ok {
-			idx = &Index{Name: name, Unique: nonUnique == 0}
+			idx = &Index{Name: name, Unique: nonUnique == 0, Type: idxType}
 			byName[name] = idx
 			order = append(order, name)
 		}
@@ -142,6 +142,35 @@ func HasUniqueIndex(indexes []Index, columns []string, requireActiveKey bool) bo
 	sort.Strings(want)
 	for _, idx := range indexes {
 		if !idx.Unique {
+			continue
+		}
+		got := append([]string(nil), idx.Columns...)
+		sort.Strings(got)
+		if len(got) != len(want) {
+			continue
+		}
+		ok := true
+		for i := range want {
+			if got[i] != want[i] {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
+// HasFulltextIndex reports whether a FULLTEXT index covers exactly columns.
+// Column order is irrelevant (sorted before comparison); index name is not
+// checked (R7).
+func HasFulltextIndex(indexes []Index, columns []string) bool {
+	want := append([]string(nil), columns...)
+	sort.Strings(want)
+	for _, idx := range indexes {
+		if idx.Type != "FULLTEXT" {
 			continue
 		}
 		got := append([]string(nil), idx.Columns...)

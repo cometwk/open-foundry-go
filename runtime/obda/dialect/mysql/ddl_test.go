@@ -276,6 +276,38 @@ func TestHasUniqueIndex(t *testing.T) {
 	}
 }
 
+func TestMappedTableStatementsFulltextIndex(t *testing.T) {
+	c := compiledFixture(spi.CardinalityManyToMany)
+	c.Models["Patient"].SearchableFields = []string{"patient_name"}
+	stmts, err := mysqldialect.MappedTableStatements(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(stmts, "\n")
+	want := "CREATE FULLTEXT INDEX `ft_patient`\n  ON `patient` (`patient_name`)"
+	if !strings.Contains(joined, want) {
+		t.Fatalf("FULLTEXT DDL missing:\n%s\nwant: %s", joined, want)
+	}
+}
+
+func TestHasFulltextIndex(t *testing.T) {
+	indexes := []mysqldialect.Index{
+		{Name: "PRIMARY", Unique: true, Type: "BTREE", Columns: []string{"id"}},
+		{Name: "ft_patient", Type: "FULLTEXT", Columns: []string{"patient_name", "city_name"}},
+		{Name: "idx_btree", Type: "BTREE", Columns: []string{"patient_name", "city_name"}},
+	}
+	if !mysqldialect.HasFulltextIndex(indexes, []string{"city_name", "patient_name"}) {
+		t.Fatal("FULLTEXT index with reordered columns should match")
+	}
+	onlyBtree := []mysqldialect.Index{indexes[0], indexes[2]}
+	if mysqldialect.HasFulltextIndex(onlyBtree, []string{"patient_name", "city_name"}) {
+		t.Fatal("BTREE index must not match FULLTEXT")
+	}
+	if mysqldialect.HasFulltextIndex(indexes, []string{"id"}) {
+		t.Fatal("non-matching columns should not match")
+	}
+}
+
 func TestDropTableStatementsReverseOrder(t *testing.T) {
 	stmts, err := mysqldialect.DropTableStatements(compiledFixture(spi.CardinalityManyToOne))
 	if err != nil {

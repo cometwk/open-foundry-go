@@ -45,6 +45,13 @@ func MappedTableStatements(compiled *obda.Compiled) ([]string, error) {
 				}
 				stmts = append(stmts, idx)
 			}
+			if len(tbl.FulltextColumns) > 0 {
+				ft, err := fulltextIndex(tbl.Name, tbl.FulltextColumns)
+				if err != nil {
+					return nil, err
+				}
+				stmts = append(stmts, ft)
+			}
 			continue
 		}
 		l, ok := links[tbl.Name]
@@ -307,4 +314,32 @@ func sqlType(odl string) string {
 	default:
 		return "TEXT"
 	}
+}
+
+// fulltextIndexName derives the FULLTEXT index name for a table. The name
+// stays in the MySQL dialect package (alongside uniqueIndexName and
+// ActiveKeyColumn); introspection verify matches by column list + type, not
+// by name (R7).
+func fulltextIndexName(table string) string {
+	return "ft_" + table
+}
+
+func fulltextIndex(table string, columns []string) (string, error) {
+	name, err := quote(sqlast.Identifier{Name: fulltextIndexName(table)})
+	if err != nil {
+		return "", err
+	}
+	tbl, err := quote(sqlast.Identifier{Name: table})
+	if err != nil {
+		return "", err
+	}
+	quoted := make([]string, len(columns))
+	for i, c := range columns {
+		q, err := quote(sqlast.Identifier{Name: c})
+		if err != nil {
+			return "", err
+		}
+		quoted[i] = q
+	}
+	return "CREATE FULLTEXT INDEX " + name + "\n  ON " + tbl + " (" + strings.Join(quoted, ", ") + ")", nil
 }
