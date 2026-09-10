@@ -101,6 +101,35 @@ func TestPhysicalSchemaModelsOnlyOmitSystem(t *testing.T) {
 	}
 }
 
+func TestPhysicalSchemaFulltextColumns(t *testing.T) {
+	c := &obda.Compiled{
+		Models: map[string]*obda.CompiledModel{
+			"Patient": {
+				Name:             "Patient",
+				Table:            "patient",
+				IdentityColumns:  []string{"id"},
+				TenantColumn:      "tenant_id",
+				Fields:            []obda.CompiledField{{Logical: "name", Column: "patient_name"}},
+				PropertyTypes:     map[string]string{"name": "String"},
+				SearchableFields:  []string{"patient_name"},
+			},
+		},
+	}
+	got := obda.PhysicalSchema(c)
+	patient := mustTable(t, got, "patient")
+	if !eqStrings(patient.FulltextColumns, []string{"patient_name"}) {
+		t.Fatalf("FulltextColumns=%v want [patient_name]", patient.FulltextColumns)
+	}
+}
+
+func TestPhysicalSchemaNoFulltextWhenNoSearch(t *testing.T) {
+	got := obda.PhysicalSchema(hospitalCompiled(obda.OmitFlags{}, spi.CardinalityManyToOne))
+	patient := mustTable(t, got, "patient")
+	if len(patient.FulltextColumns) != 0 {
+		t.Fatalf("FulltextColumns should be empty, got %v", patient.FulltextColumns)
+	}
+}
+
 func TestPhysicalSchemaInlineM2ONoJunction(t *testing.T) {
 	got := obda.PhysicalSchema(libraryInlineCompiled(t, spi.CardinalityManyToOne, true))
 	if _, ok := tableNamed(got, "owned_by"); ok {

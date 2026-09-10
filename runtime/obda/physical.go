@@ -11,11 +11,13 @@ type Physical struct {
 	Tables []PhysicalTable
 }
 
-// PhysicalTable is one mapped relation: required columns and cardinality UNIQUEs.
+// PhysicalTable is one mapped relation: required columns, cardinality UNIQUEs,
+// and optional FULLTEXT search columns.
 type PhysicalTable struct {
-	Name    string
-	Columns []PhysicalColumn
-	Uniques []UniqueSpec
+	Name             string
+	Columns          []PhysicalColumn
+	Uniques          []UniqueSpec
+	FulltextColumns  []string
 }
 
 // PhysicalColumn is a mapped column. SQL types stay in the dialect.
@@ -55,9 +57,10 @@ func PhysicalSchema(compiled *Compiled) Physical {
 		m := compiled.Models[name]
 		cols, uniques := hostTableShape(m, inlineByHost[m.Table])
 		out.Tables = append(out.Tables, PhysicalTable{
-			Name:    m.Table,
-			Columns: cols,
-			Uniques: uniques,
+			Name:             m.Table,
+			Columns:          cols,
+			Uniques:          uniques,
+			FulltextColumns:  append([]string(nil), m.SearchableFields...),
 		})
 	}
 	linkNames := make([]string, 0, len(compiled.Links))

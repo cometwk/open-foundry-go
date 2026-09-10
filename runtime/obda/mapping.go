@@ -33,7 +33,14 @@ type Model struct {
 	Identity Identity         `yaml:"identity"`
 	Tenant   Tenant           `yaml:"tenant"`
 	System   System           `yaml:"system"`
+	Search   *SearchSpec      `yaml:"search"`
 	Fields   map[string]Field `yaml:"fields"`
+}
+
+// SearchSpec declares which logical fields are searchable via FULLTEXT.
+// A nil SearchSpec means the model has no search mapping.
+type SearchSpec struct {
+	Fields []string `yaml:"fields"`
 }
 
 // Link maps one LinkType onto a physical relation.
