@@ -194,19 +194,6 @@ func resolveAggregateOrder(o spi.OrderBy, groupByCol map[string]string, aliases 
 	return sqlast.Order{}, fmt.Errorf("unknown order field %q", o.Field)
 }
 
-func pageLimitOffset(limit, offset int) (int, int) {
-	if limit <= 0 {
-		limit = 100
-	}
-	if limit > 1000 {
-		limit = 1000
-	}
-	if offset < 0 {
-		offset = 0
-	}
-	return limit, offset
-}
-
 func coerceAgg(v any) any {
 	v = unwrap(v)
 	if v == nil {
