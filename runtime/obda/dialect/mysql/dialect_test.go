@@ -221,7 +221,7 @@ func TestRenderSearchMatchGold(t *testing.T) {
 		IdentityColumns:  []string{"id"},
 		SelectColumns:    []string{"id", "patient_name", "city"},
 		SearchableFields: []string{"patient_name", "city"},
-	}, "t1", "flu")
+	}, "t1", "flu", spi.FilterExpression{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,6 +237,30 @@ func TestRenderSearchMatchGold(t *testing.T) {
 	}
 	if len(args) != 3 || args[0] != "flu" || args[1] != "t1" || args[2] != "flu" {
 		t.Fatalf("args=%v want [query, tenant, query]", args)
+	}
+}
+
+func TestRenderSearchWithFilterBindOrder(t *testing.T) {
+	sel, args, err := obda.PlanSearch(obda.ObjectBinding{
+		Table:            "patient",
+		TenantColumn:     "tenant_id",
+		IdentityColumns:  []string{"id"},
+		SelectColumns:    []string{"id", "city"},
+		SearchableFields: []string{"patient_name"},
+	}, "t1", "flu", spi.FilterExpression{Field: "city", Operator: "eq", Value: "london"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmt, err := mysqldialect.New().Render(sel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "SELECT `id`, `city`, MATCH (`patient_name`) AGAINST (?) AS `of_score` FROM `patient` WHERE (`tenant_id` = ?) AND (`city` = ?) AND MATCH (`patient_name`) AGAINST (?) ORDER BY `of_score` DESC"
+	if stmt.SQL != want {
+		t.Fatalf("sql=%s\nwant=%s", stmt.SQL, want)
+	}
+	if len(args) != 4 || args[0] != "flu" || args[1] != "t1" || args[2] != "london" || args[3] != "flu" {
+		t.Fatalf("args=%v want [query, tenant, filter, query]", args)
 	}
 }
 

@@ -54,7 +54,7 @@ ORDER BY `of_score` DESC, `id` ASC
 LIMIT ? OFFSET ?
 ```
 
-因此 `PlanSearch` 返回 `args = [query, tenant, query]`：SELECT MATCH、租户、WHERE MATCH。分页再追加 `limit+1` / `offset`。计数子查询去掉 ORDER BY 与 LIMIT，仍消费这 3 个参数。
+因此无 filter 时 `PlanSearch` 返回 `args = [query, tenant, query]`：SELECT MATCH、租户、WHERE MATCH。带 eq filter 时为 `[query, tenant, filter, query]`——filter 的 `?` 落在 WHERE 树里、第二次 MATCH 之前。分页再追加 `limit+1` / `offset`。计数子查询去掉 ORDER BY 与 LIMIT，仍消费同一组 MATCH/租户/filter 参数。
 
 sqlite 方言继续读 `FullTextMatch.Source`（FTS5 虚拟表），本次不改（无生产调用方）。AST 同时保留 `Source` 与 `Columns`。
 

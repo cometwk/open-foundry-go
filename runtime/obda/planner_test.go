@@ -96,7 +96,7 @@ func TestPlanGetObjectUsesParamsNotSQL(t *testing.T) {
 }
 
 func TestPlanSearchHasFullTextMatchWithoutFTSKeyword(t *testing.T) {
-	sel, args, err := obda.PlanSearch(patientBinding(), "t1", "flu")
+	sel, args, err := obda.PlanSearch(patientBinding(), "t1", "flu", spi.FilterExpression{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,9 +125,24 @@ func TestPlanSearchHasFullTextMatchWithoutFTSKeyword(t *testing.T) {
 func TestPlanSearchEmptySearchableFields(t *testing.T) {
 	b := patientBinding()
 	b.SearchableFields = nil
-	_, _, err := obda.PlanSearch(b, "t1", "flu")
+	_, _, err := obda.PlanSearch(b, "t1", "flu", spi.FilterExpression{})
 	if !errors.Is(err, spi.ErrUnsupportedCapability) {
 		t.Fatalf("err=%v want ErrUnsupportedCapability", err)
+	}
+}
+
+func TestPlanSearchFilterBindOrder(t *testing.T) {
+	sel, args, err := obda.PlanSearch(patientBinding(), "t1", "flu", spi.FilterExpression{
+		Field: "patient_name", Operator: "eq", Value: "Ada",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(args) != 4 || args[0] != "flu" || args[1] != "t1" || args[2] != "Ada" || args[3] != "flu" {
+		t.Fatalf("args=%v want [query, tenant, filter, query]", args)
+	}
+	if sel.Where == nil || sel.Where.Op != "and" {
+		t.Fatalf("where=%+v", sel.Where)
 	}
 }
 

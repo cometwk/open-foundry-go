@@ -43,17 +43,9 @@ func (p *Provider) SearchObjects(ctx spi.RequestContext, typ string, query spi.S
 			return spi.SearchResult{}, err
 		}
 	}
-	sel, args, err := obda.PlanSearch(m.Binding(), ctx.TenantID, query.Query)
+	sel, args, err := obda.PlanSearch(m.Binding(), ctx.TenantID, query.Query, phys)
 	if err != nil {
 		return spi.SearchResult{}, err
-	}
-	if phys.Field != "" {
-		sel.Where = andPred(sel.Where, &sqlast.Predicate{
-			Op:    "eq",
-			Field: &sqlast.Identifier{Name: phys.Field},
-			Value: sqlast.Param{},
-		})
-		args = append(args, phys.Value)
 	}
 	if !m.Omit.DeletedAt {
 		sel.Where = andPred(sel.Where, &sqlast.Predicate{
