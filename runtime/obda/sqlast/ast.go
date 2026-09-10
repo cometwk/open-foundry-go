@@ -96,9 +96,12 @@ type LimitOffset struct {
 }
 
 // FullTextMatch is a dialect-neutral search against a logical search source.
+// Columns carries the physical columns for MATCH; Source is retained for
+// dialects that still key off a single index name (sqlite).
 type FullTextMatch struct {
-	Source Identifier
-	Query  Expr
+	Source  Identifier
+	Columns []Identifier
+	Query   Expr
 }
 
 // CommonTable is a named subquery used by traversal.
@@ -119,6 +122,7 @@ type AggregateSelect struct {
 	GroupBy []Identifier
 	Aggs    []Aggregate
 	Where   *Predicate
+	Order   []Order
 	Limit   *LimitOffset
 }
 

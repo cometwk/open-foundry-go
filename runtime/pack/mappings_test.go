@@ -415,34 +415,33 @@ func TestLoadLibraryPackMappings(t *testing.T) {
 	if got[0].Doc == nil {
 		t.Fatal("Doc is nil")
 	}
-	if n := len(got[0].Doc.Models); n != 2 {
-		t.Fatalf("models = %d, want 2", n)
+	if n := len(got[0].Doc.Models); n != 6 {
+		t.Fatalf("models = %d, want 6", n)
 	}
-	if _, ok := got[0].Doc.Models["Book"]; !ok {
-		t.Fatal("missing Book model")
+	for _, name := range []string{"Reader", "Book", "Branch", "Author", "Category", "Series"} {
+		if _, ok := got[0].Doc.Models[name]; !ok {
+			t.Fatalf("missing %s model", name)
+		}
 	}
-	if _, ok := got[0].Doc.Models["Member"]; !ok {
-		t.Fatal("missing Member model")
+	if n := len(got[0].Doc.Links); n != 10 {
+		t.Fatalf("links = %d, want 10", n)
 	}
-	if n := len(got[0].Doc.Links); n != 2 {
-		t.Fatalf("links = %d, want 2", n)
-	}
-	link, ok := got[0].Doc.Links["BorrowedBy"]
+	link, ok := got[0].Doc.Links["Borrows"]
 	if !ok {
-		t.Fatal("missing BorrowedBy link")
+		t.Fatal("missing Borrows link")
 	}
-	if link.From.Object != "Book" || link.To.Object != "Member" {
-		t.Fatalf("BorrowedBy ends = %s -> %s", link.From.Object, link.To.Object)
+	if link.From.Object != "Reader" || link.To.Object != "Book" {
+		t.Fatalf("Borrows ends = %s -> %s", link.From.Object, link.To.Object)
 	}
 	if link.Inline() || link.Relation.Kind != "table" {
-		t.Fatalf("BorrowedBy should stay a junction: %+v", link.Relation)
+		t.Fatalf("Borrows should stay a junction: %+v", link.Relation)
 	}
-	owned, ok := got[0].Doc.Links["OwnedBy"]
+	registered, ok := got[0].Doc.Links["RegisteredAt"]
 	if !ok {
-		t.Fatal("missing OwnedBy link")
+		t.Fatal("missing RegisteredAt link")
 	}
-	if !owned.Inline() {
-		t.Fatal("OwnedBy should be inline")
+	if !registered.Inline() {
+		t.Fatal("RegisteredAt should be inline")
 	}
 }
 

@@ -150,6 +150,153 @@ func TestNormalizeBool(t *testing.T) {
 	}
 }
 
+func TestRenderAggregateSelect(t *testing.T) {
+	stmt, err := mysqldialect.New().Render(&sqlast.AggregateSelect{
+		From:    sqlast.Identifier{Name: "patient"},
+		GroupBy: []sqlast.Identifier{{Name: "city"}},
+		Aggs: []sqlast.Aggregate{
+			{Fn: "count", Field: &sqlast.Identifier{Name: "x"}, Alias: sqlast.Identifier{Name: "count_x"}},
+			{Fn: "sum", Field: &sqlast.Identifier{Name: "amount"}, Alias: sqlast.Identifier{Name: "sum_amount"}},
+		},
+		Where: &sqlast.Predicate{Op: "eq", Field: &sqlast.Identifier{Name: "tenant_id"}, Value: sqlast.Param{Position: 1}},
+		Order: []sqlast.Order{
+			{Field: sqlast.Identifier{Name: "city"}},
+			{Field: sqlast.Identifier{Name: "of_tiebreak"}},
+		},
+		Limit: &sqlast.LimitOffset{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "SELECT `city`, COUNT(`x`) AS `count_x`, SUM(`amount`) AS `sum_amount` FROM `patient` WHERE `tenant_id` = ? GROUP BY `city` ORDER BY `city` ASC, `of_tiebreak` ASC LIMIT ? OFFSET ?"
+	if stmt.SQL != want {
+		t.Fatalf("sql=%s\nwant=%s", stmt.SQL, want)
+	}
+}
+
+func TestRenderAggregateNoGroupBy(t *testing.T) {
+	stmt, err := mysqldialect.New().Render(&sqlast.AggregateSelect{
+		From: sqlast.Identifier{Name: "patient"},
+		Aggs: []sqlast.Aggregate{
+			{Fn: "count", Field: &sqlast.Identifier{Name: "*"}, Alias: sqlast.Identifier{Name: "count"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "SELECT COUNT(*) AS `count` FROM `patient`"
+	if stmt.SQL != want {
+		t.Fatalf("sql=%s\nwant=%s", stmt.SQL, want)
+	}
+}
+
+func TestRenderAggregateUnknownFn(t *testing.T) {
+	_, err := mysqldialect.New().Render(&sqlast.AggregateSelect{
+		From: sqlast.Identifier{Name: "patient"},
+		Aggs: []sqlast.Aggregate{
+			{Fn: "median", Field: &sqlast.Identifier{Name: "x"}, Alias: sqlast.Identifier{Name: "median_x"}},
+		},
+	})
+	if !errors.Is(err, spi.ErrUnsupportedCapability) {
+		t.Fatalf("err=%v want ErrUnsupportedCapability", err)
+	}
+}
+
+func TestRenderAggregateSumStar(t *testing.T) {
+	_, err := mysqldialect.New().Render(&sqlast.AggregateSelect{
+		From: sqlast.Identifier{Name: "patient"},
+		Aggs: []sqlast.Aggregate{
+			{Fn: "sum", Field: &sqlast.Identifier{Name: "*"}, Alias: sqlast.Identifier{Name: "sum_all"}},
+		},
+	})
+	if !errors.Is(err, spi.ErrUnsupportedCapability) {
+		t.Fatalf("sum(*) should return ErrUnsupportedCapability, got %v", err)
+	}
+}
+
+func TestRenderSearchMatchGold(t *testing.T) {
+	sel, args, err := obda.PlanSearch(obda.ObjectBinding{
+		Table:            "patient",
+		TenantColumn:     "tenant_id",
+		IdentityColumns:  []string{"id"},
+		SelectColumns:    []string{"id", "patient_name", "city"},
+		SearchableFields: []string{"patient_name", "city"},
+	}, "t1", "flu", spi.FilterExpression{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel.Order = []sqlast.Order{{Field: sqlast.Identifier{Name: "id"}}}
+	sel.Limit = &sqlast.LimitOffset{}
+	stmt, err := mysqldialect.New().Render(sel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "SELECT `id`, `patient_name`, `city`, MATCH (`patient_name`, `city`) AGAINST (?) AS `of_score` FROM `patient` WHERE `tenant_id` = ? AND MATCH (`patient_name`, `city`) AGAINST (?) ORDER BY `of_score` DESC, `id` ASC LIMIT ? OFFSET ?"
+	if stmt.SQL != want {
+		t.Fatalf("sql=%s\nwant=%s", stmt.SQL, want)
+	}
+	if len(args) != 3 || args[0] != "flu" || args[1] != "t1" || args[2] != "flu" {
+		t.Fatalf("args=%v want [query, tenant, query]", args)
+	}
+}
+
+func TestRenderSearchWithFilterBindOrder(t *testing.T) {
+	sel, args, err := obda.PlanSearch(obda.ObjectBinding{
+		Table:            "patient",
+		TenantColumn:     "tenant_id",
+		IdentityColumns:  []string{"id"},
+		SelectColumns:    []string{"id", "city"},
+		SearchableFields: []string{"patient_name"},
+	}, "t1", "flu", spi.FilterExpression{Field: "city", Operator: "eq", Value: "london"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmt, err := mysqldialect.New().Render(sel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "SELECT `id`, `city`, MATCH (`patient_name`) AGAINST (?) AS `of_score` FROM `patient` WHERE (`tenant_id` = ?) AND (`city` = ?) AND MATCH (`patient_name`) AGAINST (?) ORDER BY `of_score` DESC"
+	if stmt.SQL != want {
+		t.Fatalf("sql=%s\nwant=%s", stmt.SQL, want)
+	}
+	if len(args) != 4 || args[0] != "flu" || args[1] != "t1" || args[2] != "london" || args[3] != "flu" {
+		t.Fatalf("args=%v want [query, tenant, filter, query]", args)
+	}
+}
+
+func TestRenderSearchScorePrependsExplicitOrder(t *testing.T) {
+	stmt, err := mysqldialect.New().Render(&sqlast.Select{
+		From:    sqlast.Identifier{Name: "patient"},
+		Columns: []sqlast.Expr{sqlast.Identifier{Name: "id"}},
+		Where:   &sqlast.Predicate{Op: "eq", Field: &sqlast.Identifier{Name: "tenant_id"}, Value: sqlast.Param{Position: 1}},
+		Search: &sqlast.FullTextMatch{
+			Columns: []sqlast.Identifier{{Name: "patient_name"}},
+			Query:   sqlast.Param{Position: 2},
+		},
+		Order: []sqlast.Order{{Field: sqlast.Identifier{Name: "id"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "SELECT `id`, MATCH (`patient_name`) AGAINST (?) AS `of_score` FROM `patient` WHERE `tenant_id` = ? AND MATCH (`patient_name`) AGAINST (?) ORDER BY `of_score` DESC, `id` ASC"
+	if stmt.SQL != want {
+		t.Fatalf("sql=%s\nwant=%s", stmt.SQL, want)
+	}
+}
+
+func TestRenderSearchEmptyColumns(t *testing.T) {
+	_, err := mysqldialect.New().Render(&sqlast.Select{
+		From: sqlast.Identifier{Name: "patient"},
+		Search: &sqlast.FullTextMatch{
+			Source: sqlast.Identifier{Name: "patient_search"},
+			Query:  sqlast.Param{Position: 2},
+		},
+	})
+	if !errors.Is(err, spi.ErrUnsupportedCapability) {
+		t.Fatalf("err=%v want ErrUnsupportedCapability", err)
+	}
+}
+
 func TestClassify(t *testing.T) {
 	dup := errors.New("Error 1062: Duplicate entry 't1-p1' for key 'admission.admission_from_active'")
 	if err := mysqldialect.Classify(dup); !errors.Is(err, spi.ErrCardinalityViolation) {

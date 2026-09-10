@@ -95,24 +95,73 @@ func PlanDeleteObject(b ObjectBinding, tenant string, key []any) (*sqlast.Delete
 	return &sqlast.Delete{Table: ident(b.Table), Where: where}, args, nil
 }
 
-// PlanSearch builds a FullTextMatch against a logical search source.
-func PlanSearch(b ObjectBinding, tenant, query string) (*sqlast.Select, []any, error) {
-	if b.SearchIndex == "" {
+// PlanSearch builds a FullTextMatch against compiled searchable columns.
+// Guard is len(SearchableFields)==0 (SearchIndex is no longer filled by compile).
+//
+// Args follow MySQL `?` appearance order: SELECT MATCH, tenant, filter extras,
+// then WHERE MATCH. The query value is therefore bound twice, with any filter
+// values spliced between the two MATCH placeholders.
+func PlanSearch(b ObjectBinding, tenant, query string, filter spi.FilterExpression) (*sqlast.Select, []any, error) {
+	if len(b.SearchableFields) == 0 {
 		return nil, nil, spi.ErrUnsupportedCapability
 	}
 	if tenant == "" {
 		return nil, nil, spi.ErrTenantRequired
 	}
+	searchCols := make([]sqlast.Identifier, len(b.SearchableFields))
+	for i, c := range b.SearchableFields {
+		searchCols[i] = ident(c)
+	}
+	where := eq(ident(b.TenantColumn), 1)
+	pred, extra, err := compileFilter(filter, knownColumns(b), 2)
+	if err != nil {
+		return nil, nil, err
+	}
+	if pred != nil {
+		where = and(where, pred)
+	}
 	sel := &sqlast.Select{
 		From:    ident(b.Table),
 		Columns: cols(b.SelectColumns),
-		Where:   eq(ident(b.TenantColumn), 1),
+		Where:   where,
 		Search: &sqlast.FullTextMatch{
-			Source: ident(b.SearchIndex),
-			Query:  sqlast.Param{Position: 2},
+			Source:  ident(b.SearchIndex),
+			Columns: searchCols,
+			Query:   sqlast.Param{Position: 2},
 		},
 	}
-	return sel, []any{tenant, query}, nil
+	args := append([]any{query, tenant}, extra...)
+	args = append(args, query)
+	return sel, args, nil
+}
+
+// PlanAggregate builds a GROUP BY plan. Tenant is arg position 1; filter args follow.
+// Order and Limit are left unset for the provider to fill (tiebreak, pagination).
+func PlanAggregate(b ObjectBinding, tenant string, groupBy []string, aggs []sqlast.Aggregate, filter spi.FilterExpression) (*sqlast.AggregateSelect, []any, error) {
+	if tenant == "" {
+		return nil, nil, spi.ErrTenantRequired
+	}
+	known := knownColumns(b)
+	args := []any{tenant}
+	where := eq(ident(b.TenantColumn), 1)
+	pred, extra, err := compileFilter(filter, known, 2)
+	if err != nil {
+		return nil, nil, err
+	}
+	args = append(args, extra...)
+	if pred != nil {
+		where = and(where, pred)
+	}
+	gb := make([]sqlast.Identifier, len(groupBy))
+	for i, c := range groupBy {
+		gb[i] = ident(c)
+	}
+	return &sqlast.AggregateSelect{
+		From:    ident(b.Table),
+		GroupBy: gb,
+		Aggs:    append([]sqlast.Aggregate(nil), aggs...),
+		Where:   where,
+	}, args, nil
 }
 
 // PlanQuery selects with tenant and a compiled filter. Unknown fields fail before SQL.
@@ -120,13 +169,7 @@ func PlanQuery(b ObjectBinding, tenant string, filter spi.FilterExpression) (*sq
 	if tenant == "" {
 		return nil, nil, spi.ErrTenantRequired
 	}
-	known := map[string]struct{}{b.TenantColumn: {}}
-	for _, c := range b.IdentityColumns {
-		known[c] = struct{}{}
-	}
-	for _, c := range b.SelectColumns {
-		known[c] = struct{}{}
-	}
+	known := knownColumns(b)
 	args := []any{tenant}
 	where := eq(ident(b.TenantColumn), 1)
 	pred, extra, err := compileFilter(filter, known, 2)
@@ -443,12 +486,29 @@ func compileFilter(f spi.FilterExpression, known map[string]struct{}, next int) 
 		if _, ok := known[f.Field]; !ok {
 			return nil, nil, fmt.Errorf("%w: unknown filter field %q", spi.ErrInvalidMapping, f.Field)
 		}
+		if f.Operator != "" && f.Operator != "eq" {
+			return nil, nil, fmt.Errorf("%w: unsupported filter operator %q", spi.ErrInvalidMapping, f.Operator)
+		}
 		return eq(ident(f.Field), next), []any{f.Value}, nil
 	}
 	return nil, nil, fmt.Errorf("%w: unsupported filter", spi.ErrInvalidMapping)
 }
 
 func ident(name string) sqlast.Identifier { return sqlast.Identifier{Name: name} }
+
+func knownColumns(b ObjectBinding) map[string]struct{} {
+	known := map[string]struct{}{}
+	if b.TenantColumn != "" {
+		known[b.TenantColumn] = struct{}{}
+	}
+	for _, c := range b.IdentityColumns {
+		known[c] = struct{}{}
+	}
+	for _, c := range b.SelectColumns {
+		known[c] = struct{}{}
+	}
+	return known
+}
 
 func cols(names []string) []sqlast.Expr {
 	out := make([]sqlast.Expr, len(names))

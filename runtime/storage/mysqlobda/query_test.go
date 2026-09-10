@@ -57,3 +57,20 @@ func TestAsOfTimeNotLiveRow(t *testing.T) {
 		t.Fatal("still unimplemented")
 	}
 }
+
+func TestQueryFilterNonEqRejected(t *testing.T) {
+	p, _ := activatePatient(t)
+	ctx := spi.RequestContext{TenantID: "t1"}
+	// ne must be rejected — it must not be silently compiled as eq (the old bug).
+	_, err := p.QueryObjects(ctx, "Patient", spi.FilterExpression{Field: "name", Operator: "ne", Value: "Ada"}, nil)
+	if !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("ne filter should return ErrInvalidMapping, got %v", err)
+	}
+	// And compound must also be rejected.
+	_, err = p.QueryObjects(ctx, "Patient", spi.FilterExpression{And: []spi.FilterExpression{
+		{Field: "name", Operator: "eq", Value: "Ada"},
+	}}, nil)
+	if !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("And compound should return ErrInvalidMapping, got %v", err)
+	}
+}

@@ -69,14 +69,17 @@ func TestPrintPackDDL_LibraryPackMySQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := strings.Join(stmts, "\n")
-	if !strings.Contains(joined, "`owner_id`") {
-		t.Fatalf("missing owner_id:\n%s", joined)
+	if !strings.Contains(joined, "`branch_id`") {
+		t.Fatalf("missing branch_id:\n%s", joined)
 	}
-	if strings.Contains(joined, "`owned_by`") {
-		t.Fatalf("must not emit owned_by:\n%s", joined)
+	if strings.Contains(joined, "CREATE TABLE IF NOT EXISTS `registered_at`") {
+		t.Fatalf("must not emit registered_at:\n%s", joined)
 	}
-	if !strings.Contains(joined, "CREATE TABLE IF NOT EXISTS `borrowed_by`") {
-		t.Fatalf("missing borrowed_by:\n%s", joined)
+	if !strings.Contains(joined, "CREATE TABLE IF NOT EXISTS `borrows`") {
+		t.Fatalf("missing borrows:\n%s", joined)
+	}
+	if !strings.Contains(joined, "CREATE TABLE IF NOT EXISTS `available_at`") {
+		t.Fatalf("missing available_at:\n%s", joined)
 	}
 }
 

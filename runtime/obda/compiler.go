@@ -3,6 +3,7 @@ package obda
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/openfoundry/runtime/spi"
 )
@@ -270,5 +271,32 @@ func compileModel(name string, m Model, def spi.ObjectTypeDefinition) (*Compiled
 			}
 		}
 	}
+	// Search block validation (KTD5/KTD9).
+	if m.Search != nil {
+		if len(m.Search.Fields) == 0 {
+			return nil, fmt.Errorf("%w: %q search fields must be non-empty", spi.ErrInvalidMapping, name)
+		}
+		for _, logical := range m.Search.Fields {
+			cf, ok := cm.FieldByLogical[logical]
+			if !ok {
+				return nil, fmt.Errorf("%w: %q search field %q not in model fields", spi.ErrInvalidMapping, name, logical)
+			}
+			if !isTextType(cm.PropertyTypes[logical]) {
+				return nil, fmt.Errorf("%w: %q search field %q must be text type, got %q", spi.ErrInvalidMapping, name, logical, cm.PropertyTypes[logical])
+			}
+			cm.SearchableFields = append(cm.SearchableFields, cf.Column)
+		}
+	}
 	return cm, nil
+}
+
+// isTextType reports whether an ODL type is text-family (searchable via FULLTEXT).
+// The non-text set mirrors dialect/mysql/ddl.go sqlType.
+func isTextType(odl string) bool {
+	switch strings.ToLower(odl) {
+	case "integer", "int", "long", "boolean", "bool", "double", "float", "decimal":
+		return false
+	default:
+		return true
+	}
 }

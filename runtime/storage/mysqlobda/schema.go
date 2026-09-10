@@ -36,6 +36,9 @@ func (p *Provider) verifyMappedSchema(compiled *obda.Compiled) error {
 		if err := p.verifyUniques(ctx, tbl); err != nil {
 			return err
 		}
+		if err := p.verifyFulltext(ctx, tbl); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -77,6 +80,22 @@ func (p *Provider) verifyUniques(ctx context.Context, tbl obda.PhysicalTable) er
 		if !mysqldialect.HasUniqueIndex(idx, spec.Columns, spec.ExcludeSoftDeleted) {
 			return fmt.Errorf("%w: table %q missing unique index on %v", spi.ErrSourceSchemaDrift, tbl.Name, spec.Columns)
 		}
+	}
+	return nil
+}
+
+func (p *Provider) verifyFulltext(ctx context.Context, tbl obda.PhysicalTable) error {
+	if len(tbl.FulltextColumns) == 0 {
+		return nil
+	}
+	idx, err := mysqldialect.InspectIndexes(ctx, p.db, sqlast.Identifier{Name: tbl.Name})
+	if err != nil {
+		return err
+	}
+	// Declared search.fields is a schema contract: missing FULLTEXT is
+	// fail-closed (ErrSourceSchemaDrift), matching unique-index verify.
+	if !mysqldialect.HasFulltextIndex(idx, tbl.FulltextColumns) {
+		return fmt.Errorf("%w: table %q missing FULLTEXT index on %v", spi.ErrSourceSchemaDrift, tbl.Name, tbl.FulltextColumns)
 	}
 	return nil
 }

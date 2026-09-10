@@ -1,0 +1,14 @@
+extend schema @namespace(name: "example.library", version: "0.1.0")
+
+type Reader @objectType {
+  id: ID! @primary
+  name: String! @indexed
+  membershipLevel: MembershipLevel!
+  currentBorrowCount: Int!
+  registeredDays: Int!
+
+  branch: Branch @link(type: "RegisteredAt", direction: OUTBOUND)
+  borrowedBooks: [Book!]! @link(type: "Borrows", direction: OUTBOUND)
+  overdueBooks: [Book!]! @link(type: "Overdue", direction: OUTBOUND)
+  reservedBooks: [Book!]! @link(type: "Reserves", direction: OUTBOUND)
+}

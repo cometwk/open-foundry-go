@@ -37,6 +37,27 @@ func TestLoadActions_CreateOrderBoundToIR(t *testing.T) {
 	}
 }
 
+func TestLoadActions_LibraryPack(t *testing.T) {
+	dir, err := pack.LibraryPackDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	onto, err := pack.LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir: %v", err)
+	}
+	manifests, err := pack.LoadActions(dir, onto)
+	if err != nil {
+		t.Fatalf("LoadActions err = %v, want nil", err)
+	}
+	if action.Lookup(manifests, "BorrowBook") == nil {
+		t.Fatal("missing BorrowBook")
+	}
+	if action.Lookup(manifests, "ReturnBook") == nil {
+		t.Fatal("missing ReturnBook")
+	}
+}
+
 func TestLoadActions_UnknownActionFailsBind(t *testing.T) {
 	dir, err := pack.SupplyChainDir()
 	if err != nil {

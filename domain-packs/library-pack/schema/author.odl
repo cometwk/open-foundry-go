@@ -1,0 +1,11 @@
+extend schema @namespace(name: "example.library", version: "0.1.0")
+
+type Author @objectType {
+  id: ID! @primary
+  name: String! @indexed
+  nationality: String
+  activeBookCount: Int!
+
+  books: [Book!]! @link(type: "WrittenBy", direction: INBOUND)
+  category: Category @link(type: "SpecializesIn", direction: OUTBOUND)
+}

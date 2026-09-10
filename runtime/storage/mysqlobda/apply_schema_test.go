@@ -70,6 +70,24 @@ func TestApplySchemaAfterHelperSucceeds(t *testing.T) {
 	assertNoOfTables(t, db)
 }
 
+func TestApplySchemaFulltextVerify(t *testing.T) {
+	raw := testdata(t, "patient_search.obda.yaml")
+	p, db := openProvider(t, raw)
+	mustInit(t, db, raw, patientSchema())
+	// Init + ApplySchema should succeed — FULLTEXT index exists and is verified.
+	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, patientSchema()); err != nil {
+		t.Fatal(err)
+	}
+	// Drop the FULLTEXT index; ApplySchema must catch the drift. Covers AE8.
+	if _, err := db.Exec("DROP INDEX `ft_patient` ON `patient`"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, patientSchema())
+	if !errors.Is(err, spi.ErrSourceSchemaDrift) {
+		t.Fatalf("missing FULLTEXT should return ErrSourceSchemaDrift, got %v", err)
+	}
+}
+
 func TestApplySchemaInlineHostFK(t *testing.T) {
 	p, db := openProvider(t, testdata(t, "inline.obda.yaml"))
 	mustInit(t, db, testdata(t, "inline.obda.yaml"), inlineSchema())

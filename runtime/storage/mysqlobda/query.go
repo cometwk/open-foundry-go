@@ -62,19 +62,11 @@ func (p *Provider) QueryObjects(ctx spi.RequestContext, typ string, filter spi.F
 	if err := p.db.QueryRow("SELECT COUNT(*) FROM ("+countStmt.SQL+") AS q", args...).Scan(&total); err != nil {
 		return spi.ObjectPage{}, mysqldialect.Classify(err)
 	}
-	limit := 100
-	offset := 0
+	limit, offset := 0, 0
 	if options != nil {
-		if options.Limit > 0 {
-			limit = options.Limit
-		}
-		if limit > 1000 {
-			limit = 1000
-		}
-		if options.Offset > 0 {
-			offset = options.Offset
-		}
+		limit, offset = options.Limit, options.Offset
 	}
+	limit, offset = pageLimitOffset(limit, offset)
 	sel.Limit = &sqlast.LimitOffset{Limit: sqlast.Param{}, Offset: sqlast.Param{}}
 	pageArgs := append(append([]any{}, args...), limit+1, offset)
 	stmt, err := p.dialect.Render(sel)
@@ -117,6 +109,21 @@ func (p *Provider) QueryObjects(ctx spi.RequestContext, typ string, filter spi.F
 	return spi.ObjectPage{Items: items, TotalCount: total, HasNextPage: hasNext}, nil
 }
 
+// pageLimitOffset applies the shared QueryObjects/AggregateObjects/SearchObjects
+// pagination policy: limit<=0 defaults to 100, hard cap 1000, offset<0 clamps to 0.
+func pageLimitOffset(limit, offset int) (int, int) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return limit, offset
+}
+
 func translateFilter(m *obda.CompiledModel, f spi.FilterExpression) (spi.FilterExpression, error) {
 	empty := f.Field == "" && f.Operator == "" && len(f.And) == 0 && len(f.Or) == 0 && f.Not == nil
 	if empty {
@@ -126,6 +133,9 @@ func translateFilter(m *obda.CompiledModel, f spi.FilterExpression) (spi.FilterE
 		cf, ok := m.FieldByLogical[f.Field]
 		if !ok {
 			return f, fmt.Errorf("%w: unknown filter field %q", spi.ErrInvalidMapping, f.Field)
+		}
+		if f.Operator != "" && f.Operator != "eq" {
+			return f, fmt.Errorf("%w: unsupported filter operator %q", spi.ErrInvalidMapping, f.Operator)
 		}
 		f.Field = cf.Column
 		return f, nil

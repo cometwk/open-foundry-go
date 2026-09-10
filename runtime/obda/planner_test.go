@@ -65,12 +65,13 @@ func (d fakeDialect) renderInsert(s *sqlast.Insert) (dialect.SQLStatement, error
 
 func patientBinding() obda.ObjectBinding {
 	return obda.ObjectBinding{
-		Table:           "patient",
-		TenantColumn:    "tenant_id",
-		IdentityColumns: []string{"patient_id"},
-		SelectColumns:   []string{"patient_id", "patient_name", "tenant_id"},
-		Writable:        true,
-		SearchIndex:     "patient_search",
+		Table:            "patient",
+		TenantColumn:     "tenant_id",
+		IdentityColumns:  []string{"patient_id"},
+		SelectColumns:    []string{"patient_id", "patient_name", "tenant_id"},
+		Writable:         true,
+		SearchIndex:      "patient_search",
+		SearchableFields: []string{"patient_name", "city_name"},
 	}
 }
 
@@ -95,7 +96,7 @@ func TestPlanGetObjectUsesParamsNotSQL(t *testing.T) {
 }
 
 func TestPlanSearchHasFullTextMatchWithoutFTSKeyword(t *testing.T) {
-	sel, args, err := obda.PlanSearch(patientBinding(), "t1", "flu")
+	sel, args, err := obda.PlanSearch(patientBinding(), "t1", "flu", spi.FilterExpression{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,8 +106,11 @@ func TestPlanSearchHasFullTextMatchWithoutFTSKeyword(t *testing.T) {
 	if _, ok := sel.Search.Query.(sqlast.Param); !ok {
 		t.Fatalf("query=%T", sel.Search.Query)
 	}
-	if len(args) != 2 {
-		t.Fatalf("args=%v", args)
+	if got, want := namesOf(sel.Search.Columns), []string{"patient_name", "city_name"}; !eqStringSlice(got, want) {
+		t.Fatalf("columns=%v want %v", got, want)
+	}
+	if len(args) != 3 || args[0] != "flu" || args[1] != "t1" || args[2] != "flu" {
+		t.Fatalf("args=%v want [query, tenant, query]", args)
 	}
 	out, err := fakeDialect{}.Render(sel)
 	if err != nil {
@@ -116,6 +120,74 @@ func TestPlanSearchHasFullTextMatchWithoutFTSKeyword(t *testing.T) {
 	if strings.Contains(low, "fts5") || strings.Contains(low, "match") {
 		t.Fatalf("search plan leaked FTS SQL: %s", out.SQL)
 	}
+}
+
+func TestPlanSearchEmptySearchableFields(t *testing.T) {
+	b := patientBinding()
+	b.SearchableFields = nil
+	_, _, err := obda.PlanSearch(b, "t1", "flu", spi.FilterExpression{})
+	if !errors.Is(err, spi.ErrUnsupportedCapability) {
+		t.Fatalf("err=%v want ErrUnsupportedCapability", err)
+	}
+}
+
+func TestPlanSearchFilterBindOrder(t *testing.T) {
+	sel, args, err := obda.PlanSearch(patientBinding(), "t1", "flu", spi.FilterExpression{
+		Field: "patient_name", Operator: "eq", Value: "Ada",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(args) != 4 || args[0] != "flu" || args[1] != "t1" || args[2] != "Ada" || args[3] != "flu" {
+		t.Fatalf("args=%v want [query, tenant, filter, query]", args)
+	}
+	if sel.Where == nil || sel.Where.Op != "and" {
+		t.Fatalf("where=%+v", sel.Where)
+	}
+}
+
+func TestPlanAggregateTenantFirst(t *testing.T) {
+	stmt, args, err := obda.PlanAggregate(patientBinding(), "t1", []string{"city_name"}, []sqlast.Aggregate{
+		{Fn: "count", Field: &sqlast.Identifier{Name: "*"}, Alias: sqlast.Identifier{Name: "cnt"}},
+	}, spi.FilterExpression{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(args) != 1 || args[0] != "t1" {
+		t.Fatalf("args=%v want [tenant]", args)
+	}
+	if stmt.From.Name != "patient" {
+		t.Fatalf("from=%s", stmt.From.Name)
+	}
+	if len(stmt.GroupBy) != 1 || stmt.GroupBy[0].Name != "city_name" {
+		t.Fatalf("groupBy=%+v", stmt.GroupBy)
+	}
+	if stmt.Where == nil || stmt.Where.Op != "eq" || stmt.Where.Field == nil || stmt.Where.Field.Name != "tenant_id" {
+		t.Fatalf("where=%+v", stmt.Where)
+	}
+	if len(stmt.Aggs) != 1 || stmt.Aggs[0].Fn != "count" {
+		t.Fatalf("aggs=%+v", stmt.Aggs)
+	}
+}
+
+func namesOf(ids []sqlast.Identifier) []string {
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = id.Name
+	}
+	return out
+}
+
+func eqStringSlice(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestPlanCreatePutsValuesInArgs(t *testing.T) {
@@ -135,6 +207,30 @@ func TestPlanQueryUnknownField(t *testing.T) {
 	_, _, err := obda.PlanQuery(patientBinding(), "t1", spi.FilterExpression{Field: "nope", Operator: "eq", Value: 1})
 	if !errors.Is(err, spi.ErrInvalidMapping) {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestPlanQueryUnsupportedOperator(t *testing.T) {
+	b := patientBinding()
+	// Non-eq operators must be rejected, not silently compiled as eq.
+	_, _, err := obda.PlanQuery(b, "t1", spi.FilterExpression{Field: "patient_id", Operator: "gt", Value: 1})
+	if !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("gt operator should return ErrInvalidMapping, got %v", err)
+	}
+	// "eq" operator passes.
+	if _, _, err := obda.PlanQuery(b, "t1", spi.FilterExpression{Field: "patient_id", Operator: "eq", Value: 1}); err != nil {
+		t.Fatalf("eq operator should pass, got %v", err)
+	}
+	// Empty operator defaults to eq and passes.
+	if _, _, err := obda.PlanQuery(b, "t1", spi.FilterExpression{Field: "patient_id", Value: 1}); err != nil {
+		t.Fatalf("empty operator should default to eq, got %v", err)
+	}
+	// And compound must be rejected (only single-leaf eq supported).
+	_, _, err = obda.PlanQuery(b, "t1", spi.FilterExpression{And: []spi.FilterExpression{
+		{Field: "patient_id", Operator: "eq", Value: 1},
+	}})
+	if !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("And compound should return ErrInvalidMapping, got %v", err)
 	}
 }
 

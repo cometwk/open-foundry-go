@@ -3,7 +3,7 @@ version: 1
 reversible: false
 
 preconditions:
-  - expr: "book.status == 'ON_LOAN'"
+  - expr: "book.availableCopies < book.totalCopies"
     error: "That book is not currently on loan"
   - expr: "actor.hasRole('librarian') || actor.hasRole('admin')"
     error: "Only librarians may accept returns"
@@ -12,12 +12,18 @@ effects:
   - type: updateObject
     target: "book"
     set:
-      status: "AVAILABLE"
+      availableCopies: "book.availableCopies + 1"
+
+  - type: updateObject
+    target: "reader"
+    set:
+      currentBorrowCount: "reader.currentBorrowCount - 1"
 
   - type: deleteLink
-    linkType: "BorrowedBy"
+    linkType: "Borrows"
     filter:
-      from: "book"
+      from: "reader"
+      to: "book"
       active: true
     expect: ALL
 
