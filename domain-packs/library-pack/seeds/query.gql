@@ -1,0 +1,23 @@
+# List seed rows. IDs are Engine-minted UUIDv7, not demo.yaml refs.
+# Posted as {"query": <this file>} — same shape as runtime/e2e gql().
+
+{
+  books {
+    edges {
+      node {
+        id
+        isbn
+        title
+      }
+    }
+  }
+  members {
+    edges {
+      node {
+        id
+        name
+        memberNumber
+      }
+    }
+  }
+}

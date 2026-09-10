@@ -1,0 +1,18 @@
+query {
+  searchBooks(
+    query: "Dune"
+  ) {
+    totalCount
+    hasNextPage
+    hits {
+      score
+      node {
+        id
+        isbn
+        title
+        author
+        status
+      }
+    }
+  }
+}

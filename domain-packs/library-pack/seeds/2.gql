@@ -1,0 +1,10 @@
+query GetBookByTitle {
+  searchBooks(query: "Dune", fields: ["title"]) {
+    hits {
+      node {
+        id
+        title
+      }
+    }
+  }
+}

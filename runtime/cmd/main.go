@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 
@@ -39,9 +38,7 @@ var cmd = &cli.Command{
 	},
 	// 3. 根命令自身的 Action（仅当只敲 `./myapp` 且不加任何子命令时触发）
 	Action: func(ctx context.Context, cmd *cli.Command) error {
-		// fmt.Println("[根命令 Action] 未指定子命令，打印默认提示信息...")
-		// return cli.ShowAppHelp(cmd)
-		return run()
+		return run(ctx, ":4000")
 	},
 	Commands: []*cli.Command{
 		{
@@ -82,26 +79,36 @@ var cmd = &cli.Command{
 			},
 		},
 		{
-			Name:    "template",
+			Name:    "run",
 			Aliases: []string{"t"},
-			Usage:   "options for task templates",
-			Commands: []*cli.Command{
-				{
-					Name:  "add",
-					Usage: "add a new template",
-					Action: func(ctx context.Context, cmd *cli.Command) error {
-						fmt.Println("new task template: ", cmd.Args().First())
-						return nil
-					},
+			Usage:   "启动 GraphQL 与 REST HTTP 服务",
+			Flags: []cli.Flag{
+				&cli.StringFlag{
+					Name:  "addr",
+					Usage: "监听地址",
+					Value: ":4000",
+					Sources: cli.NewValueSourceChain(
+						cli.EnvVar("HTTP_ADDR"),
+					),
 				},
-				{
-					Name:  "remove",
-					Usage: "remove an existing template",
-					Action: func(ctx context.Context, cmd *cli.Command) error {
-						fmt.Println("removed task template: ", cmd.Args().First())
-						return nil
-					},
+			},
+			Action: func(ctx context.Context, cmd *cli.Command) error {
+				return run(ctx, cmd.String("addr"))
+			},
+		},
+		{
+			Name:    "sdl",
+			Aliases: []string{"g"},
+			Usage:   "打印 graphql schema",
+			Flags: []cli.Flag{
+				&cli.StringFlag{
+					Name:    "output",
+					Aliases: []string{"o"},
+					Usage:   "将 GraphQL schema 写到指定文件；省略则打印到 stdout",
 				},
+			},
+			Action: func(ctx context.Context, cmd *cli.Command) error {
+				return sdl(cmd.String("output"))
 			},
 		},
 	},

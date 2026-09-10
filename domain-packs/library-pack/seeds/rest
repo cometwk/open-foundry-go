@@ -1,0 +1,103 @@
+#!/bin/sh
+# GET /api/v1/{type}/{id} and /follow?path=... the way
+# runtime/e2e/graphql_rest_test.go rest() does: GET, tenant header, no body.
+set -e
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+BASE=${BASE:-http://localhost:4000}
+TENANT=${TENANT:-${SEED_TENANT:-system}}
+
+is_file() {
+	[ -f "$1" ] || [ -f "$DIR/$1" ]
+}
+
+resolve_file() {
+	case "$1" in
+	/*) printf '%s\n' "$1" ;;
+	*)
+		if [ -f "$1" ]; then
+			printf '%s\n' "$1"
+		else
+			printf '%s\n' "$DIR/$1"
+		fi
+		;;
+	esac
+}
+
+read_path_file() {
+	QFILE=$(resolve_file "$1")
+	if [ ! -f "$QFILE" ]; then
+		echo "missing $QFILE" >&2
+		exit 1
+	fi
+	# comments and blank lines ignored; first remaining line is the path
+	PATHSPEC=$(sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "$QFILE" | sed -n '1p')
+	if [ -z "$PATHSPEC" ]; then
+		echo "empty path in $QFILE" >&2
+		exit 1
+	fi
+	printf '%s\n' "$PATHSPEC"
+}
+
+case $# in
+0)
+	PATHSPEC=$(read_path_file query.rest)
+	;;
+1)
+	case "$1" in
+	/api/* | api/*)
+		PATHSPEC=$1
+		;;
+	*)
+		if is_file "$1"; then
+			PATHSPEC=$(read_path_file "$1")
+		else
+			PATHSPEC=$1
+		fi
+		;;
+	esac
+	;;
+2)
+	PATHSPEC=/api/v1/$1/$2
+	;;
+3)
+	case "$3" in
+	follow)
+		echo "usage: rest <type> <id> follow <path>" >&2
+		exit 1
+		;;
+	*)
+		PATHSPEC=/api/v1/$1/$2/follow?path=$3
+		;;
+	esac
+	;;
+4)
+	if [ "$3" != follow ]; then
+		echo "usage: rest <type> <id> follow <path>" >&2
+		exit 1
+	fi
+	PATHSPEC=/api/v1/$1/$2/follow?path=$4
+	;;
+*)
+	echo "usage: rest [file|/api/v1/...|<type> <id> [follow] <path>]" >&2
+	exit 1
+	;;
+esac
+
+case "$PATHSPEC" in
+http://* | https://*) URL=$PATHSPEC ;;
+/*) URL=$BASE$PATHSPEC ;;
+*) URL=$BASE/api/v1/$PATHSPEC ;;
+esac
+
+printf 'GET %s\nX-OpenFoundry-Tenant: %s\n\n' "$URL" "$TENANT" >&2
+
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
+code=$(curl -sS -o "$tmp" -w '%{http_code}' "$URL" \
+	-H "X-OpenFoundry-Tenant: $TENANT")
+
+printf 'HTTP %s\n\nresponse:\n' "$code" >&2
+if ! python3 -m json.tool <"$tmp" 2>/dev/null; then
+	cat "$tmp"
+	echo
+fi

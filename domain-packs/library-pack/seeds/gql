@@ -1,0 +1,39 @@
+#!/bin/sh
+# POST /graphql the way runtime/e2e/graphql_rest_test.go gql() does:
+# one anonymous query, ids inlined, body is only {"query": "..."}.
+set -e
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+BASE=${BASE:-http://localhost:4000}
+TENANT=${TENANT:-${SEED_TENANT:-system}}
+if [ -n "${1-}" ]; then
+	case "$1" in
+	/*) QFILE=$1 ;;
+	*)
+		if [ -f "$1" ]; then
+			QFILE=$1
+		else
+			QFILE=$DIR/$1
+		fi
+		;;
+	esac
+else
+	QFILE=$DIR/query.gql
+fi
+if [ ! -f "$QFILE" ]; then
+	echo "missing $QFILE" >&2
+	exit 1
+fi
+QUERY=$(cat "$QFILE")
+
+printf 'POST %s/graphql\nX-OpenFoundry-Tenant: %s\n\nquery:\n%s\n\n' "$BASE" "$TENANT" "$QUERY" >&2
+
+BODY=$(printf '%s' "$QUERY" | python3 -c 'import json,sys; print(json.dumps({"query": sys.stdin.read()}))')
+
+# printf '%s\n' "$BODY"
+
+printf 'response:\n' >&2
+curl -sS -X POST "$BASE/graphql" \
+	-H "Content-Type: application/json" \
+	-H "X-OpenFoundry-Tenant: $TENANT" \
+	-H "Authorization: Bearer ignored" \
+	--data-binary "$BODY" | python3 -m json.tool
