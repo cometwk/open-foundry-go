@@ -131,13 +131,7 @@ func PlanAggregate(b ObjectBinding, tenant string, groupBy []string, aggs []sqla
 	if tenant == "" {
 		return nil, nil, spi.ErrTenantRequired
 	}
-	known := map[string]struct{}{b.TenantColumn: {}}
-	for _, c := range b.IdentityColumns {
-		known[c] = struct{}{}
-	}
-	for _, c := range b.SelectColumns {
-		known[c] = struct{}{}
-	}
+	known := knownColumns(b)
 	args := []any{tenant}
 	where := eq(ident(b.TenantColumn), 1)
 	pred, extra, err := compileFilter(filter, known, 2)
@@ -165,13 +159,7 @@ func PlanQuery(b ObjectBinding, tenant string, filter spi.FilterExpression) (*sq
 	if tenant == "" {
 		return nil, nil, spi.ErrTenantRequired
 	}
-	known := map[string]struct{}{b.TenantColumn: {}}
-	for _, c := range b.IdentityColumns {
-		known[c] = struct{}{}
-	}
-	for _, c := range b.SelectColumns {
-		known[c] = struct{}{}
-	}
+	known := knownColumns(b)
 	args := []any{tenant}
 	where := eq(ident(b.TenantColumn), 1)
 	pred, extra, err := compileFilter(filter, known, 2)
@@ -497,6 +485,20 @@ func compileFilter(f spi.FilterExpression, known map[string]struct{}, next int) 
 }
 
 func ident(name string) sqlast.Identifier { return sqlast.Identifier{Name: name} }
+
+func knownColumns(b ObjectBinding) map[string]struct{} {
+	known := map[string]struct{}{}
+	if b.TenantColumn != "" {
+		known[b.TenantColumn] = struct{}{}
+	}
+	for _, c := range b.IdentityColumns {
+		known[c] = struct{}{}
+	}
+	for _, c := range b.SelectColumns {
+		known[c] = struct{}{}
+	}
+	return known
+}
 
 func cols(names []string) []sqlast.Expr {
 	out := make([]sqlast.Expr, len(names))
