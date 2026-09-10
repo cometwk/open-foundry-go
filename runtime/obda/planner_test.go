@@ -138,6 +138,30 @@ func TestPlanQueryUnknownField(t *testing.T) {
 	}
 }
 
+func TestPlanQueryUnsupportedOperator(t *testing.T) {
+	b := patientBinding()
+	// Non-eq operators must be rejected, not silently compiled as eq.
+	_, _, err := obda.PlanQuery(b, "t1", spi.FilterExpression{Field: "patient_id", Operator: "gt", Value: 1})
+	if !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("gt operator should return ErrInvalidMapping, got %v", err)
+	}
+	// "eq" operator passes.
+	if _, _, err := obda.PlanQuery(b, "t1", spi.FilterExpression{Field: "patient_id", Operator: "eq", Value: 1}); err != nil {
+		t.Fatalf("eq operator should pass, got %v", err)
+	}
+	// Empty operator defaults to eq and passes.
+	if _, _, err := obda.PlanQuery(b, "t1", spi.FilterExpression{Field: "patient_id", Value: 1}); err != nil {
+		t.Fatalf("empty operator should default to eq, got %v", err)
+	}
+	// And compound must be rejected (only single-leaf eq supported).
+	_, _, err = obda.PlanQuery(b, "t1", spi.FilterExpression{And: []spi.FilterExpression{
+		{Field: "patient_id", Operator: "eq", Value: 1},
+	}})
+	if !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("And compound should return ErrInvalidMapping, got %v", err)
+	}
+}
+
 func TestPlanGetLinksJoinUsesParams(t *testing.T) {
 	sel, args, err := obda.PlanGetLinksJoin(obda.LinkJoinBinding{
 		LinkTable:     "admission",

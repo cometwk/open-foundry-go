@@ -127,6 +127,9 @@ func translateFilter(m *obda.CompiledModel, f spi.FilterExpression) (spi.FilterE
 		if !ok {
 			return f, fmt.Errorf("%w: unknown filter field %q", spi.ErrInvalidMapping, f.Field)
 		}
+		if f.Operator != "" && f.Operator != "eq" {
+			return f, fmt.Errorf("%w: unsupported filter operator %q", spi.ErrInvalidMapping, f.Operator)
+		}
 		f.Field = cf.Column
 		return f, nil
 	}

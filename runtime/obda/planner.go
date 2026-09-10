@@ -443,6 +443,9 @@ func compileFilter(f spi.FilterExpression, known map[string]struct{}, next int) 
 		if _, ok := known[f.Field]; !ok {
 			return nil, nil, fmt.Errorf("%w: unknown filter field %q", spi.ErrInvalidMapping, f.Field)
 		}
+		if f.Operator != "" && f.Operator != "eq" {
+			return nil, nil, fmt.Errorf("%w: unsupported filter operator %q", spi.ErrInvalidMapping, f.Operator)
+		}
 		return eq(ident(f.Field), next), []any{f.Value}, nil
 	}
 	return nil, nil, fmt.Errorf("%w: unsupported filter", spi.ErrInvalidMapping)
