@@ -65,12 +65,13 @@ func (d fakeDialect) renderInsert(s *sqlast.Insert) (dialect.SQLStatement, error
 
 func patientBinding() obda.ObjectBinding {
 	return obda.ObjectBinding{
-		Table:           "patient",
-		TenantColumn:    "tenant_id",
-		IdentityColumns: []string{"patient_id"},
-		SelectColumns:   []string{"patient_id", "patient_name", "tenant_id"},
-		Writable:        true,
-		SearchIndex:     "patient_search",
+		Table:            "patient",
+		TenantColumn:     "tenant_id",
+		IdentityColumns:  []string{"patient_id"},
+		SelectColumns:    []string{"patient_id", "patient_name", "tenant_id"},
+		Writable:         true,
+		SearchIndex:      "patient_search",
+		SearchableFields: []string{"patient_name", "city_name"},
 	}
 }
 
@@ -105,8 +106,11 @@ func TestPlanSearchHasFullTextMatchWithoutFTSKeyword(t *testing.T) {
 	if _, ok := sel.Search.Query.(sqlast.Param); !ok {
 		t.Fatalf("query=%T", sel.Search.Query)
 	}
-	if len(args) != 2 {
-		t.Fatalf("args=%v", args)
+	if got, want := namesOf(sel.Search.Columns), []string{"patient_name", "city_name"}; !eqStringSlice(got, want) {
+		t.Fatalf("columns=%v want %v", got, want)
+	}
+	if len(args) != 3 || args[0] != "flu" || args[1] != "t1" || args[2] != "flu" {
+		t.Fatalf("args=%v want [query, tenant, query]", args)
 	}
 	out, err := fakeDialect{}.Render(sel)
 	if err != nil {
@@ -116,6 +120,35 @@ func TestPlanSearchHasFullTextMatchWithoutFTSKeyword(t *testing.T) {
 	if strings.Contains(low, "fts5") || strings.Contains(low, "match") {
 		t.Fatalf("search plan leaked FTS SQL: %s", out.SQL)
 	}
+}
+
+func TestPlanSearchEmptySearchableFields(t *testing.T) {
+	b := patientBinding()
+	b.SearchableFields = nil
+	_, _, err := obda.PlanSearch(b, "t1", "flu")
+	if !errors.Is(err, spi.ErrUnsupportedCapability) {
+		t.Fatalf("err=%v want ErrUnsupportedCapability", err)
+	}
+}
+
+func namesOf(ids []sqlast.Identifier) []string {
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = id.Name
+	}
+	return out
+}
+
+func eqStringSlice(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestPlanCreatePutsValuesInArgs(t *testing.T) {

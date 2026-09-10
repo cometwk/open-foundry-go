@@ -97,9 +97,8 @@ func (d *Dialect) renderSelect(s *sqlast.Select) (dialect.SQLStatement, error) {
 	if err != nil {
 		return dialect.SQLStatement{}, err
 	}
-	cols := "*"
+	parts := make([]string, 0, len(s.Columns)+1)
 	if len(s.Columns) > 0 {
-		parts := make([]string, 0, len(s.Columns))
 		for _, c := range s.Columns {
 			id, ok := c.(sqlast.Identifier)
 			if !ok {
@@ -111,6 +110,19 @@ func (d *Dialect) renderSelect(s *sqlast.Select) (dialect.SQLStatement, error) {
 			}
 			parts = append(parts, q)
 		}
+	}
+	if s.Search != nil {
+		match, err := renderMatchAgainst(s.Search)
+		if err != nil {
+			return dialect.SQLStatement{}, err
+		}
+		if len(parts) == 0 {
+			parts = append(parts, "*")
+		}
+		parts = append(parts, match+" AS `of_score`")
+	}
+	cols := "*"
+	if len(parts) > 0 {
 		cols = strings.Join(parts, ", ")
 	}
 	sql := "SELECT " + cols + " FROM " + from
@@ -132,21 +144,6 @@ func (d *Dialect) renderSelect(s *sqlast.Select) (dialect.SQLStatement, error) {
 			sql += " ON " + w
 		}
 	}
-	if s.Search != nil {
-		src, err := quote(s.Search.Source)
-		if err != nil {
-			return dialect.SQLStatement{}, err
-		}
-		sql += " WHERE MATCH (" + src + ") AGAINST (?)"
-		if s.Where != nil {
-			w, err := d.renderPred(s.Where)
-			if err != nil {
-				return dialect.SQLStatement{}, err
-			}
-			sql += " AND " + w
-		}
-		return dialect.SQLStatement{SQL: sql}, nil
-	}
 	if s.Where != nil {
 		w, err := d.renderPred(s.Where)
 		if err != nil {
@@ -154,9 +151,24 @@ func (d *Dialect) renderSelect(s *sqlast.Select) (dialect.SQLStatement, error) {
 		}
 		sql += " WHERE " + w
 	}
-	if len(s.Order) > 0 {
-		parts := make([]string, 0, len(s.Order))
-		for _, o := range s.Order {
+	if s.Search != nil {
+		match, err := renderMatchAgainst(s.Search)
+		if err != nil {
+			return dialect.SQLStatement{}, err
+		}
+		if s.Where != nil {
+			sql += " AND " + match
+		} else {
+			sql += " WHERE " + match
+		}
+	}
+	orders := s.Order
+	if s.Search != nil {
+		orders = append([]sqlast.Order{{Field: sqlast.Identifier{Name: "of_score"}, Desc: true}}, s.Order...)
+	}
+	if len(orders) > 0 {
+		orderParts := make([]string, 0, len(orders))
+		for _, o := range orders {
 			q, err := quote(o.Field)
 			if err != nil {
 				return dialect.SQLStatement{}, err
@@ -165,14 +177,31 @@ func (d *Dialect) renderSelect(s *sqlast.Select) (dialect.SQLStatement, error) {
 			if o.Desc {
 				dir = "DESC"
 			}
-			parts = append(parts, q+" "+dir)
+			orderParts = append(orderParts, q+" "+dir)
 		}
-		sql += " ORDER BY " + strings.Join(parts, ", ")
+		sql += " ORDER BY " + strings.Join(orderParts, ", ")
 	}
 	if s.Limit != nil {
 		sql += " LIMIT ? OFFSET ?"
 	}
 	return dialect.SQLStatement{SQL: sql}, nil
+}
+
+// renderMatchAgainst emits MATCH (`c1`, `c2`) AGAINST (?). Columns must be
+// non-empty; Source is ignored (sqlite still keys off Source).
+func renderMatchAgainst(m *sqlast.FullTextMatch) (string, error) {
+	if m == nil || len(m.Columns) == 0 {
+		return "", fmt.Errorf("%w: MATCH without columns", spi.ErrUnsupportedCapability)
+	}
+	parts := make([]string, 0, len(m.Columns))
+	for _, c := range m.Columns {
+		q, err := quote(c)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, q)
+	}
+	return "MATCH (" + strings.Join(parts, ", ") + ") AGAINST (?)", nil
 }
 
 func (d *Dialect) renderInsert(s *sqlast.Insert) (dialect.SQLStatement, error) {

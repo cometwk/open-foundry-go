@@ -95,24 +95,34 @@ func PlanDeleteObject(b ObjectBinding, tenant string, key []any) (*sqlast.Delete
 	return &sqlast.Delete{Table: ident(b.Table), Where: where}, args, nil
 }
 
-// PlanSearch builds a FullTextMatch against a logical search source.
+// PlanSearch builds a FullTextMatch against compiled searchable columns.
+// Guard is len(SearchableFields)==0 (SearchIndex is no longer filled by compile).
+//
+// Args are [query, tenant, query]: MySQL binds `?` in appearance order, and
+// the dialect emits MATCH in SELECT before the tenant predicate in WHERE, then
+// MATCH again in WHERE. The query value is therefore bound twice.
 func PlanSearch(b ObjectBinding, tenant, query string) (*sqlast.Select, []any, error) {
-	if b.SearchIndex == "" {
+	if len(b.SearchableFields) == 0 {
 		return nil, nil, spi.ErrUnsupportedCapability
 	}
 	if tenant == "" {
 		return nil, nil, spi.ErrTenantRequired
+	}
+	searchCols := make([]sqlast.Identifier, len(b.SearchableFields))
+	for i, c := range b.SearchableFields {
+		searchCols[i] = ident(c)
 	}
 	sel := &sqlast.Select{
 		From:    ident(b.Table),
 		Columns: cols(b.SelectColumns),
 		Where:   eq(ident(b.TenantColumn), 1),
 		Search: &sqlast.FullTextMatch{
-			Source: ident(b.SearchIndex),
-			Query:  sqlast.Param{Position: 2},
+			Source:  ident(b.SearchIndex),
+			Columns: searchCols,
+			Query:   sqlast.Param{Position: 2},
 		},
 	}
-	return sel, []any{tenant, query}, nil
+	return sel, []any{query, tenant, query}, nil
 }
 
 // PlanQuery selects with tenant and a compiled filter. Unknown fields fail before SQL.
