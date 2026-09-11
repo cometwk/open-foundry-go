@@ -170,7 +170,8 @@ func TestUpdateLinkOCCAndSoftDelete(t *testing.T) {
 func TestGetLinksAndTraverse(t *testing.T) {
 	p, _, readerID, bookID := activateLibrary(t, spi.CardinalityManyToMany)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	if _, err := p.CreateLink(ctx, "Borrows", readerID, bookID, nil); err != nil {
+	created, err := p.CreateLink(ctx, "Borrows", readerID, bookID, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
 	out, err := p.GetLinks(ctx, readerID, "Borrows", "outbound", nil)
@@ -179,6 +180,12 @@ func TestGetLinksAndTraverse(t *testing.T) {
 	}
 	if len(out.Items) != 1 {
 		t.Fatalf("outbound=%d", len(out.Items))
+	}
+	if out.Items[0][spi.FieldID] != created[spi.FieldID] {
+		t.Fatalf("outbound id=%v want link %v (host/peer id must not overwrite)", out.Items[0][spi.FieldID], created[spi.FieldID])
+	}
+	if out.Items[0][spi.LinkFieldFromID] != readerID || out.Items[0][spi.LinkFieldToID] != bookID {
+		t.Fatalf("outbound ends from=%v to=%v", out.Items[0][spi.LinkFieldFromID], out.Items[0][spi.LinkFieldToID])
 	}
 	in, err := p.GetLinks(ctx, bookID, "Borrows", "inbound", nil)
 	if err != nil {

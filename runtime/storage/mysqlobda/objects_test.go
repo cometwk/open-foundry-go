@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/openfoundry/runtime/spi"
 	"github.com/openfoundry/runtime/storage/mysqlobda"
@@ -64,6 +65,13 @@ func TestCreateGetSystemFieldsStable(t *testing.T) {
 	}
 	if got[spi.FieldVersion] != created[spi.FieldVersion] || again[spi.FieldCreatedAt] != got[spi.FieldCreatedAt] {
 		t.Fatalf("system fields drifted: %#v vs %#v", got, again)
+	}
+	createdAt, ok := got[spi.FieldCreatedAt].(string)
+	if !ok {
+		t.Fatalf("created_at type %T want string", got[spi.FieldCreatedAt])
+	}
+	if _, err := time.Parse(time.RFC3339, createdAt); err != nil {
+		t.Fatalf("created_at not RFC3339: %q %v", createdAt, err)
 	}
 }
 

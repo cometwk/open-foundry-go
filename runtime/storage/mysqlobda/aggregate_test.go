@@ -40,6 +40,12 @@ func TestAggregateFnsAndGrouping(t *testing.T) {
 	}
 	byLevel := map[string]spi.AggregateGroup{}
 	for _, g := range res.Groups {
+		if _, ok := g.Keys["of_tiebreak"]; ok {
+			t.Fatalf("of_tiebreak leaked into keys: %#v", g.Keys)
+		}
+		if _, ok := g.Values["of_tiebreak"]; ok {
+			t.Fatalf("of_tiebreak leaked into values: %#v", g.Values)
+		}
 		byLevel[g.Keys["membershipLevel"].(string)] = g
 	}
 	gold := byLevel["gold"]

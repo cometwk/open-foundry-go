@@ -85,18 +85,11 @@ func (p *Provider) SearchObjects(ctx spi.RequestContext, typ string, query spi.S
 	bizCols := m.Binding().SelectColumns
 	var hits []spi.SearchHit
 	for rows.Next() {
-		dest := make([]any, len(bizCols)+1)
-		ptrs := make([]any, len(dest))
-		for i := range dest {
-			ptrs[i] = &dest[i]
-		}
-		if err := rows.Scan(ptrs...); err != nil {
+		dest, err := scan(rows, len(bizCols)+1)
+		if err != nil {
 			return spi.SearchResult{}, err
 		}
-		biz := map[string]any{}
-		for i, col := range bizCols {
-			biz[col] = unwrap(dest[i])
-		}
+		biz := bizMap(dest, bizCols)
 		obj, err := p.assemble(m, ctx.TenantID, biz)
 		if err != nil {
 			return spi.SearchResult{}, err

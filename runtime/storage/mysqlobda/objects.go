@@ -413,22 +413,14 @@ func (p *Provider) loadBusiness(tx DBTX, m *obda.CompiledModel, tenant string, k
 	if err != nil {
 		return nil, err
 	}
-	dest := make([]any, len(b.SelectColumns))
-	ptrs := make([]any, len(dest))
-	for i := range dest {
-		ptrs[i] = &dest[i]
-	}
-	if err := tx.QueryRow(stmt.SQL, args...).Scan(ptrs...); err != nil {
+	dest, err := scan(tx.QueryRow(stmt.SQL, args...), len(b.SelectColumns))
+	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
 		return nil, mysqldialect.Classify(err)
 	}
-	out := map[string]any{}
-	for i, col := range b.SelectColumns {
-		out[col] = unwrap(dest[i])
-	}
-	return out, nil
+	return bizMap(dest, b.SelectColumns), nil
 }
 
 func (p *Provider) assemble(m *obda.CompiledModel, tenant string, biz map[string]any) (spi.OntologyObject, error) {
