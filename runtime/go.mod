@@ -14,6 +14,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/graph-gophers/graphql-go v1.8.0
 	modernc.org/sqlite v1.57.0
+	xorm.io/builder v0.3.13
 )
 
 require (
@@ -21,7 +22,6 @@ require (
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/syndtr/goleveldb v1.0.0 // indirect
-	xorm.io/builder v0.3.13 // indirect
 )
 
 require (
