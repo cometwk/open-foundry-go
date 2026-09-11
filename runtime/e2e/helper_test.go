@@ -3,6 +3,8 @@ package e2e_test
 import (
 	"database/sql"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/openfoundry/runtime/api"
@@ -21,7 +23,32 @@ import (
 const (
 	backendMemory = "memory"
 	backendMySQL  = "mysql"
+
+	dbModeFresh = "fresh"
+	dbModeInit  = "init"
+	dbModeReuse = "reuse"
 )
+
+func e2eDBMode() string {
+	testdb.LoadEnv()
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("E2E_DB_MODE")))
+	if v == "" {
+		return dbModeFresh
+	}
+	return v
+}
+
+func requireDBMode(t *testing.T) string {
+	t.Helper()
+	mode := e2eDBMode()
+	switch mode {
+	case dbModeFresh, dbModeInit, dbModeReuse:
+		return mode
+	default:
+		t.Fatalf("unknown E2E_DB_MODE=%q, want fresh, init, or reuse", mode)
+		return ""
+	}
+}
 
 // goldHTTPEnv is the shared GraphQL/REST gold-path fixture: real library
 // pack, storage provider (memory or MySQL), seeded simplified ABox, and
@@ -38,9 +65,32 @@ type goldHTTPEnv struct {
 }
 
 // setupGoldHTTP loads library-pack, picks memory vs MySQL from TEST_DB_URL,
-// applies schema, seeds seeds/simple.yaml, and starts the HTTP API.
+// prepares storage per E2E_DB_MODE, and starts the HTTP API.
 func setupGoldHTTP(t *testing.T) goldHTTPEnv {
 	t.Helper()
+	mode := requireDBMode(t)
+	if mode == dbModeInit {
+		t.Skip("E2E_DB_MODE=init is for TestInitGoldDB only")
+	}
+	env := prepareGoldStorage(t, mode)
+
+	srv, err := api.New(env.Engine)
+	if err != nil {
+		t.Fatalf("api.New err = %v", err)
+	}
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	env.Server = ts
+	return env
+}
+
+func prepareGoldStorage(t *testing.T, mode string) goldHTTPEnv {
+	t.Helper()
+	if mode == dbModeInit || mode == dbModeReuse {
+		if testdb.DSN() == "" {
+			t.Fatalf("E2E_DB_MODE=%s requires TEST_DB_URL", mode)
+		}
+	}
 
 	dir, err := pack.LibraryPackDir()
 	if err != nil {
@@ -53,7 +103,7 @@ func setupGoldHTTP(t *testing.T) goldHTTPEnv {
 	schema := projection.ProjectStorage(onto)
 	ctx := spi.RequestContext{TenantID: "gold", ActorID: "test"}
 
-	backend, provider := openLibraryStorage(t, dir, onto, schema)
+	backend, provider := openLibraryStorage(t, dir, onto, schema, mode)
 	mr, err := provider.ApplySchema(ctx, schema)
 	if err != nil || !mr.Success {
 		t.Fatalf("ApplySchema (%s) err = %v result = %+v", backend, err, mr)
@@ -63,14 +113,13 @@ func setupGoldHTTP(t *testing.T) goldHTTPEnv {
 	if err != nil {
 		t.Fatalf("engine.New err = %v", err)
 	}
-	ids := seedLibrary(t, eng, dir, ctx)
 
-	srv, err := api.New(eng)
-	if err != nil {
-		t.Fatalf("api.New err = %v", err)
+	var ids libraryIDs
+	if mode == dbModeReuse {
+		ids = lookupLibraryIDs(t, eng, ctx)
+	} else {
+		ids = seedLibrary(t, eng, dir, ctx)
 	}
-	ts := httptest.NewServer(srv.Handler())
-	t.Cleanup(ts.Close)
 
 	return goldHTTPEnv{
 		Backend:  backend,
@@ -80,13 +129,12 @@ func setupGoldHTTP(t *testing.T) goldHTTPEnv {
 		Engine:   eng,
 		Ctx:      ctx,
 		IDs:      ids,
-		Server:   ts,
 	}
 }
 
 // openLibraryStorage returns memory when TEST_DB_URL is unset; otherwise a
 // MySQL OBDA provider against the database named in TEST_DB_URL.
-func openLibraryStorage(t *testing.T, packDir string, onto *ir.Ontology, schema spi.OntologySchema) (string, spi.StorageProvider) {
+func openLibraryStorage(t *testing.T, packDir string, onto *ir.Ontology, schema spi.OntologySchema, mode string) (string, spi.StorageProvider) {
 	t.Helper()
 	if testdb.DSN() == "" {
 		return backendMemory, memory.New()
@@ -100,8 +148,19 @@ func openLibraryStorage(t *testing.T, packDir string, onto *ir.Ontology, schema 
 		t.Fatalf("library mappings = %d, want 1", len(mappings))
 	}
 	raw := mappings[0].Raw
-	db := testdb.Open(t)
-	mustInit(t, db, raw, schema)
+
+	var db *sql.DB
+	switch mode {
+	case dbModeReuse:
+		db = testdb.Connect(t)
+	case dbModeInit:
+		db = testdb.OpenKeep(t)
+		mustInit(t, db, raw, schema)
+	default:
+		db = testdb.Open(t)
+		mustInit(t, db, raw, schema)
+	}
+
 	p, err := mysqlobda.Open(db, raw, mysqlobda.Options{})
 	if err != nil {
 		t.Fatalf("mysqlobda.Open err = %v", err)
@@ -148,6 +207,11 @@ func seedLibrary(t *testing.T, e *engine.Engine, packDir string, ctx spi.Request
 	if result.CreatedObjects != 14 || result.CreatedLinks != 21 {
 		t.Fatalf("ApplySeeds = %+v, want 14 objects + 21 links (simplified seed)", result)
 	}
+	return lookupLibraryIDs(t, e, ctx)
+}
+
+func lookupLibraryIDs(t *testing.T, e *engine.Engine, ctx spi.RequestContext) libraryIDs {
+	t.Helper()
 	return libraryIDs{
 		xiaoHong: lookupBy(t, e, ctx, "Reader", "name", "小红"),
 		sapiens:  lookupBy(t, e, ctx, "Book", "title", "人类简史"),

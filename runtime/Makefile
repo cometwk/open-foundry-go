@@ -7,7 +7,10 @@ MYSQL_PACKAGES := ./storage/mysqlobda/... ./obda/dialect/mysql/...
 
 .PHONY: all test-mysql
 
-all: test-mysql
+all:run
+
+run:
+	cd ./cmd && go run . run
 
 # 执行 MySQL 模块测试
 test-mysql:

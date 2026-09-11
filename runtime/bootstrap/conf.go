@@ -6,6 +6,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/kelseyhightower/envconfig"
+	"github.com/openfoundry/runtime/internal/sqlopen"
 	"github.com/openfoundry/runtime/ir"
 	"github.com/openfoundry/runtime/pack"
 	"github.com/openfoundry/runtime/spi"
@@ -96,7 +97,7 @@ func Open(c *Conf) (*Bootstrap, error) {
 	if err != nil {
 		return nil, err
 	}
-	db, err := sql.Open(driver, c.DBURL)
+	db, err := sqlopen.Open(driver, c.DBURL)
 	if err != nil {
 		return nil, err
 	}
