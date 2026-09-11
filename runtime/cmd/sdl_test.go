@@ -24,7 +24,7 @@ func TestSDL_WritesFile(t *testing.T) {
 	conf = &bootstrap.Conf{
 		BaseDir:     base,
 		DomainPacks: "fixture",
-		DBDriver:    "sqlite",
+		DBDriver:    bootstrap.BackendMemory,
 	}
 	t.Cleanup(func() { conf = prev })
 

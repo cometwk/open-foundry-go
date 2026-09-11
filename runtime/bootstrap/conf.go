@@ -10,9 +10,8 @@ import (
 	"github.com/openfoundry/runtime/ir"
 	"github.com/openfoundry/runtime/pack"
 	"github.com/openfoundry/runtime/spi"
+	"github.com/openfoundry/runtime/storage/memory"
 	"github.com/openfoundry/runtime/storage/mysqlobda"
-	"github.com/openfoundry/runtime/storage/sqliteobda"
-	_ "modernc.org/sqlite"
 )
 
 type Conf struct {
@@ -22,7 +21,7 @@ type Conf struct {
 	// Ctx
 	TenantID   string `envconfig:"TENANT_ID" required:"true"`
 	SeedTenant string `envconfig:"SEED_TENANT"`
-	// 数据库
+	// 数据库：mysql（SQL，需 DB_URL）或 memory（进程内，无 DB_URL）
 	DBDriver         string `envconfig:"DB_DRIVER" default:"mysql"`
 	DBURL            string `envconfig:"DB_URL"`
 	DBMinConnections int    `envconfig:"DB_MIN_CONNECTIONS" default:"1"`
@@ -31,12 +30,9 @@ type Conf struct {
 	DBMigrate        string `envconfig:"DB_MIGRATE" default:"./migrations"`
 }
 
-type Dialect string
-
-func (s *Dialect) Decode(value string) error {
-	*s = Dialect(value)
-	return nil
-}
+// BackendMemory is the in-process DB_DRIVER value. It has no SQL dialect,
+// no DDL, and no DB_URL.
+const BackendMemory = "memory"
 
 func LoadConfig(configPath string) (*Conf, error) {
 	if err := LoadEnv(configPath); err != nil {
@@ -57,8 +53,8 @@ func LoadConfig(configPath string) (*Conf, error) {
 
 ///
 
-// Bootstrap is dialect-neutral assembly input. OpenSQLite binds SQLite;
-// a future MySQL entry point can share this shape without changing SPI.
+// Bootstrap is dialect-neutral assembly input. mysql binds mysqlobda over a
+// *sql.DB; memory binds the in-process provider with DB left nil.
 type Bootstrap struct {
 	Conf     *Conf
 	DB       *sql.DB
@@ -73,13 +69,6 @@ type Bootstrap struct {
 func Open(c *Conf) (*Bootstrap, error) {
 	if c == nil {
 		return nil, fmt.Errorf("bootstrap: conf required")
-	}
-	driver, err := SQLName(c.DBDriver)
-	if err != nil {
-		return nil, err
-	}
-	if c.DBURL == "" {
-		return nil, fmt.Errorf("bootstrap: DB_URL required")
 	}
 	dir := packDir(c)
 	onto, mappings, schema, err := LoadPack(dir)
@@ -97,13 +86,8 @@ func Open(c *Conf) (*Bootstrap, error) {
 	if err != nil {
 		return nil, err
 	}
-	db, err := sqlopen.Open(driver, c.DBURL)
+	db, p, err := openBackend(c, raw)
 	if err != nil {
-		return nil, err
-	}
-	p, err := openProvider(driver, db, raw)
-	if err != nil {
-		_ = db.Close()
 		return nil, err
 	}
 	return &Bootstrap{
@@ -118,13 +102,38 @@ func Open(c *Conf) (*Bootstrap, error) {
 	}, nil
 }
 
-func openProvider(driver string, db *sql.DB, raw []byte) (spi.StorageProvider, error) {
-	switch driver {
+// openBackend resolves DB_DRIVER to a provider. mysql opens a *sql.DB via
+// DB_URL; memory constructs the in-process provider with no database.
+func openBackend(c *Conf, raw []byte) (*sql.DB, spi.StorageProvider, error) {
+	switch c.DBDriver {
 	case SQLMySQL:
-		return mysqlobda.Open(db, raw, mysqlobda.Options{})
+		if c.DBURL == "" {
+			return nil, nil, fmt.Errorf("bootstrap: DB_URL required")
+		}
+		db, err := sqlopen.Open(SQLMySQL, c.DBURL)
+		if err != nil {
+			return nil, nil, err
+		}
+		p, err := mysqlobda.Open(db, raw, mysqlobda.Options{})
+		if err != nil {
+			_ = db.Close()
+			return nil, nil, err
+		}
+		return db, p, nil
+	case BackendMemory:
+		return nil, memory.New(), nil
 	default:
-		return sqliteobda.Open(db, raw, sqliteobda.Options{})
+		return nil, nil, fmt.Errorf("bootstrap: unsupported driver %q", c.DBDriver)
 	}
+}
+
+// Close releases the underlying database. The memory backend has none, so
+// Close is always safe to call.
+func (b *Bootstrap) Close() error {
+	if b == nil || b.DB == nil {
+		return nil
+	}
+	return b.DB.Close()
 }
 
 func (b *Bootstrap) ApplySchema() error {

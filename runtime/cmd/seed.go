@@ -17,7 +17,7 @@ func seed() error {
 		slog.Error("open failed", "error", err)
 		return err
 	}
-	defer b.DB.Close()
+	defer b.Close()
 
 	if err := b.ApplySchema(); err != nil {
 		slog.Error("apply schema failed", "error", err)

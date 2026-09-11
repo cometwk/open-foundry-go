@@ -48,7 +48,7 @@ var cmd = &cli.Command{
 			Flags: []cli.Flag{
 				&cli.StringFlag{
 					Name:  "dialect",
-					Usage: "打印用的 SQL 方言（mysql 或 sqlite）。默认用配置的 DB_DRIVER",
+					Usage: "打印用的 SQL 方言（mysql）。默认用配置的 DB_DRIVER",
 				},
 				&cli.StringFlag{
 					Name:    "output",

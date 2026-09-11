@@ -55,28 +55,28 @@ func openAPI() (http.Handler, func(), error) {
 		return nil, nil, err
 	}
 	if err := b.ApplySchema(); err != nil {
-		_ = b.DB.Close()
+		_ = b.Close()
 		slog.Error("apply schema failed", "error", err)
 		return nil, nil, err
 	}
 	compiled, err := compileMapping(b)
 	if err != nil {
-		_ = b.DB.Close()
+		_ = b.Close()
 		return nil, nil, err
 	}
 	e, err := engine.NewWithCompiled(b.SPI, b.Ontology, compiled)
 	if err != nil {
-		_ = b.DB.Close()
+		_ = b.Close()
 		slog.Error("engine.New failed", "error", err)
 		return nil, nil, err
 	}
 	srv, err := api.New(e)
 	if err != nil {
-		_ = b.DB.Close()
+		_ = b.Close()
 		slog.Error("api.New failed", "error", err)
 		return nil, nil, err
 	}
-	return srv.Handler(), func() { _ = b.DB.Close() }, nil
+	return srv.Handler(), func() { _ = b.Close() }, nil
 }
 
 func compileMapping(b *bootstrap.Bootstrap) (*obda.Compiled, error) {

@@ -1,22 +1,14 @@
 package bootstrap_test
 
 import (
-	"database/sql"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	_ "modernc.org/sqlite"
-
 	"github.com/openfoundry/runtime/bootstrap"
-	"github.com/openfoundry/runtime/ir"
-	"github.com/openfoundry/runtime/obda"
 	"github.com/openfoundry/runtime/pack"
-	"github.com/openfoundry/runtime/projection"
 	"github.com/openfoundry/runtime/spi"
-	"github.com/openfoundry/runtime/storage/sqliteobda"
 )
 
 const widgetODL = `extend schema @namespace(name: "test.pack", version: "0.1.0")
@@ -78,69 +70,29 @@ func writePack(t *testing.T, files map[string]string) string {
 	return dir
 }
 
-func loadPack(t *testing.T, dir string) (*ir.Ontology, []pack.Mapping) {
-	t.Helper()
-	onto, err := pack.LoadDir(dir)
-	if err != nil {
-		t.Fatalf("LoadDir: %v", err)
+func memoryConf(base string) *bootstrap.Conf {
+	return &bootstrap.Conf{
+		BaseDir:     base,
+		DomainPacks: "fixture",
+		TenantID:    "t1",
+		DBDriver:    bootstrap.BackendMemory,
 	}
-	mappings, err := pack.LoadMappings(dir, onto)
-	if err != nil {
-		t.Fatalf("LoadMappings: %v", err)
-	}
-	return onto, mappings
 }
 
-func openDB(t *testing.T) *sql.DB {
-	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "t.db")+"?_busy_timeout=5000")
+func TestOpen_MemoryRoundTrip(t *testing.T) {
+	base := t.TempDir()
+	writePackInto(t, base, "fixture")
+	b, err := bootstrap.Open(memoryConf(base))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close() })
-	return db
-}
-
-func mustInitMappings(t *testing.T, db *sql.DB, onto *ir.Ontology, mappings []pack.Mapping) {
-	t.Helper()
-	schema := projection.ProjectStorage(onto)
-	for _, m := range mappings {
-		compiled, err := obda.Compile(schema, m.Doc)
-		if err != nil {
-			t.Fatalf("Compile %s: %v", m.Path, err)
-		}
-		if err := sqliteobda.InitMappedSchema(db, compiled); err != nil {
-			t.Fatalf("InitMappedSchema %s: %v", m.Path, err)
-		}
-	}
-}
-
-func widgetPack(t *testing.T) (*ir.Ontology, []pack.Mapping) {
-	t.Helper()
-	dir := writePack(t, map[string]string{
-		"pack.yaml":             "name: fixture\nnamespace: test.pack\nschema:\n  - schema/models.odl\nobda:\n  - obda/widget.obda.yaml\n",
-		"schema/models.odl":     widgetODL,
-		"obda/widget.obda.yaml": modelMapping("Widget", "widget"),
-	})
-	return loadPack(t, dir)
-}
-
-func TestOpenSQLite_RoundTrip(t *testing.T) {
-	onto, mappings := widgetPack(t)
-	db := openDB(t)
-	mustInitMappings(t, db, onto, mappings)
-
-	p, err := bootstrap.OpenSQLite(bootstrap.Config{
-		DB:       db,
-		Ontology: onto,
-		Mappings: mappings,
-		TenantID: "t1",
-	})
-	if err != nil {
+	t.Cleanup(func() { _ = b.Close() })
+	if err := b.ApplySchema(); err != nil {
 		t.Fatal(err)
 	}
+
 	ctx := spi.RequestContext{TenantID: "t1"}
-	got, err := p.GetSchema(ctx, nil)
+	got, err := b.SPI.GetSchema(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +100,7 @@ func TestOpenSQLite_RoundTrip(t *testing.T) {
 		t.Fatalf("GetSchema empty: %+v", got)
 	}
 
-	created, err := p.CreateObject(ctx, "Widget", map[string]any{"name": "Ada"})
+	created, err := b.SPI.CreateObject(ctx, "Widget", map[string]any{"name": "Ada"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +108,7 @@ func TestOpenSQLite_RoundTrip(t *testing.T) {
 	if id == "" {
 		t.Fatalf("missing id: %#v", created)
 	}
-	fetched, err := p.GetObject(ctx, "Widget", id)
+	fetched, err := b.SPI.GetObject(ctx, "Widget", id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,149 +117,30 @@ func TestOpenSQLite_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestOpenSQLite_MergesTwoMappings(t *testing.T) {
-	dir := writePack(t, map[string]string{
-		"pack.yaml":             "name: fixture\nnamespace: test.pack\nschema:\n  - schema/models.odl\nobda:\n  - obda/widget.obda.yaml\n  - obda/gadget.obda.yaml\n",
-		"schema/models.odl":     widgetODL,
-		"obda/widget.obda.yaml": modelMapping("Widget", "widget"),
-		"obda/gadget.obda.yaml": modelMapping("Gadget", "gadget"),
-	})
-	onto, mappings := loadPack(t, dir)
-	if len(mappings) != 2 {
-		t.Fatalf("mappings=%d", len(mappings))
-	}
-	db := openDB(t)
-	mustInitMappings(t, db, onto, mappings)
-
-	p, err := bootstrap.OpenSQLite(bootstrap.Config{
-		DB:       db,
-		Ontology: onto,
-		Mappings: mappings,
-		TenantID: "t1",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := spi.RequestContext{TenantID: "t1"}
-	w, err := p.CreateObject(ctx, "Widget", map[string]any{"name": "W"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	g, err := p.CreateObject(ctx, "Gadget", map[string]any{"name": "G"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	gotW, err := p.GetObject(ctx, "Widget", w[spi.FieldID].(string))
-	if err != nil {
-		t.Fatal(err)
-	}
-	gotG, err := p.GetObject(ctx, "Gadget", g[spi.FieldID].(string))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gotW["name"] != "W" || gotG["name"] != "G" {
-		t.Fatalf("widget=%v gadget=%v", gotW["name"], gotG["name"])
-	}
-}
-
-func TestOpenSQLite_DuplicateModelOnMerge(t *testing.T) {
-	dir := writePack(t, map[string]string{
-		"pack.yaml":         "name: fixture\nnamespace: test.pack\nschema:\n  - schema/models.odl\n",
-		"schema/models.odl": widgetODL,
-	})
-	onto, err := pack.LoadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rawA := []byte(modelMapping("Widget", "widget_a"))
-	docA, err := obda.Parse(rawA)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rawB := []byte(modelMapping("Widget", "widget_b"))
-	docB, err := obda.Parse(rawB)
-	if err != nil {
-		t.Fatal(err)
-	}
-	db := openDB(t)
-	_, err = bootstrap.OpenSQLite(bootstrap.Config{
-		DB:       db,
-		Ontology: onto,
-		Mappings: []pack.Mapping{
-			{Path: "obda/a.obda.yaml", Raw: rawA, Doc: docA},
-			{Path: "obda/b.obda.yaml", Raw: rawB, Doc: docB},
-		},
-		TenantID: "t1",
-	})
-	if err == nil || !strings.Contains(err.Error(), "duplicate model") {
-		t.Fatalf("err = %v, want duplicate model", err)
-	}
-}
-
-func TestOpenSQLite_EmptyTenant(t *testing.T) {
-	onto, mappings := widgetPack(t)
-	db := openDB(t)
-	_, err := bootstrap.OpenSQLite(bootstrap.Config{
-		DB:       db,
-		Ontology: onto,
-		Mappings: mappings,
-	})
-	if !errors.Is(err, spi.ErrTenantRequired) {
-		t.Fatalf("err = %v, want ErrTenantRequired", err)
-	}
-}
-
-func TestOpenSQLite_NoMapping(t *testing.T) {
-	dir := writePack(t, map[string]string{
-		"pack.yaml":         "name: fixture\nnamespace: test.pack\nschema:\n  - schema/models.odl\n",
-		"schema/models.odl": widgetODL,
-	})
-	onto, mappings := loadPack(t, dir)
-	if mappings != nil {
-		t.Fatalf("undeclared obda: got %#v", mappings)
-	}
-	db := openDB(t)
-	_, err := bootstrap.OpenSQLite(bootstrap.Config{
-		DB:       db,
-		Ontology: onto,
-		Mappings: mappings,
-		TenantID: "t1",
-	})
-	if err == nil || !strings.Contains(err.Error(), "no OBDA mapping") {
-		t.Fatalf("err = %v, want no OBDA mapping", err)
-	}
-}
-
-func TestOpenSQLite_SupplyChainRoundTrip(t *testing.T) {
+func TestOpen_MemorySupplyChainRoundTrip(t *testing.T) {
 	dir, err := pack.SupplyChainDir()
 	if err != nil {
 		t.Fatal(err)
 	}
-	onto, err := pack.LoadDir(dir)
-	if err != nil {
-		t.Fatalf("LoadDir: %v", err)
+	// SupplyChainDir = <repo-root>/domain-packs/supply-chain; packDir joins
+	// BaseDir/domain-packs/<name>, so BaseDir is the repo root.
+	c := &bootstrap.Conf{
+		BaseDir:     filepath.Dir(filepath.Dir(dir)),
+		DomainPacks: filepath.Base(dir),
+		TenantID:    "t1",
+		DBDriver:    bootstrap.BackendMemory,
 	}
-	mappings, err := pack.LoadMappings(dir, onto)
-	if err != nil {
-		t.Fatalf("LoadMappings: %v", err)
-	}
-	if len(mappings) != 1 {
-		t.Fatalf("mappings=%d", len(mappings))
-	}
-	db := openDB(t)
-	mustInitMappings(t, db, onto, mappings)
-
-	p, err := bootstrap.OpenSQLite(bootstrap.Config{
-		DB:       db,
-		Ontology: onto,
-		Mappings: mappings,
-		TenantID: "t1",
-	})
+	b, err := bootstrap.Open(c)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = b.Close() })
+	if err := b.ApplySchema(); err != nil {
+		t.Fatal(err)
+	}
+
 	ctx := spi.RequestContext{TenantID: "t1"}
-	schema, err := p.GetSchema(ctx, nil)
+	schema, err := b.SPI.GetSchema(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +148,7 @@ func TestOpenSQLite_SupplyChainRoundTrip(t *testing.T) {
 		t.Fatalf("object types=%d want 6", len(schema.ObjectTypes))
 	}
 
-	created, err := p.CreateObject(ctx, "Supplier", map[string]any{
+	created, err := b.SPI.CreateObject(ctx, "Supplier", map[string]any{
 		"name":    "Acme",
 		"code":    "ACME",
 		"tier":    "STRATEGIC",
@@ -328,7 +161,7 @@ func TestOpenSQLite_SupplyChainRoundTrip(t *testing.T) {
 	if id == "" {
 		t.Fatalf("missing id: %#v", created)
 	}
-	got, err := p.GetObject(ctx, "Supplier", id)
+	got, err := b.SPI.GetObject(ctx, "Supplier", id)
 	if err != nil {
 		t.Fatal(err)
 	}

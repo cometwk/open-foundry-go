@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -21,21 +22,25 @@ func TestRun_NilConf(t *testing.T) {
 }
 
 func TestRun_ServesGraphQL(t *testing.T) {
-	base, dbPath := writeSeedFixture(t)
+	// Full-stack flow spans two processes-in-one (seed() then openAPI()), each
+	// doing its own bootstrap.Open — only a persistent backend shares state.
+	// Memory full-stack coverage lives in runtime/e2e instead.
+	dsn := os.Getenv("TEST_DB_URL")
+	if dsn == "" {
+		t.Skip("TEST_DB_URL unset; MySQL full-stack test skipped")
+	}
+	base, _ := writeSeedFixture(t)
 	prev := conf
 	conf = &bootstrap.Conf{
 		BaseDir:     base,
 		DomainPacks: "fixture",
 		TenantID:    "t1",
 		SeedTenant:  "default",
-		DBDriver:    "sqlite",
-		DBURL:       dbPath,
+		DBDriver:    "mysql",
+		DBURL:       dsn,
 	}
 	t.Cleanup(func() { conf = prev })
 
-	if err := ddl("", "", true, false); err != nil {
-		t.Fatal(err)
-	}
 	if err := seed(); err != nil {
 		t.Fatal(err)
 	}
