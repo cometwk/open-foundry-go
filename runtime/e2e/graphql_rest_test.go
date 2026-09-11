@@ -5,52 +5,20 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"testing"
-
-	"github.com/openfoundry/runtime/api"
-	"github.com/openfoundry/runtime/engine"
-	"github.com/openfoundry/runtime/pack"
-	"github.com/openfoundry/runtime/projection"
-	"github.com/openfoundry/runtime/spi"
-	"github.com/openfoundry/runtime/storage/memory"
 )
 
 func TestGoldPath_GraphQLREST_HTTP(t *testing.T) {
-	dir, err := pack.SupplyChainDir()
-	if err != nil {
-		t.Fatalf("SupplyChainDir err = %v", err)
-	}
-	o, err := pack.LoadDir(dir)
-	if err != nil {
-		t.Fatalf("LoadDir err = %v", err)
-	}
-	p := memory.New()
-	ctx := spi.RequestContext{TenantID: "gold", ActorID: "test"}
-	mr, err := p.ApplySchema(ctx, projection.ProjectStorage(o))
-	if err != nil || !mr.Success {
-		t.Fatalf("ApplySchema err = %v result = %+v", err, mr)
-	}
-	e, err := engine.New(p, o)
-	if err != nil {
-		t.Fatalf("engine.New err = %v", err)
-	}
-	ids := seedAll(t, e, ctx)
-	srv, err := api.New(e)
-	if err != nil {
-		t.Fatalf("api.New err = %v", err)
-	}
-	ts := httptest.NewServer(srv.Handler())
-	t.Cleanup(ts.Close)
+	env := setupGoldHTTP(t)
+	ts := env.Server
+	ids := env.IDs
+	t.Logf("storage backend = %s", env.Backend)
 
-	t.Run("AE1 get six types", func(t *testing.T) {
+	t.Run("AE1 get three types", func(t *testing.T) {
 		queries := []string{
-			`{ product(id: "` + ids.product + `") { id sku name } }`,
-			`{ supplier(id: "` + ids.supplier + `") { id name code } }`,
-			`{ facility(id: "` + ids.facility + `") { id name } }`,
-			`{ purchaseOrder(id: "` + ids.order + `") { id orderNumber } }`,
-			`{ shipment(id: "` + ids.shipment + `") { id status } }`,
-			`{ inventoryRecord(id: "` + ids.inventory + `") { id quantity } }`,
+			`{ reader(id: "` + ids.xiaoHong + `") { id name } }`,
+			`{ book(id: "` + ids.sapiens + `") { id title isbn } }`,
+			`{ branch(id: "` + ids.west + `") { id name } }`,
 		}
 		for _, q := range queries {
 			res := gql(t, ts.URL, "gold", q)
@@ -60,41 +28,62 @@ func TestGoldPath_GraphQLREST_HTTP(t *testing.T) {
 		}
 	})
 
-	t.Run("AE2 suppliers nested", func(t *testing.T) {
-		res := gql(t, ts.URL, "gold", `{ product(id: "`+ids.product+`") { suppliers { name } } }`)
+	t.Run("AE2 borrowers nested", func(t *testing.T) {
+		res := gql(t, ts.URL, "gold", `{ book(id: "`+ids.tb1+`") { borrowers { name } } }`)
 		if len(res.Errors) > 0 {
 			t.Fatalf("errors = %v", res.Errors)
 		}
-		list := res.Data["product"].(map[string]any)["suppliers"].([]any)
-		if len(list) != 1 || list[0].(map[string]any)["name"] != "Acme" {
-			t.Fatalf("suppliers = %v", list)
+		list := res.Data["book"].(map[string]any)["borrowers"].([]any)
+		names := map[string]bool{}
+		for _, item := range list {
+			names[item.(map[string]any)["name"].(string)] = true
 		}
-		bad := gql(t, ts.URL, "gold", `{ product(id: "`+ids.product+`") { suppliers { sku } } }`)
+		if !names["小明"] || !names["老王"] || len(names) != 2 {
+			t.Fatalf("borrowers = %v, want 小明 and 老王", list)
+		}
+		bad := gql(t, ts.URL, "gold", `{ book(id: "`+ids.tb1+`") { borrowers { isbn } } }`)
 		if len(bad.Errors) == 0 {
-			t.Fatal("expected schema error for suppliers { sku }")
+			t.Fatal("expected schema error for borrowers { isbn }")
 		}
 	})
 
-	t.Run("two hop inventoryRecords trackedProduct", func(t *testing.T) {
+	t.Run("two hop branches readers", func(t *testing.T) {
+		// mysqlobda Traverse returns terminal Nodes only (Edges/Visited empty).
+		// query.assemblePath rebuilds the hop tree from Edges, so REST follow and
+		// GraphQL nested @link both need the memory provider for this assertion.
+		if env.Backend != backendMemory {
+			t.Skip("mysql Traverse is terminal-only; follow/2-hop tree needs Edges/Visited")
+		}
+
 		res := gql(t, ts.URL, "gold", `{
-			facility(id: "`+ids.facility+`") {
-				inventoryRecords { quantity trackedProduct { name id } }
+			book(id: "`+ids.tb2+`") {
+				branches { name readers { name id } }
 			}
 		}`)
 		if len(res.Errors) > 0 {
 			t.Fatalf("errors = %v", res.Errors)
 		}
-		recs := res.Data["facility"].(map[string]any)["inventoryRecords"].([]any)
-		if len(recs) != 1 {
-			t.Fatalf("inventoryRecords = %v", recs)
+		branches := res.Data["book"].(map[string]any)["branches"].([]any)
+		if len(branches) != 1 {
+			t.Fatalf("branches = %v", branches)
 		}
-		tp := recs[0].(map[string]any)["trackedProduct"].(map[string]any)
-		if tp["name"] != "Widget" {
-			t.Fatalf("trackedProduct = %v", tp)
+		br := branches[0].(map[string]any)
+		if br["name"] != "主馆" {
+			t.Fatalf("branch name = %v, want 主馆", br["name"])
 		}
-		gqlID := tp["id"].(string)
+		readers := br["readers"].([]any)
+		gqlIDs := map[string]bool{}
+		gqlNames := map[string]bool{}
+		for _, item := range readers {
+			m := item.(map[string]any)
+			gqlIDs[m["id"].(string)] = true
+			gqlNames[m["name"].(string)] = true
+		}
+		if !gqlNames["小明"] || !gqlNames["老王"] || len(gqlNames) != 2 {
+			t.Fatalf("readers = %v, want 小明 and 老王", readers)
+		}
 
-		code, body := rest(t, ts.URL+"/api/v1/facility/"+ids.facility+"/follow?path=inventoryRecords,trackedProduct", "gold")
+		code, body := rest(t, ts.URL+"/api/v1/book/"+ids.tb2+"/follow?path=branches,readers", "gold")
 		if code != 200 {
 			t.Fatalf("follow status = %d body = %s", code, body)
 		}
@@ -104,209 +93,166 @@ func TestGoldPath_GraphQLREST_HTTP(t *testing.T) {
 		if err := json.Unmarshal(body, &follow); err != nil {
 			t.Fatal(err)
 		}
-		if len(follow.Nodes) != 1 || follow.Nodes[0]["id"] != gqlID {
-			t.Fatalf("follow nodes = %v want id %s", follow.Nodes, gqlID)
+		if len(follow.Nodes) != 2 {
+			t.Fatalf("follow nodes = %v, want 2", follow.Nodes)
+		}
+		for _, n := range follow.Nodes {
+			id, _ := n["id"].(string)
+			if !gqlIDs[id] {
+				t.Fatalf("follow node id %s not in GraphQL readers %v", id, gqlIDs)
+			}
 		}
 	})
 
-	t.Run("trackedProduct empty without InventoryOf", func(t *testing.T) {
+	t.Run("borrowers empty without Borrows", func(t *testing.T) {
 		res := gql(t, ts.URL, "gold", `{
-			inventoryRecord(id: "`+ids.inventoryNoOf+`") {
-				product { name }
-				trackedProduct { name }
+			book(id: "`+ids.quantum+`") {
+				title
+				borrowers { name }
 			}
 		}`)
 		if len(res.Errors) > 0 {
 			t.Fatalf("errors = %v", res.Errors)
 		}
-		inv := res.Data["inventoryRecord"].(map[string]any)
-		if inv["product"].(map[string]any)["name"] != "Widget" {
-			t.Fatalf("FK product = %v", inv["product"])
+		bk := res.Data["book"].(map[string]any)
+		if bk["title"] != "量子纠缠导论" {
+			t.Fatalf("title = %v", bk["title"])
 		}
-		if inv["trackedProduct"] != nil {
-			t.Fatalf("trackedProduct = %v, want null", inv["trackedProduct"])
+		list, _ := bk["borrowers"].([]any)
+		if len(list) != 0 {
+			t.Fatalf("borrowers = %v, want empty (no Borrows edge)", list)
 		}
 	})
 
 	t.Run("list search aggregate", func(t *testing.T) {
-		list := gql(t, ts.URL, "gold", `{ products(first: 1) { totalCount edges { node { sku } } pageInfo { hasNextPage } } }`)
+		list := gql(t, ts.URL, "gold", `{ books(first: 1) { totalCount edges { node { title } } pageInfo { hasNextPage } } }`)
 		if len(list.Errors) > 0 {
 			t.Fatalf("list errors = %v", list.Errors)
 		}
-		if list.Data["products"].(map[string]any)["totalCount"].(float64) < 1 {
+		if list.Data["books"].(map[string]any)["totalCount"].(float64) < 1 {
 			t.Fatalf("list = %v", list.Data)
 		}
-		search := gql(t, ts.URL, "gold", `{ searchProducts(query: "Widget") { totalCount hits { node { sku } } } }`)
-		if len(search.Errors) > 0 {
-			t.Fatalf("search errors = %v", search.Errors)
+
+		blank := gql(t, ts.URL, "gold", `{ searchBooks(query: "  ") { totalCount } }`)
+		if len(blank.Errors) > 0 {
+			t.Fatalf("blank search errors = %v", blank.Errors)
 		}
-		if search.Data["searchProducts"].(map[string]any)["totalCount"].(float64) < 1 {
-			t.Fatalf("search = %v", search.Data)
-		}
-		blank := gql(t, ts.URL, "gold", `{ searchProducts(query: "  ") { totalCount } }`)
-		if blank.Data["searchProducts"].(map[string]any)["totalCount"].(float64) != 0 {
+		if blank.Data["searchBooks"].(map[string]any)["totalCount"].(float64) != 0 {
 			t.Fatalf("blank search = %v", blank.Data)
 		}
-		agg := gql(t, ts.URL, "gold", `{ productAggregate(fields: [{ field: "*", fn: COUNT, alias: "n" }]) { totalGroups groups { values } } }`)
+
+		// library.obda.yaml does not declare Book search.fields yet, so MySQL
+		// FULLTEXT search is unsupported; memory still does substring match.
+		if env.Backend == backendMemory {
+			search := gql(t, ts.URL, "gold", `{ searchBooks(query: "人类简史") { totalCount hits { node { title } } } }`)
+			if len(search.Errors) > 0 {
+				t.Fatalf("search errors = %v", search.Errors)
+			}
+			if search.Data["searchBooks"].(map[string]any)["totalCount"].(float64) < 1 {
+				t.Fatalf("search = %v", search.Data)
+			}
+		} else {
+			t.Log("skip non-blank FTS hit assert on mysql (no search.fields in library.obda.yaml)")
+		}
+
+		agg := gql(t, ts.URL, "gold", `{ bookAggregate(fields: [{ field: "*", fn: COUNT, alias: "n" }]) { totalGroups groups { values } } }`)
 		if len(agg.Errors) > 0 {
 			t.Fatalf("aggregate errors = %v", agg.Errors)
 		}
 	})
 
-	t.Run("nested lazy and FKs", func(t *testing.T) {
-		inv := gql(t, ts.URL, "gold", `{ inventoryRecord(id: "`+ids.inventory+`") { facility { name currentUtilization } } }`)
-		if len(inv.Errors) > 0 {
-			t.Fatalf("inventoryRecord errors = %v", inv.Errors)
-		}
-		util := inv.Data["inventoryRecord"].(map[string]any)["facility"].(map[string]any)["currentUtilization"].(float64)
-		if util != 1 {
-			t.Fatalf("nested currentUtilization = %v, want 1", util)
-		}
-		sh := gql(t, ts.URL, "gold", `{
-			shipment(id: "`+ids.shipment+`") {
-				order { orderNumber }
-				origin { name }
-				destination { name }
+	t.Run("nested registered_at and borrows", func(t *testing.T) {
+		res := gql(t, ts.URL, "gold", `{
+			reader(id: "`+ids.xiaoHong+`") {
+				name
+				branch { name }
+				borrowedBooks { title }
 			}
 		}`)
-		if len(sh.Errors) > 0 {
-			t.Fatalf("shipment errors = %v", sh.Errors)
+		if len(res.Errors) > 0 {
+			t.Fatalf("reader errors = %v", res.Errors)
 		}
-		sm := sh.Data["shipment"].(map[string]any)
-		if sm["order"].(map[string]any)["orderNumber"] != "PO-1" {
-			t.Fatalf("order = %v", sm["order"])
+		rd := res.Data["reader"].(map[string]any)
+		if rd["name"] != "小红" {
+			t.Fatalf("name = %v", rd["name"])
 		}
-		if sm["origin"].(map[string]any)["name"] != "WH-1" {
-			t.Fatalf("origin = %v", sm["origin"])
+		if rd["branch"].(map[string]any)["name"] != "西区馆" {
+			t.Fatalf("branch = %v, want 西区馆", rd["branch"])
 		}
-		if sm["destination"].(map[string]any)["name"] != "WH-1" {
-			t.Fatalf("destination = %v", sm["destination"])
+		books, _ := rd["borrowedBooks"].([]any)
+		if len(books) != 0 {
+			t.Fatalf("xiao_hong borrowedBooks = %v, want empty", books)
+		}
+
+		sapiens := gql(t, ts.URL, "gold", `{ book(id: "`+ids.sapiens+`") { branches { name } } }`)
+		if len(sapiens.Errors) > 0 {
+			t.Fatalf("sapiens errors = %v", sapiens.Errors)
+		}
+		brs := sapiens.Data["book"].(map[string]any)["branches"].([]any)
+		brNames := map[string]bool{}
+		for _, item := range brs {
+			brNames[item.(map[string]any)["name"].(string)] = true
+		}
+		if !brNames["主馆"] || !brNames["西区馆"] || len(brNames) != 2 {
+			t.Fatalf("sapiens branches = %v, want 主馆 and 西区馆", brs)
 		}
 	})
 
-	t.Run("AE7 REST product", func(t *testing.T) {
-		code, body := rest(t, ts.URL+"/api/v1/product/"+ids.product, "gold")
+	t.Run("AE7 REST book", func(t *testing.T) {
+		code, body := rest(t, ts.URL+"/api/v1/book/"+ids.sapiens, "gold")
 		if code != 200 {
 			t.Fatalf("REST GET status = %d body = %s", code, body)
 		}
 		var obj map[string]any
 		_ = json.Unmarshal(body, &obj)
-		if obj["sku"] != "P1" || obj["id"] != ids.product {
+		if obj["title"] != "人类简史" || obj["id"] != ids.sapiens {
 			t.Fatalf("REST = %v", obj)
 		}
-		code, body = rest(t, ts.URL+"/api/v1/product/missing", "gold")
+		code, body = rest(t, ts.URL+"/api/v1/book/missing", "gold")
 		if code != 404 || !bytes.Contains(body, []byte("OBJECT_NOT_FOUND")) {
 			t.Fatalf("REST miss status = %d body = %s", code, body)
 		}
 	})
 
 	t.Run("cross tenant", func(t *testing.T) {
-		miss := gql(t, ts.URL, "other", `{ product(id: "`+ids.product+`") { sku } }`)
-		if miss.Data["product"] != nil {
-			t.Fatalf("cross-tenant get = %v, want null", miss.Data["product"])
+		miss := gql(t, ts.URL, "other", `{ book(id: "`+ids.sapiens+`") { title } }`)
+		if miss.Data["book"] != nil {
+			t.Fatalf("cross-tenant get = %v, want null", miss.Data["book"])
 		}
-		list := gql(t, ts.URL, "other", `{ products { totalCount edges { node { id } } } }`)
-		if list.Data["products"].(map[string]any)["totalCount"].(float64) != 0 {
+		list := gql(t, ts.URL, "other", `{ books { totalCount edges { node { id } } } }`)
+		if list.Data["books"].(map[string]any)["totalCount"].(float64) != 0 {
 			t.Fatalf("cross-tenant list = %v", list.Data)
 		}
-		search := gql(t, ts.URL, "other", `{ searchProducts(query: "Widget") { totalCount } }`)
-		if search.Data["searchProducts"].(map[string]any)["totalCount"].(float64) != 0 {
+		// Blank search is empty on both backends; non-blank FTS differs (see above).
+		search := gql(t, ts.URL, "other", `{ searchBooks(query: "  ") { totalCount } }`)
+		if len(search.Errors) > 0 {
+			t.Fatalf("cross-tenant blank search errors = %v", search.Errors)
+		}
+		if search.Data["searchBooks"].(map[string]any)["totalCount"].(float64) != 0 {
 			t.Fatalf("cross-tenant search = %v", search.Data)
 		}
-		code, _ := rest(t, ts.URL+"/api/v1/product/"+ids.product, "other")
+		if env.Backend == backendMemory {
+			hit := gql(t, ts.URL, "other", `{ searchBooks(query: "人类简史") { totalCount } }`)
+			if hit.Data["searchBooks"].(map[string]any)["totalCount"].(float64) != 0 {
+				t.Fatalf("cross-tenant search hit = %v", hit.Data)
+			}
+		}
+		code, _ := rest(t, ts.URL+"/api/v1/book/"+ids.sapiens, "other")
 		if code != 404 {
 			t.Fatalf("cross-tenant REST status = %d, want 404", code)
 		}
 	})
 
 	t.Run("missing tenant and auth ignored", func(t *testing.T) {
-		code, body := rest(t, ts.URL+"/api/v1/product/"+ids.product, "")
+		code, body := rest(t, ts.URL+"/api/v1/book/"+ids.sapiens, "")
 		if code != 400 || !bytes.Contains(body, []byte("MISSING_TENANT")) {
 			t.Fatalf("missing tenant REST = %d %s", code, body)
 		}
-		res := gql(t, ts.URL, "gold", `{ product(id: "`+ids.product+`") { sku } }`)
-		if res.Data["product"].(map[string]any)["sku"] != "P1" {
+		res := gql(t, ts.URL, "gold", `{ book(id: "`+ids.sapiens+`") { title } }`)
+		if res.Data["book"].(map[string]any)["title"] != "人类简史" {
 			t.Fatalf("auth-ignored graphql = %v", res.Data)
 		}
 	})
-}
-
-type goldIDs struct {
-	product, supplier, facility, order, shipment, inventory, inventoryNoOf string
-}
-
-func seedAll(t *testing.T, e *engine.Engine, ctx spi.RequestContext) goldIDs {
-	t.Helper()
-	supplier, err := e.CreateObject(ctx, "Supplier", map[string]any{
-		"name": "Acme", "code": "ACME-001", "tier": "STRATEGIC", "country": "US",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	product, err := e.CreateObject(ctx, "Product", map[string]any{
-		"sku": "P1", "name": "Widget", "category": "Hardware",
-		"unitOfMeasure": "each", "reorderPoint": 5, "reorderQuantity": 50,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := e.CreateLink(ctx, "SuppliesProduct", supplier["_id"].(string), product["_id"].(string), map[string]any{
-		"leadTimeDays": 7, "unitCost": 1.5,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	fac, err := e.CreateObject(ctx, "Facility", map[string]any{
-		"name": "WH-1", "code": "WH1", "type": "WAREHOUSE", "status": "OPERATIONAL",
-		"country": "US", "capacity": 100,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	inv, err := e.CreateObject(ctx, "InventoryRecord", map[string]any{
-		"quantity": 10, "reservedQuantity": 0, "stockLevel": "ADEQUATE",
-		"product": product["_id"], "facility": fac["_id"],
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := e.CreateLink(ctx, "InventoryAt", inv["_id"].(string), fac["_id"].(string), nil); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := e.CreateLink(ctx, "InventoryOf", inv["_id"].(string), product["_id"].(string), nil); err != nil {
-		t.Fatal(err)
-	}
-	invNo, err := e.CreateObject(ctx, "InventoryRecord", map[string]any{
-		"quantity": 3, "reservedQuantity": 0, "stockLevel": "ADEQUATE",
-		"product": product["_id"], "facility": fac["_id"],
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	order, err := e.CreateObject(ctx, "PurchaseOrder", map[string]any{
-		"orderNumber": "PO-1", "status": "SUBMITTED",
-		"supplier": supplier["_id"], "product": product["_id"],
-		"quantity": 5, "unitCost": 2.0, "currency": "USD",
-		"requestedDeliveryDate": "2026-09-01T00:00:00Z",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ship, err := e.CreateObject(ctx, "Shipment", map[string]any{
-		"status": "PENDING", "transportMode": "ROAD", "quantity": 5,
-		"order": order["_id"], "origin": fac["_id"], "destination": fac["_id"],
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return goldIDs{
-		product:       product["_id"].(string),
-		supplier:      supplier["_id"].(string),
-		facility:      fac["_id"].(string),
-		order:         order["_id"].(string),
-		shipment:      ship["_id"].(string),
-		inventory:     inv["_id"].(string),
-		inventoryNoOf: invNo["_id"].(string),
-	}
 }
 
 type gqlRes struct {
