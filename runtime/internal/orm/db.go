@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	_ "xorm.io/builder"
 	"xorm.io/xorm"
 )
 
