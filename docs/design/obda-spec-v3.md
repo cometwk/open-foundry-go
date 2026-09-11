@@ -176,6 +176,7 @@ SQL
 
 ```text
 sqliteobda  →  runtime/obda  →  dialect.Dialect  ←  dialect/sqlite
+mysqlobda   →  runtime/obda  →  dialect.Dialect  ←  dialect/mysql
 ```
 
 | 包 | 职责 | MUST NOT |
@@ -185,6 +186,8 @@ sqliteobda  →  runtime/obda  →  dialect.Dialect  ←  dialect/sqlite
 | `runtime/obda/dialect` | `Dialect` 接口与 `SQLStatement{SQL, Args}` | 绑定某一驱动 |
 | `runtime/obda/dialect/sqlite` | 双引号 quoting、Render、introspect、**mapped-table** DDL 辅助、FTS helper、`Classify`、`NormalizeValue` | 生成 `of_*`；重定义 SPI 语义 |
 | `runtime/storage/sqliteobda` | `StorageProvider`：Open、可选 init、ApplySchema 检查、CRUD、query、links、事务 | 查询 `of_*`；把 DSN 写进 YAML / 公开 error / HealthCheck.Details |
+| `runtime/obda/dialect/mysql` | 反引号 quoting、Render、**mapped-table** DDL 辅助、`Classify`、`NormalizeValue` | 碰活连接；生成 `of_*`；重定义 SPI 语义 |
+| `runtime/storage/mysqlobda` | `StorageProvider`：Open、可选 init、ApplySchema 检查（含 live introspect）、CRUD、query、links、search、aggregate、事务 | 查询 `of_*`；把 DSN 写进 YAML / 公开 error / HealthCheck.Details |
 
 `Compiled` mapping 不可变。一次 SPI 调用通过 `pin()` 钉住当前激活版本；`ApplySchema` 成功后进行中的 pinned 副本不变。
 
@@ -192,6 +195,7 @@ sqliteobda  →  runtime/obda  →  dialect.Dialect  ←  dialect/sqlite
 
 ```go
 sqliteobda.Open(db *sql.DB, mapping []byte, opts sqliteobda.Options{})
+mysqlobda.Open(db *sql.DB, mapping []byte, opts mysqlobda.Options{})
 ```
 
 未 `ApplySchema` 成功激活前，除 `HealthCheck` / `Capabilities` 外返回 `ErrMappingNotActive`。
@@ -1957,8 +1961,12 @@ runtime/obda/
   sqlast/
   dialect/dialect.go
   dialect/sqlite/          # dialect.go introspect.go ddl.go fts.go errors.go quote.go
+  dialect/mysql/           # dialect.go ddl.go errors.go quote.go
 runtime/storage/sqliteobda/
   provider.go sidecar.go objects.go query.go links.go transaction.go
+  testdata/*.obda.yaml
+runtime/storage/mysqlobda/
+  provider.go schema.go objects.go query.go links.go search.go aggregate.go transaction.go introspect.go
   testdata/*.obda.yaml
 runtime/pack/
   mappings.go                # pack.yaml obda: 清单：parse + validate + 对 IR 编译检查

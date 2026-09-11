@@ -1,4 +1,4 @@
-package mysql
+package mysqlobda
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	mysqldialect "github.com/openfoundry/runtime/obda/dialect/mysql"
 	"github.com/openfoundry/runtime/obda/sqlast"
 )
 
@@ -26,10 +27,15 @@ type Snapshot struct {
 	Hash    string
 }
 
+func quoteIdent(table sqlast.Identifier) error {
+	_, err := mysqldialect.New().QuoteIdentifier(table)
+	return err
+}
+
 // InspectTable reads information_schema.COLUMNS for a compiled identifier.
 // The DSN must select a database: tables are resolved within DATABASE().
 func InspectTable(ctx context.Context, db *sql.DB, table sqlast.Identifier) (Snapshot, error) {
-	if _, err := quote(table); err != nil {
+	if err := quoteIdent(table); err != nil {
 		return Snapshot{}, err
 	}
 	rows, err := db.QueryContext(ctx, `
@@ -65,7 +71,7 @@ func InspectTable(ctx context.Context, db *sql.DB, table sqlast.Identifier) (Sna
 
 // TableExists reports whether a table or view is present in the current database.
 func TableExists(ctx context.Context, db *sql.DB, table sqlast.Identifier) (bool, error) {
-	if _, err := quote(table); err != nil {
+	if err := quoteIdent(table); err != nil {
 		return false, err
 	}
 	var n int
@@ -93,7 +99,7 @@ type Index struct {
 
 // InspectIndexes reads information_schema.STATISTICS.
 func InspectIndexes(ctx context.Context, db *sql.DB, table sqlast.Identifier) ([]Index, error) {
-	if _, err := quote(table); err != nil {
+	if err := quoteIdent(table); err != nil {
 		return nil, err
 	}
 	rows, err := db.QueryContext(ctx, `
@@ -137,7 +143,7 @@ func InspectIndexes(ctx context.Context, db *sql.DB, table sqlast.Identifier) ([
 func HasUniqueIndex(indexes []Index, columns []string, requireActiveKey bool) bool {
 	want := append([]string(nil), columns...)
 	if requireActiveKey {
-		want = append(want, ActiveKeyColumn)
+		want = append(want, mysqldialect.ActiveKeyColumn)
 	}
 	sort.Strings(want)
 	for _, idx := range indexes {

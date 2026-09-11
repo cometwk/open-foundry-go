@@ -120,17 +120,13 @@ func (p *Provider) AggregateObjects(ctx spi.RequestContext, typ string, query sp
 	nScan := len(groupLogical) + len(aliases) + 1 // + tiebreak
 	var groups []spi.AggregateGroup
 	for rows.Next() {
-		dest := make([]any, nScan)
-		ptrs := make([]any, nScan)
-		for i := range dest {
-			ptrs[i] = &dest[i]
-		}
-		if err := rows.Scan(ptrs...); err != nil {
+		dest, err := scan(rows, nScan)
+		if err != nil {
 			return spi.AggregateResult{}, err
 		}
 		keys := map[string]any{}
 		for i, logical := range groupLogical {
-			keys[logical] = unwrap(dest[i])
+			keys[logical] = dest[i]
 		}
 		values := map[string]any{}
 		base := len(groupLogical)

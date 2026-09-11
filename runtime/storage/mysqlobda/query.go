@@ -81,18 +81,11 @@ func (p *Provider) QueryObjects(ctx spi.RequestContext, typ string, filter spi.F
 	bizCols := b.SelectColumns
 	var items []spi.OntologyObject
 	for rows.Next() {
-		dest := make([]any, len(bizCols))
-		ptrs := make([]any, len(dest))
-		for i := range dest {
-			ptrs[i] = &dest[i]
-		}
-		if err := rows.Scan(ptrs...); err != nil {
+		dest, err := scan(rows, len(bizCols))
+		if err != nil {
 			return spi.ObjectPage{}, err
 		}
-		biz := map[string]any{}
-		for i, col := range bizCols {
-			biz[col] = unwrap(dest[i])
-		}
+		biz := bizMap(dest, bizCols)
 		obj, err := p.assemble(m, ctx.TenantID, biz)
 		if err != nil {
 			return spi.ObjectPage{}, err

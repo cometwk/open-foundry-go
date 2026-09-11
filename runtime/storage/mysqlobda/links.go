@@ -352,20 +352,12 @@ func (p *Provider) GetLinks(ctx spi.RequestContext, objectID, linkType, directio
 	defer rows.Close()
 	var items []spi.OntologyLink
 	for rows.Next() {
-		dest := make([]any, len(scanCols))
-		ptrs := make([]any, len(dest))
-		for i := range dest {
-			ptrs[i] = &dest[i]
-		}
-		if err := rows.Scan(ptrs...); err != nil {
+		dest, err := scan(rows, len(scanCols))
+		if err != nil {
 			return spi.LinkPage{}, err
 		}
-		biz := map[string]any{}
-		for i, col := range scanCols {
-			biz[col] = unwrap(dest[i])
-		}
+		biz := bizMap(dest, scanCols)
 		var link spi.OntologyLink
-		var err error
 		if inline {
 			link, err = assembleInlineLink(l, ctx.TenantID, biz)
 		} else {
@@ -497,18 +489,11 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 	bizCols := terminal.Binding().SelectColumns
 	nodes := make([]spi.OntologyObject, 0)
 	for rows.Next() {
-		dest := make([]any, len(bizCols))
-		ptrs := make([]any, len(dest))
-		for i := range dest {
-			ptrs[i] = &dest[i]
-		}
-		if err := rows.Scan(ptrs...); err != nil {
+		dest, err := scan(rows, len(bizCols))
+		if err != nil {
 			return spi.TraversalResult{}, err
 		}
-		biz := map[string]any{}
-		for i, col := range bizCols {
-			biz[col] = unwrap(dest[i])
-		}
+		biz := bizMap(dest, bizCols)
 		obj, err := p.assemble(terminal, ctx.TenantID, biz)
 		if err != nil {
 			return spi.TraversalResult{}, err
@@ -636,22 +621,14 @@ func (p *Provider) loadLink(tx DBTX, l *obda.CompiledLink, tenant, id string) (s
 	if err != nil {
 		return nil, err
 	}
-	dest := make([]any, len(b.SelectColumns))
-	ptrs := make([]any, len(dest))
-	for i := range dest {
-		ptrs[i] = &dest[i]
-	}
-	if err := tx.QueryRow(stmt.SQL, args...).Scan(ptrs...); err != nil {
+	dest, err := scan(tx.QueryRow(stmt.SQL, args...), len(b.SelectColumns))
+	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, spi.ErrLinkNotFound
 		}
 		return nil, mysqldialect.Classify(err)
 	}
-	biz := map[string]any{}
-	for i, col := range b.SelectColumns {
-		biz[col] = unwrap(dest[i])
-	}
-	return p.assembleLink(l, tenant, biz)
+	return p.assembleLink(l, tenant, bizMap(dest, b.SelectColumns))
 }
 
 func (p *Provider) assembleLink(l *obda.CompiledLink, tenant string, biz map[string]any) (spi.OntologyLink, error) {

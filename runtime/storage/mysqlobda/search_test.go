@@ -29,6 +29,9 @@ func TestSearchRelevanceAndHighlights(t *testing.T) {
 		if h.Score <= 0 {
 			t.Fatalf("score=%v want > 0", h.Score)
 		}
+		if _, ok := h.Object["of_score"]; ok {
+			t.Fatalf("of_score leaked into object: %#v", h.Object)
+		}
 		// Highlights must be the whole declared-field value, not a snippet.
 		wantTitle, _ := h.Object["title"].(string)
 		if got := h.Highlights["title"]; len(got) != 1 || got[0] != wantTitle {
