@@ -16,7 +16,13 @@ require (
 	modernc.org/sqlite v1.57.0
 )
 
-require github.com/mattn/go-colorable v0.1.14 // indirect
+require (
+	github.com/goccy/go-json v0.10.5 // indirect
+	github.com/golang/snappy v0.0.4 // indirect
+	github.com/mattn/go-colorable v0.1.14 // indirect
+	github.com/syndtr/goleveldb v1.0.0 // indirect
+	xorm.io/builder v0.3.13 // indirect
+)
 
 require (
 	cel.dev/expr v0.25.1 // indirect
@@ -43,6 +49,7 @@ require (
 	modernc.org/libc v1.74.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
+	xorm.io/xorm v1.4.1
 )
 
 replace github.com/openfoundry/cel-evaluator => ../packages/cel-evaluator
