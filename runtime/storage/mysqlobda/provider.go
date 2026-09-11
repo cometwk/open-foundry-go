@@ -196,7 +196,7 @@ func (p *Provider) fingerprint() (string, error) {
 	sort.Strings(names)
 	h := ""
 	for _, name := range names {
-		snap, err := mysqldialect.InspectTable(context.Background(), p.db, sqlast.Identifier{Name: tables[name]})
+		snap, err := InspectTable(context.Background(), p.db, sqlast.Identifier{Name: tables[name]})
 		if err != nil {
 			return "", err
 		}

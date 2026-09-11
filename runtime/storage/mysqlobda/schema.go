@@ -45,14 +45,14 @@ func (p *Provider) verifyMappedSchema(compiled *obda.Compiled) error {
 
 func (p *Provider) verifyTable(ctx context.Context, table string, required []string) error {
 	id := sqlast.Identifier{Name: table}
-	ok, err := mysqldialect.TableExists(ctx, p.db, id)
+	ok, err := TableExists(ctx, p.db, id)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return fmt.Errorf("%w: table %q does not exist", spi.ErrInvalidMapping, table)
 	}
-	snap, err := mysqldialect.InspectTable(ctx, p.db, id)
+	snap, err := InspectTable(ctx, p.db, id)
 	if err != nil {
 		return err
 	}
@@ -72,12 +72,12 @@ func (p *Provider) verifyUniques(ctx context.Context, tbl obda.PhysicalTable) er
 	if len(tbl.Uniques) == 0 {
 		return nil
 	}
-	idx, err := mysqldialect.InspectIndexes(ctx, p.db, sqlast.Identifier{Name: tbl.Name})
+	idx, err := InspectIndexes(ctx, p.db, sqlast.Identifier{Name: tbl.Name})
 	if err != nil {
 		return err
 	}
 	for _, spec := range tbl.Uniques {
-		if !mysqldialect.HasUniqueIndex(idx, spec.Columns, spec.ExcludeSoftDeleted) {
+		if !HasUniqueIndex(idx, spec.Columns, spec.ExcludeSoftDeleted) {
 			return fmt.Errorf("%w: table %q missing unique index on %v", spi.ErrSourceSchemaDrift, tbl.Name, spec.Columns)
 		}
 	}
@@ -88,13 +88,13 @@ func (p *Provider) verifyFulltext(ctx context.Context, tbl obda.PhysicalTable) e
 	if len(tbl.FulltextColumns) == 0 {
 		return nil
 	}
-	idx, err := mysqldialect.InspectIndexes(ctx, p.db, sqlast.Identifier{Name: tbl.Name})
+	idx, err := InspectIndexes(ctx, p.db, sqlast.Identifier{Name: tbl.Name})
 	if err != nil {
 		return err
 	}
 	// Declared search.fields is a schema contract: missing FULLTEXT is
 	// fail-closed (ErrSourceSchemaDrift), matching unique-index verify.
-	if !mysqldialect.HasFulltextIndex(idx, tbl.FulltextColumns) {
+	if !HasFulltextIndex(idx, tbl.FulltextColumns) {
 		return fmt.Errorf("%w: table %q missing FULLTEXT index on %v", spi.ErrSourceSchemaDrift, tbl.Name, tbl.FulltextColumns)
 	}
 	return nil

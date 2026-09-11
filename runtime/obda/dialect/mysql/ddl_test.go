@@ -259,23 +259,6 @@ func libraryInlineCompiled(card spi.Cardinality, nullable bool) *obda.Compiled {
 	}
 }
 
-func TestHasUniqueIndex(t *testing.T) {
-	indexes := []mysqldialect.Index{
-		{Name: "PRIMARY", Unique: true, Columns: []string{"id"}},
-		{Name: "admission_from_active", Unique: true, Columns: []string{"tenant_id", "from_id", "of_active"}},
-		{Name: "plain", Unique: false, Columns: []string{"tenant_id", "from_id", "of_active"}},
-	}
-	if !mysqldialect.HasUniqueIndex(indexes, []string{"tenant_id", "from_id"}, true) {
-		t.Fatal("active-key unique index should match")
-	}
-	if mysqldialect.HasUniqueIndex(indexes, []string{"tenant_id", "from_id"}, false) {
-		t.Fatal("plain columns must not match when index carries of_active")
-	}
-	if mysqldialect.HasUniqueIndex(indexes[:1], []string{"tenant_id", "from_id"}, true) {
-		t.Fatal("missing index must not match")
-	}
-}
-
 func TestMappedTableStatementsFulltextIndex(t *testing.T) {
 	c := compiledFixture(spi.CardinalityManyToMany)
 	c.Models["Patient"].SearchableFields = []string{"patient_name"}
@@ -287,24 +270,6 @@ func TestMappedTableStatementsFulltextIndex(t *testing.T) {
 	want := "CREATE FULLTEXT INDEX `ft_patient`\n  ON `patient` (`patient_name`)"
 	if !strings.Contains(joined, want) {
 		t.Fatalf("FULLTEXT DDL missing:\n%s\nwant: %s", joined, want)
-	}
-}
-
-func TestHasFulltextIndex(t *testing.T) {
-	indexes := []mysqldialect.Index{
-		{Name: "PRIMARY", Unique: true, Type: "BTREE", Columns: []string{"id"}},
-		{Name: "ft_patient", Type: "FULLTEXT", Columns: []string{"patient_name", "city_name"}},
-		{Name: "idx_btree", Type: "BTREE", Columns: []string{"patient_name", "city_name"}},
-	}
-	if !mysqldialect.HasFulltextIndex(indexes, []string{"city_name", "patient_name"}) {
-		t.Fatal("FULLTEXT index with reordered columns should match")
-	}
-	onlyBtree := []mysqldialect.Index{indexes[0], indexes[2]}
-	if mysqldialect.HasFulltextIndex(onlyBtree, []string{"patient_name", "city_name"}) {
-		t.Fatal("BTREE index must not match FULLTEXT")
-	}
-	if mysqldialect.HasFulltextIndex(indexes, []string{"id"}) {
-		t.Fatal("non-matching columns should not match")
 	}
 }
 
