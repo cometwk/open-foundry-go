@@ -491,6 +491,24 @@ func compileFilter(f spi.FilterExpression, known map[string]struct{}, next int) 
 		}
 		return eq(ident(f.Field), next), []any{f.Value}, nil
 	}
+	if len(f.Or) > 0 {
+		// Or is accepted only over eq leaves — the batch-by-ids shape. Children
+		// carrying compound expressions or other operators stay unsupported so
+		// args order (textual ? appearance) stays trivially correct.
+		children := make([]*sqlast.Predicate, 0, len(f.Or))
+		args := make([]any, 0, len(f.Or))
+		for _, c := range f.Or {
+			if c.Field == "" || (c.Operator != "" && c.Operator != "eq") {
+				return nil, nil, fmt.Errorf("%w: or children must be eq leaves", spi.ErrInvalidMapping)
+			}
+			if _, ok := known[c.Field]; !ok {
+				return nil, nil, fmt.Errorf("%w: unknown filter field %q", spi.ErrInvalidMapping, c.Field)
+			}
+			children = append(children, eq(ident(c.Field), next+len(args)))
+			args = append(args, c.Value)
+		}
+		return &sqlast.Predicate{Op: "or", Children: children}, args, nil
+	}
 	return nil, nil, fmt.Errorf("%w: unsupported filter", spi.ErrInvalidMapping)
 }
 

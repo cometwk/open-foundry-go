@@ -321,3 +321,44 @@ func TestClassify(t *testing.T) {
 		t.Fatalf("nil must stay nil: %v", err)
 	}
 }
+
+func TestRenderQueryOrOfEq(t *testing.T) {
+	sel, args, err := obda.PlanQuery(obda.ObjectBinding{
+		Table:           "ward",
+		TenantColumn:    "tenant_id",
+		IdentityColumns: []string{"id"},
+		SelectColumns:   []string{"id", "tenant_id", "ward_name"},
+	}, "t1", spi.FilterExpression{Or: []spi.FilterExpression{
+		{Field: "id", Operator: "eq", Value: "w1"},
+		{Field: "id", Operator: "eq", Value: "w2"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmt, err := mysqldialect.New().Render(sel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The or group must be parenthesized under the tenant predicate so it can
+	// never widen matching past the tenant.
+	want := "SELECT `id`, `tenant_id`, `ward_name` FROM `ward` WHERE (`tenant_id` = ?) AND ((`id` = ?) OR (`id` = ?))"
+	if stmt.SQL != want {
+		t.Fatalf("sql=\n%s\nwant=\n%s", stmt.SQL, want)
+	}
+	if len(args) != 3 || args[0] != "t1" || args[1] != "w1" || args[2] != "w2" {
+		t.Fatalf("args=%v", args)
+	}
+}
+
+func TestRenderOrWithoutChildren(t *testing.T) {
+	d := mysqldialect.New()
+	if _, err := d.Render(&sqlast.Select{
+		From: sqlast.Identifier{Name: "ward"},
+		Where: &sqlast.Predicate{
+			Op:       "and",
+			Children: []*sqlast.Predicate{{Op: "eq", Field: &sqlast.Identifier{Name: "tenant_id"}, Value: sqlast.Param{Position: 1}}, {Op: "or"}},
+		},
+	}); err == nil {
+		t.Fatal("or without children should fail to render")
+	}
+}

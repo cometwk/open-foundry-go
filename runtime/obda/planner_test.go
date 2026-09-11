@@ -622,3 +622,60 @@ func hasColEq(p *sqlast.Predicate, aq, an, bq, bn string) bool {
 	}
 	return false
 }
+
+func TestPlanQueryOrOfEqParamsAndArgs(t *testing.T) {
+	b := patientBinding()
+	sel, args, err := obda.PlanQuery(b, "t1", spi.FilterExpression{Or: []spi.FilterExpression{
+		{Field: "patient_id", Operator: "eq", Value: "p1"},
+		{Field: "patient_id", Operator: "eq", Value: "p2"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Args follow textual ? order: tenant first, then each or child in order.
+	if fmt.Sprint(args) != "[t1 p1 p2]" {
+		t.Fatalf("args=%v", args)
+	}
+	and := sel.Where
+	if and.Op != "and" || len(and.Children) != 2 {
+		t.Fatalf("where op=%s children=%d", and.Op, len(and.Children))
+	}
+	or := and.Children[1]
+	if or.Op != "or" || len(or.Children) != 2 {
+		t.Fatalf("or op=%s children=%d", or.Op, len(or.Children))
+	}
+	for i, want := range []int{2, 3} {
+		p := or.Children[i].Value.(sqlast.Param)
+		if p.Position != want {
+			t.Fatalf("child %d param position=%d want %d", i, p.Position, want)
+		}
+	}
+	// Empty operator inside Or defaults to eq like the leaf path.
+	if _, _, err := obda.PlanQuery(b, "t1", spi.FilterExpression{Or: []spi.FilterExpression{
+		{Field: "patient_id", Value: "p1"},
+	}}); err != nil {
+		t.Fatalf("empty operator should default to eq: %v", err)
+	}
+}
+
+func TestPlanQueryOrInvalidChildren(t *testing.T) {
+	b := patientBinding()
+	// Nested compound inside Or is rejected.
+	if _, _, err := obda.PlanQuery(b, "t1", spi.FilterExpression{Or: []spi.FilterExpression{
+		{Or: []spi.FilterExpression{{Field: "patient_id", Operator: "eq", Value: "p1"}}},
+	}}); !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("nested Or should return ErrInvalidMapping, got %v", err)
+	}
+	// Non-eq operator inside Or is rejected.
+	if _, _, err := obda.PlanQuery(b, "t1", spi.FilterExpression{Or: []spi.FilterExpression{
+		{Field: "patient_id", Operator: "ne", Value: "p1"},
+	}}); !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("ne child should return ErrInvalidMapping, got %v", err)
+	}
+	// Unknown field inside Or is rejected.
+	if _, _, err := obda.PlanQuery(b, "t1", spi.FilterExpression{Or: []spi.FilterExpression{
+		{Field: "nope", Operator: "eq", Value: "p1"},
+	}}); !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("unknown field should return ErrInvalidMapping, got %v", err)
+	}
+}

@@ -373,6 +373,21 @@ func (d *Dialect) renderPred(p *sqlast.Predicate) (string, error) {
 			}
 		}
 		return strings.Join(parts, " AND "), nil
+	case "or":
+		parts := make([]string, 0, len(p.Children))
+		for _, c := range p.Children {
+			s, err := d.renderPred(c)
+			if err != nil {
+				return "", err
+			}
+			if s != "" {
+				parts = append(parts, "("+s+")")
+			}
+		}
+		if len(parts) == 0 {
+			return "", fmt.Errorf("mysql: or without children")
+		}
+		return strings.Join(parts, " OR "), nil
 	case "eq":
 		if p.Field == nil {
 			return "", fmt.Errorf("mysql: eq without field")

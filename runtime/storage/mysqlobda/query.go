@@ -117,20 +117,49 @@ func pageLimitOffset(limit, offset int) (int, int) {
 	return limit, offset
 }
 
+// filterColumn resolves a logical filter field to its physical column. The
+// identity alias "_id" maps to the first identity column; business fields map
+// through the compiled model.
+func filterColumn(m *obda.CompiledModel, logical string) (string, bool) {
+	if logical == spi.FieldID && len(m.IdentityColumns) > 0 {
+		return m.IdentityColumns[0], true
+	}
+	cf, ok := m.FieldByLogical[logical]
+	if !ok {
+		return "", false
+	}
+	return cf.Column, true
+}
+
 func translateFilter(m *obda.CompiledModel, f spi.FilterExpression) (spi.FilterExpression, error) {
 	empty := f.Field == "" && f.Operator == "" && len(f.And) == 0 && len(f.Or) == 0 && f.Not == nil
 	if empty {
 		return f, nil
 	}
 	if f.Field != "" {
-		cf, ok := m.FieldByLogical[f.Field]
+		col, ok := filterColumn(m, f.Field)
 		if !ok {
 			return f, fmt.Errorf("%w: unknown filter field %q", spi.ErrInvalidMapping, f.Field)
 		}
 		if f.Operator != "" && f.Operator != "eq" {
 			return f, fmt.Errorf("%w: unsupported filter operator %q", spi.ErrInvalidMapping, f.Operator)
 		}
-		f.Field = cf.Column
+		f.Field = col
+		return f, nil
+	}
+	if len(f.Or) > 0 {
+		// Or is accepted only over eq leaves — the batch-by-ids shape.
+		for i := range f.Or {
+			c := &f.Or[i]
+			if c.Field == "" || (c.Operator != "" && c.Operator != "eq") {
+				return f, fmt.Errorf("%w: or children must be eq leaves", spi.ErrInvalidMapping)
+			}
+			col, ok := filterColumn(m, c.Field)
+			if !ok {
+				return f, fmt.Errorf("%w: unknown filter field %q", spi.ErrInvalidMapping, c.Field)
+			}
+			c.Field = col
+		}
 		return f, nil
 	}
 	return f, fmt.Errorf("%w: unsupported filter", spi.ErrInvalidMapping)
