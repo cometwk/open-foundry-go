@@ -1,19 +1,14 @@
 package mysqlobda_test
 
 import (
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/go-sql-driver/mysql"
-
+	"github.com/openfoundry/runtime/internal/testdb"
 	"github.com/openfoundry/runtime/obda"
 	mysqldialect "github.com/openfoundry/runtime/obda/dialect/mysql"
 	"github.com/openfoundry/runtime/spi"
@@ -326,55 +321,12 @@ func assertNoOfTables(t *testing.T, db *sql.DB) {
 
 func openProvider(t *testing.T, mapping []byte) (*mysqlobda.Provider, *sql.DB) {
 	t.Helper()
-	db := openDB(t)
+	db := testdb.Open(t)
 	p, err := mysqlobda.Open(db, mapping, mysqlobda.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return p, db
-}
-
-// openDB connects to the TEST_DB_URL MySQL server and creates an isolated
-// per-test database. Tests skip when TEST_DB_URL is unset.
-func openDB(t *testing.T) *sql.DB {
-	t.Helper()
-	base := os.Getenv("TEST_DB_URL")
-	if base == "" {
-		t.Skip("TEST_DB_URL not set; MySQL integration tests skipped")
-	}
-	cfg, err := mysql.ParseDSN(base)
-	if err != nil {
-		t.Fatalf("parse TEST_DB_URL: %v", err)
-	}
-	admin, err := sql.Open("mysql", base)
-	if err != nil {
-		t.Fatal(err)
-	}
-	name := fmt.Sprintf("of_test_%d_%s", time.Now().UnixNano(), randHex(4))
-	if _, err := admin.Exec("CREATE DATABASE `" + name + "` CHARACTER SET utf8mb4"); err != nil {
-		_ = admin.Close()
-		t.Fatalf("create database %s: %v", name, err)
-	}
-	cfg.DBName = name
-	db, err := sql.Open("mysql", cfg.FormatDSN())
-	if err != nil {
-		_ = admin.Close()
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = db.Close()
-		_, _ = admin.Exec("DROP DATABASE IF EXISTS `" + name + `"`)
-		_ = admin.Close()
-	})
-	return db
-}
-
-func randHex(n int) string {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "00000000"
-	}
-	return hex.EncodeToString(b)
 }
 
 func testdata(t *testing.T, name string) []byte {
