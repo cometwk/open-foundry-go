@@ -123,23 +123,32 @@ func expandGetLinks(eng *engine.Engine, ctx spi.RequestContext, startType, start
 		return nil, err
 	}
 	seen := map[string]bool{}
-	kids := make([]spi.OntologyObject, 0, len(page.Items))
+	ids := make([]string, 0, len(page.Items))
 	for _, link := range page.Items {
 		tid := neighborID(link, startID, steps[0].Direction)
 		if tid == "" || seen[tid] {
 			continue
 		}
 		seen[tid] = true
-		obj, err := eng.GetObject(ctx, target, tid)
-		if err != nil {
-			if errors.Is(err, spi.ErrObjectNotFound) {
-				continue
-			}
-			return nil, err
-		}
-		kids = append(kids, obj)
-		if len(kids) >= HopCap {
+		ids = append(ids, tid)
+		if len(ids) >= HopCap {
 			break
+		}
+	}
+	// One batched read replaces the per-neighbor GetObject loop; missing
+	// objects prune silently, query errors propagate.
+	found, err := hydrateByIDs(eng, ctx, target, ids, false)
+	if err != nil {
+		return nil, err
+	}
+	byID := map[string]spi.OntologyObject{}
+	for _, o := range found {
+		putObj(byID, o)
+	}
+	kids := make([]spi.OntologyObject, 0, len(ids))
+	for _, id := range ids {
+		if o, ok := byID[id]; ok {
+			kids = append(kids, o)
 		}
 	}
 	adj := map[string]map[string][]spi.OntologyObject{}
@@ -156,5 +165,15 @@ func expandTraverse(eng *engine.Engine, ctx spi.RequestContext, startObj spi.Ont
 	if err != nil {
 		return nil, err
 	}
-	return assemblePath(startID, startObj, fields, steps, tr), nil
+	terminalType, err := hopTargetType(eng.Ontology(), startType, fields)
+	if err != nil {
+		return nil, err
+	}
+	// Intermediates hydrate from Edges endpoints — same row window as Nodes,
+	// so a truncated fan-out yields a consistent partial tree.
+	hydrated, err := hydrateEdges(eng, ctx, tr.Edges, terminalType, startType, startID, false)
+	if err != nil {
+		return nil, err
+	}
+	return assemblePath(startID, startObj, fields, steps, tr, hydrated), nil
 }

@@ -69,6 +69,7 @@ func TestExecute_GetListAggregateSearch_MatchEngine(t *testing.T) {
 func TestExecute_Expand_GetLinksVsTraverseVsFork(t *testing.T) {
 	rec := &countStore{inner: memory.New()}
 	e, ctx, ids := seedNav(t, rec)
+	rec.getLinks, rec.traverse, rec.getObject, rec.queryObjects = 0, 0, 0, 0
 
 	leaf, err := Execute(e, ctx, Op{Expand: &Expand{
 		StartType: "A", StartID: ids.a, Mode: ExpandGetLinks,
@@ -80,11 +81,14 @@ func TestExecute_Expand_GetLinksVsTraverseVsFork(t *testing.T) {
 	if rec.getLinks != 1 || rec.traverse != 0 {
 		t.Fatalf("leaf GetLinks/Traverse = %d/%d, want 1/0", rec.getLinks, rec.traverse)
 	}
+	if rec.getObject != 0 || rec.queryObjects != 1 {
+		t.Fatalf("leaf GetObject/QueryObjects = %d/%d, want 0/1 (no per-object N+1)", rec.getObject, rec.queryObjects)
+	}
 	if len(leaf.Expand.FirstHop) != 1 || leaf.Expand.FirstHop[0]["name"] != "L1" {
 		t.Fatalf("leaf FirstHop = %+v", leaf.Expand.FirstHop)
 	}
 
-	rec.getLinks, rec.traverse = 0, 0
+	rec.getLinks, rec.traverse, rec.getObject, rec.queryObjects = 0, 0, 0, 0
 	two, err := Execute(e, ctx, Op{Expand: &Expand{
 		StartType: "A", StartID: ids.a, Mode: ExpandTraverse,
 		Paths: [][]string{{"b", "c"}},
@@ -95,6 +99,9 @@ func TestExecute_Expand_GetLinksVsTraverseVsFork(t *testing.T) {
 	if rec.traverse != 1 || rec.getLinks != 0 {
 		t.Fatalf("2-hop GetLinks/Traverse = %d/%d, want 0/1", rec.getLinks, rec.traverse)
 	}
+	if rec.getObject != 0 || rec.queryObjects != 1 {
+		t.Fatalf("2-hop GetObject/QueryObjects = %d/%d, want 0/1 (intermediate B batch)", rec.getObject, rec.queryObjects)
+	}
 	if len(two.Expand.Terminals) != 1 || two.Expand.Terminals[0]["name"] != "C1" {
 		t.Fatalf("2-hop terminals = %+v", two.Expand.Terminals)
 	}
@@ -102,7 +109,7 @@ func TestExecute_Expand_GetLinksVsTraverseVsFork(t *testing.T) {
 		t.Fatalf("adjacency b.c = %+v", two.Expand.Adjacency[ids.b]["c"])
 	}
 
-	rec.getLinks, rec.traverse = 0, 0
+	rec.getLinks, rec.traverse, rec.getObject, rec.queryObjects = 0, 0, 0, 0
 	fork, err := Execute(e, ctx, Op{Expand: &Expand{
 		StartType: "A", StartID: ids.a, Mode: ExpandTraverse,
 		Paths: [][]string{{"b", "c"}, {"b", "d"}},
@@ -112,6 +119,9 @@ func TestExecute_Expand_GetLinksVsTraverseVsFork(t *testing.T) {
 	}
 	if rec.traverse != 2 || rec.getLinks != 0 {
 		t.Fatalf("fork GetLinks/Traverse = %d/%d, want 0/2", rec.getLinks, rec.traverse)
+	}
+	if rec.queryObjects != 2 {
+		t.Fatalf("fork QueryObjects = %d, want 2 (one per path)", rec.queryObjects)
 	}
 	if len(fork.Expand.FirstHop) != 1 {
 		t.Fatalf("fork FirstHop len = %d (shared prefix should dedupe B)", len(fork.Expand.FirstHop))
@@ -245,6 +255,7 @@ type countStore struct {
 	inner              spi.StorageProvider
 	getLinks, traverse int
 	getObject          int
+	queryObjects       int
 }
 
 func (c *countStore) ApplySchema(ctx spi.RequestContext, s spi.OntologySchema) (spi.MigrationResult, error) {
@@ -270,6 +281,7 @@ func (c *countStore) Traverse(ctx spi.RequestContext, startID string, path spi.T
 	return c.inner.Traverse(ctx, startID, path, options)
 }
 func (c *countStore) QueryObjects(ctx spi.RequestContext, typ string, filter spi.FilterExpression, options *spi.QueryOptions) (spi.ObjectPage, error) {
+	c.queryObjects++
 	return c.inner.QueryObjects(ctx, typ, filter, options)
 }
 func (c *countStore) AggregateObjects(ctx spi.RequestContext, typ string, q spi.AggregateQuery) (spi.AggregateResult, error) {
@@ -292,4 +304,88 @@ func (c *countStore) UpdateLink(ctx spi.RequestContext, typ, id string, p map[st
 }
 func (c *countStore) DeleteLink(ctx spi.RequestContext, typ, id string) error {
 	return c.inner.DeleteLink(ctx, typ, id)
+}
+
+func TestExecute_Expand_LeafBatchHydrationScalesWithTypes(t *testing.T) {
+	rec := &countStore{inner: memory.New()}
+	e, ctx, ids := seedNav(t, rec)
+	// Two more leaves under the same link type: M neighbors, still exactly
+	// one hydration query and zero per-object reads.
+	for _, name := range []string{"L2", "L3"} {
+		l, err := e.CreateObject(ctx, "L", map[string]any{"name": name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		mustLink(t, e, ctx, "AL", aobj(ids.a), l)
+	}
+	rec.queryObjects, rec.getObject = 0, 0
+	leaf, err := Execute(e, ctx, Op{Expand: &Expand{
+		StartType: "A", StartID: ids.a, Mode: ExpandGetLinks,
+		Paths: [][]string{{"leaf"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.getObject != 0 || rec.queryObjects != 1 {
+		t.Fatalf("M=3 leaf GetObject/QueryObjects = %d/%d, want 0/1", rec.getObject, rec.queryObjects)
+	}
+	if len(leaf.Expand.FirstHop) != 3 {
+		t.Fatalf("FirstHop = %d, want 3", len(leaf.Expand.FirstHop))
+	}
+}
+
+func aobj(id string) spi.OntologyObject { return spi.OntologyObject{spi.FieldID: id} }
+
+func TestExecute_Expand_OneHopTraverseSkipsHydration(t *testing.T) {
+	rec := &countStore{inner: memory.New()}
+	e, ctx, ids := seedNav(t, rec)
+	// Single-hop traverse: terminals come back as Nodes and the start
+	// endpoint is excluded, so nothing hydrates.
+	_, err := Execute(e, ctx, Op{Expand: &Expand{
+		StartType: "A", StartID: ids.a, Mode: ExpandTraverse,
+		Paths: [][]string{{"b"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.queryObjects != 0 {
+		t.Fatalf("1-hop QueryObjects = %d, want 0", rec.queryObjects)
+	}
+}
+
+func TestHydrateByIDs_DeletedVisibilityAndTenantScope(t *testing.T) {
+	e, ctx, ids := seedNav(t, memory.New())
+	if err := e.DeleteObject(ctx, "B", ids.b, "soft"); err != nil {
+		t.Fatal(err)
+	}
+	// Default read hides soft-deleted; IncludeDeleted surfaces it.
+	got, err := hydrateByIDs(e, ctx, "B", []string{ids.b}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("soft-deleted hydrated: %+v", got)
+	}
+	got, err = hydrateByIDs(e, ctx, "B", []string{ids.b}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0][spi.FieldID] != ids.b {
+		t.Fatalf("IncludeDeleted = %+v", got)
+	}
+	// Misses prune silently: absent ids return an empty page, not an error.
+	got, err = hydrateByIDs(e, ctx, "B", []string{"nope"}, false)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("miss = %+v err=%v", got, err)
+	}
+	// Tenant scope comes from ctx: another tenant sees nothing — even with
+	// IncludeDeleted, which must not widen tenant visibility.
+	other := spi.RequestContext{TenantID: "t2", ActorID: "test"}
+	got, err = hydrateByIDs(e, other, "B", []string{ids.b}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("cross-tenant hydration leaked: %+v", got)
+	}
 }
