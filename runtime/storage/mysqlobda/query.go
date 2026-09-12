@@ -102,14 +102,23 @@ func (p *Provider) QueryObjects(ctx spi.RequestContext, typ string, filter spi.F
 	return spi.ObjectPage{Items: items, TotalCount: total, HasNextPage: hasNext}, nil
 }
 
-// pageLimitOffset applies the shared QueryObjects/AggregateObjects/SearchObjects
-// pagination policy: limit<=0 defaults to 100, hard cap 1000, offset<0 clamps to 0.
+// 临时设置为 10 便于测试
+const (
+	// DefaultPageLimit is used when Limit <= 0 (or options is nil).
+	DefaultPageLimit = 10 //100
+	// MaxPageLimit is the hard cap; larger Limit values are truncated to this.
+	MaxPageLimit = 10 //1000
+)
+
+// pageLimitOffset applies the shared pagination policy used by
+// QueryObjects/AggregateObjects/SearchObjects/GetLinks/Traverse:
+// limit<=0 defaults to DefaultPageLimit, hard cap MaxPageLimit, offset<0 clamps to 0.
 func pageLimitOffset(limit, offset int) (int, int) {
 	if limit <= 0 {
-		limit = 100
+		limit = DefaultPageLimit
 	}
-	if limit > 1000 {
-		limit = 1000
+	if limit > MaxPageLimit {
+		limit = MaxPageLimit
 	}
 	if offset < 0 {
 		offset = 0

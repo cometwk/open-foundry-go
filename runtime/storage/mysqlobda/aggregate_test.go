@@ -114,7 +114,7 @@ func TestAggregateGroupByZeroHits(t *testing.T) {
 	}
 }
 
-func TestAggregateCountSkipsNullSumNil(t *testing.T) {
+func TestAggregateCountSkipsNull(t *testing.T) {
 	p := activateAgg(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
 	mustCreate(t, p, ctx, "Reader", map[string]any{"name": "Xiao Ming", "membershipLevel": "gold", "currentBorrowCount": 10})
@@ -135,11 +135,14 @@ func TestAggregateCountSkipsNullSumNil(t *testing.T) {
 	}
 	wantNum(t, res.Groups[0].Values["c"], 2)
 	wantNum(t, res.Groups[0].Values["s"], 30)
+}
 
-	ghost := spi.RequestContext{TenantID: "t1"}
-	p2 := activateAgg(t)
-	mustCreate(t, p2, ghost, "Reader", map[string]any{"name": "Ghost", "membershipLevel": "basic"})
-	res, err = p2.AggregateObjects(ghost, "Reader", spi.AggregateQuery{
+// TestAggregateSumNilWhenNoNumeric covers AE6: sum with no non-null numerics → nil.
+func TestAggregateSumNilWhenNoNumeric(t *testing.T) {
+	p := activateAgg(t)
+	ctx := spi.RequestContext{TenantID: "t1"}
+	mustCreate(t, p, ctx, "Reader", map[string]any{"name": "Ghost", "membershipLevel": "basic"})
+	res, err := p.AggregateObjects(ctx, "Reader", spi.AggregateQuery{
 		Fields: []spi.AggregateField{
 			{Field: "currentBorrowCount", Fn: "sum", Alias: "s"},
 			{Field: "*", Fn: "count", Alias: "c"},

@@ -317,19 +317,11 @@ func (p *Provider) GetLinks(ctx spi.RequestContext, objectID, linkType, directio
 		scanCols = l.Binding().SelectColumns
 		sel.Order = []sqlast.Order{{Field: sqlast.Identifier{Qualifier: "l", Name: firstCol(l.IdentityColumns)}}}
 	}
-	limit := 100
-	offset := 0
+	limit, offset := 0, 0
 	if options != nil {
-		if options.Limit > 0 {
-			limit = options.Limit
-		}
-		if limit > 1000 {
-			limit = 1000
-		}
-		if options.Offset > 0 {
-			offset = options.Offset
-		}
+		limit, offset = options.Limit, options.Offset
 	}
+	limit, offset = pageLimitOffset(limit, offset)
 	countSel := *sel
 	countSel.Limit = nil
 	countStmt, err := p.dialect.Render(&countSel)
@@ -466,18 +458,11 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 	if err != nil {
 		return spi.TraversalResult{}, err
 	}
-	limit, offset := 100, 0
+	limit, offset := 0, 0
 	if options != nil {
-		if options.Limit > 0 {
-			limit = options.Limit
-		}
-		if limit > 1000 {
-			limit = 1000
-		}
-		if options.Offset > 0 {
-			offset = options.Offset
-		}
+		limit, offset = options.Limit, options.Offset
 	}
+	limit, offset = pageLimitOffset(limit, offset)
 	countSel := *sel
 	countSel.Limit = nil
 	countSel.Order = nil

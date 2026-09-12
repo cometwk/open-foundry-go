@@ -430,7 +430,8 @@ func TestTraverseLimitDefaultsAndCap(t *testing.T) {
 	if err := db.QueryRow(`SELECT from_id, to_id, created_at FROM borrows LIMIT 1`).Scan(&fromID, &toID, &createdAt); err != nil {
 		t.Fatal(err)
 	}
-	for i := 1; i < 1001; i++ {
+	total := mysqlobda.MaxPageLimit + 1
+	for i := 1; i < total; i++ {
 		mustExec(t, db, `INSERT INTO borrows (id, tenant_id, from_id, to_id, version, created_at, updated_at) VALUES (?, 't1', ?, ?, 1, ?, ?)`,
 			fmt.Sprintf("extra-%d", i), fromID, toID, createdAt, createdAt)
 	}
@@ -438,15 +439,15 @@ func TestTraverseLimitDefaultsAndCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(zero.Nodes) != 100 || zero.TotalCount != 1001 {
+	if len(zero.Nodes) != mysqlobda.DefaultPageLimit || zero.TotalCount != total {
 		t.Fatalf("limit 0 nodes=%d total=%d", len(zero.Nodes), zero.TotalCount)
 	}
-	capped, err := p.Traverse(ctx, readerID, spi.TraversalPath{Steps: []spi.TraversalStep{{LinkType: "Borrows"}}}, &spi.TraversalOptions{Limit: 1001})
+	capped, err := p.Traverse(ctx, readerID, spi.TraversalPath{Steps: []spi.TraversalStep{{LinkType: "Borrows"}}}, &spi.TraversalOptions{Limit: total})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(capped.Nodes) != 1000 || capped.TotalCount != 1001 {
-		t.Fatalf("limit 1001 nodes=%d total=%d", len(capped.Nodes), capped.TotalCount)
+	if len(capped.Nodes) != mysqlobda.MaxPageLimit || capped.TotalCount != total {
+		t.Fatalf("limit %d nodes=%d total=%d", total, len(capped.Nodes), capped.TotalCount)
 	}
 }
 

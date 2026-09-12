@@ -5,7 +5,7 @@ export
 # 定义测试包路径
 MYSQL_PACKAGES := ./storage/mysqlobda/... ./obda/dialect/mysql/...
 
-.PHONY: all test-mysql
+.PHONY: all test-mysql e2e
 
 all:run
 
@@ -16,3 +16,13 @@ run:
 test-mysql:
 	@echo "==> Running MySQL OBDA tests..."
 	@go test $(MYSQL_PACKAGES) -v 2>&1 | tail -250
+
+e2e:
+	go test ./e2e/... -v
+
+mysqlobda:
+	@echo "==> Running MySQL OBDA tests..."
+	go test ./storage/mysqlobda/... -v
+
+tt:
+	go test -test.fullpath=true -timeout 30s -tags local -run TestSearchBlankQueryEmpty github.com/openfoundry/runtime/storage/mysqlobda -tags=local -count=1 -v
