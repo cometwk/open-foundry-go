@@ -128,7 +128,7 @@ func TestEngine_GetLinks_InboundOutbound(t *testing.T) {
 	}
 }
 
-func TestEngine_Traverse_TwoHopVisitedAndCrossTenant(t *testing.T) {
+func TestEngine_Traverse_TwoHopEdgesAndCrossTenant(t *testing.T) {
 	rec := memory.New()
 	ont := traverseOntology(t)
 	e, err := New(rec, ont)
@@ -192,22 +192,30 @@ func TestEngine_Traverse_TwoHopVisitedAndCrossTenant(t *testing.T) {
 	if len(got.Nodes) != 1 || got.Nodes[0][spi.FieldID] != asm[spi.FieldID] {
 		t.Fatalf("nodes = %+v, want Assembly %v", got.Nodes, asm[spi.FieldID])
 	}
-	if len(got.Visited) != 1 || got.Visited[0][spi.FieldID] != pt[spi.FieldID] {
-		t.Fatalf("visited = %+v, want Part %v", got.Visited, pt[spi.FieldID])
+	// Both hops walk their edges; the intermediate Part is reachable through
+	// edge endpoints (payloads hydrate at the Expand layer).
+	if len(got.Edges) != 2 {
+		t.Fatalf("edges = %d, want 2 (both hops)", len(got.Edges))
 	}
-	if len(got.Nodes) != len(direct.Nodes) || len(got.Visited) != len(direct.Visited) || len(got.Edges) != len(direct.Edges) {
-		t.Fatalf("engine result nodes/visited/edges = %d/%d/%d, storage = %d/%d/%d",
-			len(got.Nodes), len(got.Visited), len(got.Edges),
-			len(direct.Nodes), len(direct.Visited), len(direct.Edges))
+	reachable := map[string]bool{
+		s[spi.FieldID].(string):   true,
+		pt[spi.FieldID].(string):  true,
+		asm[spi.FieldID].(string): true,
+	}
+	for _, e := range got.Edges {
+		for _, end := range []string{e[spi.LinkFieldFromID].(string), e[spi.LinkFieldToID].(string)} {
+			if !reachable[end] {
+				t.Fatalf("edge endpoint %q outside the tenant-a path (cross-tenant leak)", end)
+			}
+		}
+	}
+	if len(got.Nodes) != len(direct.Nodes) || len(got.Edges) != len(direct.Edges) {
+		t.Fatalf("engine result nodes/edges = %d/%d, storage = %d/%d",
+			len(got.Nodes), len(got.Edges), len(direct.Nodes), len(direct.Edges))
 	}
 	for _, n := range got.Nodes {
 		if n[spi.FieldTenantID] != "a" {
 			t.Fatalf("leaked tenant %v in nodes", n[spi.FieldTenantID])
-		}
-	}
-	for _, n := range got.Visited {
-		if n[spi.FieldTenantID] != "a" {
-			t.Fatalf("leaked tenant %v in visited", n[spi.FieldTenantID])
 		}
 	}
 }

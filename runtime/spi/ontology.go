@@ -247,13 +247,13 @@ type LinkPage struct {
 
 // TraversalResult is the result of a graph traversal.
 //
-// Nodes are objects at the last TraversalPath step only.
-// Visited are strict intermediates: not the start object and not Nodes.
-// A one-step traverse has empty Visited. Edges are every link walked.
+// Nodes are objects at the last TraversalPath step only. Edges are every
+// link walked (deduplicated by link identity). Intermediate payloads are an
+// Expand-layer concern: callers hydrate them from Edges in batches. This
+// shape matches the TS SPI (packages/spi TraversalResult).
 type TraversalResult struct {
 	Nodes      []OntologyObject
 	Edges      []OntologyLink
-	Visited    []OntologyObject
 	TotalCount int
 }
 

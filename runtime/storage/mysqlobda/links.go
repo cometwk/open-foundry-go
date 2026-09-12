@@ -561,16 +561,14 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 	return spi.TraversalResult{
 		Nodes:      nodes,
 		Edges:      edges,
-		Visited:    []spi.OntologyObject{},
 		TotalCount: total,
 	}, nil
 }
 
 func emptyTraversal() spi.TraversalResult {
 	return spi.TraversalResult{
-		Nodes:   []spi.OntologyObject{},
-		Edges:   []spi.OntologyLink{},
-		Visited: []spi.OntologyObject{},
+		Nodes: []spi.OntologyObject{},
+		Edges: []spi.OntologyLink{},
 	}
 }
 
