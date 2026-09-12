@@ -61,7 +61,7 @@ func TestRenderSelectUsesBackticksAndParams(t *testing.T) {
 }
 
 func TestRenderTraverseChainedJoinShape(t *testing.T) {
-	sel, _, err := obda.PlanTraverse(obda.ObjectBinding{
+	sel, _, _, err := obda.PlanTraverse(obda.ObjectBinding{
 		Table:           "patient",
 		TenantColumn:    "tenant_id",
 		IdentityColumns: []string{"id"},
@@ -360,5 +360,44 @@ func TestRenderOrWithoutChildren(t *testing.T) {
 		},
 	}); err == nil {
 		t.Fatal("or without children should fail to render")
+	}
+}
+
+func TestRenderTraverseBucketProjection(t *testing.T) {
+	hop := obda.TraverseHop{
+		Direction:       "outbound",
+		LinkTable:       "admission",
+		LinkTenant:      "tenant_id",
+		LinkIdentityCol: "id",
+		FromCol:         "from_id",
+		ToCol:           "to_id",
+		PrevIDCol:       "id",
+		PrevTenantCol:   "tenant_id",
+		TargetTable:     "ward",
+		TargetIDCol:     "id",
+		TargetTenantCol: "tenant_id",
+		TargetSelect:    []string{"id", "ward_name", "tenant_id"},
+		LinkSelect:      []string{"id", "tenant_id", "from_id", "to_id", "version"},
+	}
+	sel, _, args, err := obda.PlanTraverse(obda.ObjectBinding{
+		Table:           "patient",
+		TenantColumn:    "tenant_id",
+		IdentityColumns: []string{"id"},
+	}, []obda.TraverseHop{hop}, "t1", "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmt, err := mysqldialect.New().Render(sel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Terminal bucket first, then the hop's link bucket; positional scanning
+	// tolerates duplicate column names across buckets.
+	wantSel := "SELECT `s1`.`id`, `s1`.`ward_name`, `s1`.`tenant_id`, `l0`.`id`, `l0`.`tenant_id`, `l0`.`from_id`, `l0`.`to_id`, `l0`.`version` FROM `patient` AS `s0`"
+	if !strings.HasPrefix(stmt.SQL, wantSel) {
+		t.Fatalf("sql=\n%s\nwant prefix=\n%s", stmt.SQL, wantSel)
+	}
+	if len(args) != 2 || args[0] != "t1" || args[1] != "p1" {
+		t.Fatalf("args=%v", args)
 	}
 }

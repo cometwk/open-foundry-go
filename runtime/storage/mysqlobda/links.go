@@ -450,7 +450,7 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 		prevModel = peer
 		terminal = peer
 	}
-	sel, args, err := obda.PlanTraverse(startModel.Binding(), hops, ctx.TenantID, startID)
+	sel, _, args, err := obda.PlanTraverse(startModel.Binding(), hops, ctx.TenantID, startID)
 	if err != nil {
 		return spi.TraversalResult{}, err
 	}
