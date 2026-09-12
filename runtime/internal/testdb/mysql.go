@@ -80,7 +80,6 @@ func open(t *testing.T, opts openOptions) *sql.DB {
 	if dsn == "" {
 		t.Skip("TEST_DB_URL not set; MySQL integration tests skipped")
 	}
-	fmt.Println("dsn", dsn)
 	cfg, err := mysql.ParseDSN(dsn)
 	if err != nil {
 		t.Fatalf("parse TEST_DB_URL: %v", err)

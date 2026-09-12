@@ -170,8 +170,16 @@ func expandTraverse(eng *engine.Engine, ctx spi.RequestContext, startObj spi.Ont
 		return nil, err
 	}
 	// Intermediates hydrate from Edges endpoints — same row window as Nodes,
-	// so a truncated fan-out yields a consistent partial tree.
-	hydrated, err := hydrateEdges(eng, ctx, tr.Edges, terminalType, startType, startID, false)
+	// so a truncated fan-out yields a consistent partial tree. Terminal ids
+	// are excluded (tr.Nodes carries them); only those ids, not the whole
+	// type, so a self-typed intermediate stays hydrated.
+	terminalIDs := map[string]struct{}{}
+	for _, n := range tr.Nodes {
+		if id, _ := n[spi.FieldID].(string); id != "" {
+			terminalIDs[id] = struct{}{}
+		}
+	}
+	hydrated, err := hydrateEdges(eng, ctx, tr.Edges, terminalType, startType, startID, terminalIDs, false)
 	if err != nil {
 		return nil, err
 	}

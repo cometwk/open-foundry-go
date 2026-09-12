@@ -29,18 +29,26 @@ func hydrateByIDs(eng *engine.Engine, ctx spi.RequestContext, typ string, ids []
 
 // hydrateEdges returns payloads for every object endpoint referenced by
 // edges, keyed by object id. Buckets come from the edges' own endpoint
-// types, so a link type repeating across hops stays correct. The terminal
-// type's bucket is dropped — tr.Nodes already carries terminal payloads —
-// and the start object's own endpoint is removed (a self-typed intermediate
-// is still hydrated; only the start id itself is not). Every remaining type
-// costs at most one QueryObjects.
-func hydrateEdges(eng *engine.Engine, ctx spi.RequestContext, edges []spi.OntologyLink, terminalType, startType, startID string, includeDeleted bool) (map[string]spi.OntologyObject, error) {
+// types, so a link type repeating across hops stays correct. Terminal ids
+// (carried by tr.Nodes) and the start object's own id are removed from
+// their buckets — but only those specific ids, not the entire type. This
+// keeps a self-typed intermediate hydrated even when it shares a type with
+// the terminal or start. Every remaining type costs at most one
+// QueryObjects.
+func hydrateEdges(eng *engine.Engine, ctx spi.RequestContext, edges []spi.OntologyLink, terminalType, startType, startID string, terminalIDs map[string]struct{}, includeDeleted bool) (map[string]spi.OntologyObject, error) {
 	buckets := map[string]map[string]struct{}{}
 	for _, e := range edges {
 		collectEndpoint(buckets, e[spi.LinkFieldFromType], e[spi.LinkFieldFromID])
 		collectEndpoint(buckets, e[spi.LinkFieldToType], e[spi.LinkFieldToID])
 	}
-	delete(buckets, terminalType)
+	if termBucket := buckets[terminalType]; termBucket != nil {
+		for id := range terminalIDs {
+			delete(termBucket, id)
+		}
+		if len(termBucket) == 0 {
+			delete(buckets, terminalType)
+		}
+	}
 	if start := buckets[startType]; start != nil {
 		delete(start, startID)
 		if len(start) == 0 {
