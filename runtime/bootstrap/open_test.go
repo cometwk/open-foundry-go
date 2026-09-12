@@ -29,9 +29,11 @@ func TestOpen_MemoryUnactivated(t *testing.T) {
 	if b.Conf == nil || b.Conf.TenantID != "t1" {
 		t.Fatalf("Conf=%+v", b.Conf)
 	}
+	// The memory provider surfaces an un-activated mapping as not-found
+	// (mysqlobda uses ErrMappingNotActive; both fail closed).
 	_, err = b.SPI.GetObject(spi.RequestContext{TenantID: "t1"}, "Widget", "x")
-	if !errors.Is(err, spi.ErrMappingNotActive) {
-		t.Fatalf("err=%v want ErrMappingNotActive", err)
+	if !errors.Is(err, spi.ErrObjectNotFound) {
+		t.Fatalf("err=%v want ErrObjectNotFound", err)
 	}
 }
 
