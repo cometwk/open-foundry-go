@@ -48,12 +48,8 @@ func TestGoldPath_GraphQLREST_HTTP(t *testing.T) {
 	})
 
 	t.Run("two hop branches readers", func(t *testing.T) {
-		// mysqlobda Traverse returns terminal Nodes only (Edges/Visited empty).
-		// query.assemblePath rebuilds the hop tree from Edges, so REST follow and
-		// GraphQL nested @link both need the memory provider for this assertion.
-		if env.Backend != backendMemory {
-			t.Skip("mysql Traverse is terminal-only; follow/2-hop tree needs Edges/Visited")
-		}
+		// Both backends rebuild the hop tree: Traverse returns per-hop Edges
+		// and the engine batch-hydrates intermediates from them.
 
 		res := gql(t, ts.URL, "gold", `{
 			book(id: "`+ids.tb2+`") {
