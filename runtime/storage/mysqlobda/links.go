@@ -317,19 +317,11 @@ func (p *Provider) GetLinks(ctx spi.RequestContext, objectID, linkType, directio
 		scanCols = l.Binding().SelectColumns
 		sel.Order = []sqlast.Order{{Field: sqlast.Identifier{Qualifier: "l", Name: firstCol(l.IdentityColumns)}}}
 	}
-	limit := 100
-	offset := 0
+	limit, offset := 0, 0
 	if options != nil {
-		if options.Limit > 0 {
-			limit = options.Limit
-		}
-		if limit > 1000 {
-			limit = 1000
-		}
-		if options.Offset > 0 {
-			offset = options.Offset
-		}
+		limit, offset = options.Limit, options.Offset
 	}
+	limit, offset = pageLimitOffset(limit, offset)
 	countSel := *sel
 	countSel.Limit = nil
 	countStmt, err := p.dialect.Render(&countSel)
@@ -402,6 +394,7 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 	}
 	includeDeleted := options != nil && options.IncludeDeleted
 	hops := make([]obda.TraverseHop, 0, len(path.Steps))
+	hopLinks := make([]*obda.CompiledLink, 0, len(path.Steps))
 	prevType := startType
 	prevModel := startModel
 	var terminal *obda.CompiledModel
@@ -427,7 +420,7 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 		if err != nil {
 			return emptyTraversal(), nil
 		}
-		hops = append(hops, obda.TraverseHop{
+		hop := obda.TraverseHop{
 			Direction:         dir,
 			LinkTable:         l.Table,
 			LinkTenant:        l.TenantColumn,
@@ -445,29 +438,42 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 			Inline:            l.Inline,
 			FKColumn:          l.FKColumn,
 			FKOnPrev:          l.Inline && l.HostModel == prevType,
-		})
+		}
+		if l.Inline {
+			host := peer
+			if hop.FKOnPrev {
+				host = prevModel
+			}
+			hop.HostSelect = host.Binding().SelectColumns
+		} else {
+			hop.LinkSelect = l.Binding().SelectColumns
+		}
+		hops = append(hops, hop)
+		hopLinks = append(hopLinks, l)
 		prevType = peerName
 		prevModel = peer
 		terminal = peer
 	}
-	sel, args, err := obda.PlanTraverse(startModel.Binding(), hops, ctx.TenantID, startID)
+	sel, layout, args, err := obda.PlanTraverse(startModel.Binding(), hops, ctx.TenantID, startID)
 	if err != nil {
 		return spi.TraversalResult{}, err
 	}
-	limit, offset := 100, 0
+	limit, offset := 0, 0
 	if options != nil {
-		if options.Limit > 0 {
-			limit = options.Limit
-		}
-		if limit > 1000 {
-			limit = 1000
-		}
-		if options.Offset > 0 {
-			offset = options.Offset
-		}
+		limit, offset = options.Limit, options.Offset
 	}
+	limit, offset = pageLimitOffset(limit, offset)
 	countSel := *sel
 	countSel.Limit = nil
+	countSel.Order = nil
+	// The count subquery is a MySQL derived table, which rejects duplicate
+	// column names (s1.id and l0.id both derive to "id"). Projecting a single
+	// terminal column keeps the derived-table names unique; the count is row
+	// count either way.
+	countSel.Columns = []sqlast.Expr{sqlast.Identifier{
+		Qualifier: layout.NodeAlias,
+		Name:      firstCol(terminal.IdentityColumns),
+	}}
 	countStmt, err := p.dialect.Render(&countSel)
 	if err != nil {
 		return spi.TraversalResult{}, err
@@ -487,35 +493,67 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 	}
 	defer rows.Close()
 	bizCols := terminal.Binding().SelectColumns
+	totalCols := len(layout.NodeCols)
+	for _, b := range layout.Hops {
+		totalCols += len(b.Cols)
+	}
 	nodes := make([]spi.OntologyObject, 0)
+	edges := make([]spi.OntologyLink, 0)
+	seen := make(map[string]struct{})
 	for rows.Next() {
-		dest, err := scan(rows, len(bizCols))
+		dest, err := scan(rows, totalCols)
 		if err != nil {
 			return spi.TraversalResult{}, err
 		}
-		biz := bizMap(dest, bizCols)
+		biz := bizMap(dest[:len(bizCols)], bizCols)
 		obj, err := p.assemble(terminal, ctx.TenantID, biz)
 		if err != nil {
 			return spi.TraversalResult{}, err
 		}
 		nodes = append(nodes, obj)
+		// Per-hop buckets reuse the GetLinks assemblers, so junction and
+		// inline edges are byte-identical to their GetLinks counterparts.
+		// Cartesian fan-out repeats hop rows; dedup by link identity.
+		for i, b := range layout.Hops {
+			if len(b.Cols) == 0 {
+				continue
+			}
+			bucketBiz := bizMap(dest[b.Offset:b.Offset+len(b.Cols)], b.Cols)
+			l := hopLinks[i]
+			var (
+				edge spi.OntologyLink
+				err  error
+			)
+			if b.Inline {
+				edge, err = assembleInlineLink(l, ctx.TenantID, bucketBiz)
+			} else {
+				edge, err = p.assembleLink(l, ctx.TenantID, bucketBiz)
+			}
+			if err != nil {
+				return spi.TraversalResult{}, err
+			}
+			key := l.Name + ":" + fmt.Sprint(edge[spi.FieldID])
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
+			edges = append(edges, edge)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return spi.TraversalResult{}, err
 	}
 	return spi.TraversalResult{
 		Nodes:      nodes,
-		Edges:      []spi.OntologyLink{},
-		Visited:    []spi.OntologyObject{},
+		Edges:      edges,
 		TotalCount: total,
 	}, nil
 }
 
 func emptyTraversal() spi.TraversalResult {
 	return spi.TraversalResult{
-		Nodes:   []spi.OntologyObject{},
-		Edges:   []spi.OntologyLink{},
-		Visited: []spi.OntologyObject{},
+		Nodes: []spi.OntologyObject{},
+		Edges: []spi.OntologyLink{},
 	}
 }
 

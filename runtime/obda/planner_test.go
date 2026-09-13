@@ -376,7 +376,7 @@ func startPatient() obda.ObjectBinding {
 }
 
 func TestPlanTraverseOneHopOutbound(t *testing.T) {
-	sel, args, err := obda.PlanTraverse(startPatient(), []obda.TraverseHop{admittedHop(false, false)}, "t1", "p1")
+	sel, _, args, err := obda.PlanTraverse(startPatient(), []obda.TraverseHop{admittedHop(false, false)}, "t1", "p1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,7 +435,7 @@ func TestPlanTraverseTwoHops(t *testing.T) {
 			OmitTargetDeleted: false,
 		},
 	}
-	sel, _, err := obda.PlanTraverse(startPatient(), hops, "t1", "p1")
+	sel, _, _, err := obda.PlanTraverse(startPatient(), hops, "t1", "p1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -454,7 +454,7 @@ func TestPlanTraverseTwoHops(t *testing.T) {
 }
 
 func TestPlanTraverseIncludeDeletedOmitsNulls(t *testing.T) {
-	sel, _, err := obda.PlanTraverse(startPatient(), []obda.TraverseHop{admittedHop(true, true)}, "t1", "p1")
+	sel, _, _, err := obda.PlanTraverse(startPatient(), []obda.TraverseHop{admittedHop(true, true)}, "t1", "p1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -469,7 +469,7 @@ func TestPlanTraverseInboundSwapsEndpoint(t *testing.T) {
 	h.TargetTable = "patient"
 	h.TargetSelect = []string{"id"}
 	h.PrevIDCol = "id"
-	sel, _, err := obda.PlanTraverse(obda.ObjectBinding{
+	sel, _, _, err := obda.PlanTraverse(obda.ObjectBinding{
 		Table: "ward", TenantColumn: "tenant_id", IdentityColumns: []string{"id"},
 	}, []obda.TraverseHop{h}, "t1", "w1")
 	if err != nil {
@@ -500,7 +500,7 @@ func ownedByInlineHop() obda.TraverseHop {
 }
 
 func TestPlanTraverseInlineOneHop(t *testing.T) {
-	sel, args, err := obda.PlanTraverse(obda.ObjectBinding{
+	sel, _, args, err := obda.PlanTraverse(obda.ObjectBinding{
 		Table: "book", TenantColumn: "tenant_id", IdentityColumns: []string{"id"},
 	}, []obda.TraverseHop{ownedByInlineHop()}, "t1", "b1")
 	if err != nil {
@@ -542,7 +542,7 @@ func TestPlanTraverseInlineThenTable(t *testing.T) {
 			OmitTargetDeleted: false,
 		},
 	}
-	sel, _, err := obda.PlanTraverse(obda.ObjectBinding{
+	sel, _, _, err := obda.PlanTraverse(obda.ObjectBinding{
 		Table: "book", TenantColumn: "tenant_id", IdentityColumns: []string{"id"},
 	}, hops, "t1", "b1")
 	if err != nil {
@@ -565,7 +565,7 @@ func TestPlanTraverseInlineIncludeDeleted(t *testing.T) {
 	h := ownedByInlineHop()
 	h.OmitLinkDeleted = true
 	h.OmitTargetDeleted = true
-	sel, _, err := obda.PlanTraverse(obda.ObjectBinding{
+	sel, _, _, err := obda.PlanTraverse(obda.ObjectBinding{
 		Table: "book", TenantColumn: "tenant_id", IdentityColumns: []string{"id"},
 	}, []obda.TraverseHop{h}, "t1", "b1")
 	if err != nil {
@@ -621,4 +621,156 @@ func hasColEq(p *sqlast.Predicate, aq, an, bq, bn string) bool {
 		}
 	}
 	return false
+}
+
+func TestPlanQueryOrOfEqParamsAndArgs(t *testing.T) {
+	b := patientBinding()
+	sel, args, err := obda.PlanQuery(b, "t1", spi.FilterExpression{Or: []spi.FilterExpression{
+		{Field: "patient_id", Operator: "eq", Value: "p1"},
+		{Field: "patient_id", Operator: "eq", Value: "p2"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Args follow textual ? order: tenant first, then each or child in order.
+	if fmt.Sprint(args) != "[t1 p1 p2]" {
+		t.Fatalf("args=%v", args)
+	}
+	and := sel.Where
+	if and.Op != "and" || len(and.Children) != 2 {
+		t.Fatalf("where op=%s children=%d", and.Op, len(and.Children))
+	}
+	or := and.Children[1]
+	if or.Op != "or" || len(or.Children) != 2 {
+		t.Fatalf("or op=%s children=%d", or.Op, len(or.Children))
+	}
+	for i, want := range []int{2, 3} {
+		p := or.Children[i].Value.(sqlast.Param)
+		if p.Position != want {
+			t.Fatalf("child %d param position=%d want %d", i, p.Position, want)
+		}
+	}
+	// Empty operator inside Or defaults to eq like the leaf path.
+	if _, _, err := obda.PlanQuery(b, "t1", spi.FilterExpression{Or: []spi.FilterExpression{
+		{Field: "patient_id", Value: "p1"},
+	}}); err != nil {
+		t.Fatalf("empty operator should default to eq: %v", err)
+	}
+}
+
+func TestPlanQueryOrInvalidChildren(t *testing.T) {
+	b := patientBinding()
+	// Nested compound inside Or is rejected.
+	if _, _, err := obda.PlanQuery(b, "t1", spi.FilterExpression{Or: []spi.FilterExpression{
+		{Or: []spi.FilterExpression{{Field: "patient_id", Operator: "eq", Value: "p1"}}},
+	}}); !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("nested Or should return ErrInvalidMapping, got %v", err)
+	}
+	// Non-eq operator inside Or is rejected.
+	if _, _, err := obda.PlanQuery(b, "t1", spi.FilterExpression{Or: []spi.FilterExpression{
+		{Field: "patient_id", Operator: "ne", Value: "p1"},
+	}}); !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("ne child should return ErrInvalidMapping, got %v", err)
+	}
+	// Unknown field inside Or is rejected.
+	if _, _, err := obda.PlanQuery(b, "t1", spi.FilterExpression{Or: []spi.FilterExpression{
+		{Field: "nope", Operator: "eq", Value: "p1"},
+	}}); !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("unknown field should return ErrInvalidMapping, got %v", err)
+	}
+}
+
+func TestPlanTraverseLayoutJunctionHops(t *testing.T) {
+	h1 := admittedHop(false, false)
+	h1.LinkSelect = []string{"id", "tenant_id", "from_id", "to_id", "version", "deleted_at"}
+	h2 := admittedHop(false, false)
+	h2.LinkSelect = []string{"id", "from_id", "to_id"}
+	sel, layout, args, err := obda.PlanTraverse(startPatient(), []obda.TraverseHop{h1, h2}, "t1", "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// args stay [tenant, startID]; projection adds no parameters.
+	if len(args) != 2 || args[0] != "t1" || args[1] != "p1" {
+		t.Fatalf("args=%v", args)
+	}
+	if layout.NodeAlias != "s2" {
+		t.Fatalf("nodeAlias=%s", layout.NodeAlias)
+	}
+	if fmt.Sprint(layout.NodeCols) != fmt.Sprint(h2.TargetSelect) {
+		t.Fatalf("nodeCols=%v", layout.NodeCols)
+	}
+	if len(layout.Hops) != 2 {
+		t.Fatalf("hops=%+v", layout.Hops)
+	}
+	b0, b1 := layout.Hops[0], layout.Hops[1]
+	if b0.Inline || b0.Alias != "l0" || b0.Offset != len(h2.TargetSelect) || fmt.Sprint(b0.Cols) != fmt.Sprint(h1.LinkSelect) {
+		t.Fatalf("bucket0=%+v", b0)
+	}
+	if b1.Inline || b1.Alias != "l1" || b1.Offset != len(h2.TargetSelect)+len(h1.LinkSelect) || fmt.Sprint(b1.Cols) != fmt.Sprint(h2.LinkSelect) {
+		t.Fatalf("bucket1=%+v", b1)
+	}
+	// SELECT order: terminal bucket first, then hop buckets in path order.
+	wantQualifiers := []string{"s2", "s2", "s2", "l0", "l0", "l0", "l0", "l0", "l0", "l1", "l1", "l1"}
+	if len(sel.Columns) != len(wantQualifiers) {
+		t.Fatalf("columns=%d", len(sel.Columns))
+	}
+	for i, want := range wantQualifiers {
+		id, ok := sel.Columns[i].(sqlast.Identifier)
+		if !ok || id.Qualifier != want {
+			t.Fatalf("column %d=%+v want qualifier %s", i, sel.Columns[i], want)
+		}
+	}
+}
+
+func TestPlanTraverseLayoutInlineHopAliases(t *testing.T) {
+	inlineHop := func(fkOnPrev bool) obda.TraverseHop {
+		return obda.TraverseHop{
+			Direction:         "outbound",
+			Inline:            true,
+			FKColumn:          "owner_id",
+			FKOnPrev:          fkOnPrev,
+			TargetTable:       "member",
+			TargetIDCol:       "id",
+			TargetTenantCol:   "tenant_id",
+			TargetSelect:      []string{"id", "name"},
+			OmitLinkDeleted:   false,
+			OmitTargetDeleted: false,
+			HostSelect:        []string{"id", "owner_id", "version"},
+		}
+	}
+	// Host on the previous (start) table: bucket alias is s0.
+	_, layout, args, err := obda.PlanTraverse(obda.ObjectBinding{
+		Table:           "book",
+		TenantColumn:    "tenant_id",
+		IdentityColumns: []string{"id"},
+	}, []obda.TraverseHop{inlineHop(true)}, "t1", "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !layout.Hops[0].Inline || layout.Hops[0].Alias != "s0" || layout.Hops[0].Offset != 2 {
+		t.Fatalf("bucket=%+v", layout.Hops[0])
+	}
+	if len(args) != 2 {
+		t.Fatalf("args=%v", args)
+	}
+	// Host on this hop's target table: bucket alias is s1.
+	_, layout, _, err = obda.PlanTraverse(obda.ObjectBinding{
+		Table:           "book",
+		TenantColumn:    "tenant_id",
+		IdentityColumns: []string{"id"},
+	}, []obda.TraverseHop{inlineHop(false)}, "t1", "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if layout.Hops[0].Alias != "s1" || layout.Hops[0].Offset != 2 {
+		t.Fatalf("bucket=%+v", layout.Hops[0])
+	}
+	// Empty hops with no bucket columns still yield a layout with zero-col buckets.
+	_, layout, _, err = obda.PlanTraverse(startPatient(), []obda.TraverseHop{admittedHop(false, false)}, "t1", "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(layout.Hops) != 1 || len(layout.Hops[0].Cols) != 0 {
+		t.Fatalf("empty bucket layout=%+v", layout)
+	}
 }

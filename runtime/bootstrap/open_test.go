@@ -9,31 +9,36 @@ import (
 
 	"github.com/openfoundry/runtime/bootstrap"
 	"github.com/openfoundry/runtime/spi"
+	"github.com/openfoundry/runtime/storage/memory"
 	"github.com/openfoundry/runtime/storage/mysqlobda"
-	"github.com/openfoundry/runtime/storage/sqliteobda"
 )
 
-func TestOpen_SQLiteUnactivated(t *testing.T) {
-	c := widgetOpenConf(t, "sqlite")
+func TestOpen_MemoryUnactivated(t *testing.T) {
+	c := widgetOpenConf(t, "memory")
 	b, err := bootstrap.Open(c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = b.DB.Close() })
-	if _, ok := b.SPI.(*sqliteobda.Provider); !ok {
+	t.Cleanup(func() { _ = b.Close() })
+	if b.DB != nil {
+		t.Fatalf("memory backend must not open a database, got %T", b.DB)
+	}
+	if _, ok := b.SPI.(*memory.Provider); !ok {
 		t.Fatalf("SPI=%T", b.SPI)
 	}
 	if b.Conf == nil || b.Conf.TenantID != "t1" {
 		t.Fatalf("Conf=%+v", b.Conf)
 	}
+	// The memory provider surfaces an un-activated mapping as not-found
+	// (mysqlobda uses ErrMappingNotActive; both fail closed).
 	_, err = b.SPI.GetObject(spi.RequestContext{TenantID: "t1"}, "Widget", "x")
-	if !errors.Is(err, spi.ErrMappingNotActive) {
-		t.Fatalf("err=%v want ErrMappingNotActive", err)
+	if !errors.Is(err, spi.ErrObjectNotFound) {
+		t.Fatalf("err=%v want ErrObjectNotFound", err)
 	}
 }
 
-func TestOpen_EmptyURL(t *testing.T) {
-	c := widgetOpenConf(t, "sqlite")
+func TestOpen_MySQLEmptyURL(t *testing.T) {
+	c := widgetOpenConf(t, "mysql")
 	c.DBURL = ""
 	if _, err := bootstrap.Open(c); err == nil || !strings.Contains(err.Error(), "DB_URL") {
 		t.Fatalf("err=%v", err)
@@ -41,13 +46,13 @@ func TestOpen_EmptyURL(t *testing.T) {
 }
 
 func TestOpen_UnknownDriver(t *testing.T) {
-	c := widgetOpenConf(t, "sqlite3")
-	if _, err := bootstrap.Open(c); err == nil {
-		t.Fatal("want unsupported driver")
-	}
-	c.DBDriver = "postgres"
-	if _, err := bootstrap.Open(c); err == nil {
-		t.Fatal("want unsupported driver")
+	// sqlite died with the sqliteobda provider; it must fail like any other
+	// unknown driver instead of silently falling back.
+	for _, driver := range []string{"sqlite", "sqlite3", "postgres"} {
+		c := widgetOpenConf(t, driver)
+		if _, err := bootstrap.Open(c); err == nil {
+			t.Fatalf("driver %q: want unsupported driver", driver)
+		}
 	}
 }
 
@@ -72,8 +77,7 @@ func TestOpen_TwoMappings(t *testing.T) {
 		BaseDir:     base,
 		DomainPacks: "fixture",
 		TenantID:    "t1",
-		DBDriver:    "sqlite",
-		DBURL:       filepath.Join(t.TempDir(), "t.db"),
+		DBDriver:    "memory",
 	}
 	if _, err := bootstrap.Open(c); err == nil || !strings.Contains(err.Error(), "mappings=2") {
 		t.Fatalf("err=%v", err)
@@ -91,7 +95,7 @@ func TestOpen_MySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = b.DB.Close() })
+	t.Cleanup(func() { _ = b.Close() })
 	if _, ok := b.SPI.(*mysqlobda.Provider); !ok {
 		t.Fatalf("SPI=%T", b.SPI)
 	}

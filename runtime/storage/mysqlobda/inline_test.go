@@ -179,7 +179,8 @@ func TestInlineConcurrentCreateLink(t *testing.T) {
 func TestInlineTraverseOneHop(t *testing.T) {
 	p, _, readerID, branchID := activateInline(t)
 	ctx := spi.RequestContext{TenantID: "t1"}
-	if _, err := p.CreateLink(ctx, "RegisteredAt", readerID, branchID, nil); err != nil {
+	link, err := p.CreateLink(ctx, "RegisteredAt", readerID, branchID, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
 	tr, err := p.Traverse(ctx, readerID, spi.TraversalPath{Steps: []spi.TraversalStep{{LinkType: "RegisteredAt"}}}, nil)
@@ -188,6 +189,23 @@ func TestInlineTraverseOneHop(t *testing.T) {
 	}
 	if len(tr.Nodes) != 1 || tr.Nodes[0][spi.FieldID] != branchID {
 		t.Fatalf("%+v", tr.Nodes)
+	}
+	// Inline edges are synthesized from host columns: identity derives from
+	// the host primary key and must equal both the CreateLink result and the
+	// same link fetched through GetLinks (single derivation, two exits).
+	assertEdgesLen(t, tr, 1)
+	if tr.Edges[0][spi.FieldID] != link[spi.FieldID] {
+		t.Fatalf("inline edge id=%v want %v", tr.Edges[0][spi.FieldID], link[spi.FieldID])
+	}
+	if tr.Edges[0][spi.FieldID] != readerID {
+		t.Fatalf("inline edge id=%v want host pk %v", tr.Edges[0][spi.FieldID], readerID)
+	}
+	out, err := p.GetLinks(ctx, readerID, "RegisteredAt", "outbound", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Items) != 1 || out.Items[0][spi.FieldID] != tr.Edges[0][spi.FieldID] {
+		t.Fatalf("GetLinks/Traverse inline identity diverged: %+v vs %+v", out.Items, tr.Edges)
 	}
 }
 

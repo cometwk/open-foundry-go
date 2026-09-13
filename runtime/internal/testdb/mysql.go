@@ -21,6 +21,8 @@ import (
 var (
 	loadEnvOnce sync.Once
 	mu          sync.Mutex
+	ready       = sync.NewCond(&mu)
+	refs        = make(map[*testing.T]int)
 )
 
 // LoadEnv loads repo-root .env so TEST_DB_URL is visible under `go test`.
@@ -54,7 +56,8 @@ type openOptions struct {
 // Open connects to the database named in TEST_DB_URL and drops existing tables
 // so InitMappedSchema can recreate a fresh schema. Cleanup drops tables again.
 // It does not CREATE DATABASE. Tests skip when TEST_DB_URL is unset. Access is
-// serialized so packages that share the same DSN do not clobber each other.
+// serialized across distinct tests that share the same DSN. Nested Open on
+// the same *testing.T just increments a refcount.
 func Open(t *testing.T) *sql.DB {
 	t.Helper()
 	return open(t, openOptions{dropOnOpen: true, dropOnCleanup: true})
@@ -88,11 +91,11 @@ func open(t *testing.T, opts openOptions) *sql.DB {
 		t.Fatal("TEST_DB_URL must include a database name")
 	}
 
-	mu.Lock()
+	acquire(t)
 	ok := false
 	defer func() {
 		if !ok {
-			mu.Unlock()
+			release(t)
 		}
 	}()
 
@@ -120,10 +123,32 @@ func open(t *testing.T, opts openOptions) *sql.DB {
 			_ = DropTables(db)
 		}
 		_ = db.Close()
-		mu.Unlock()
+		release(t)
 	})
 	ok = true
 	return db
+}
+
+func acquire(t *testing.T) {
+	mu.Lock()
+	defer mu.Unlock()
+	for len(refs) > 0 && refs[t] == 0 {
+		ready.Wait()
+	}
+	refs[t]++
+}
+
+func release(t *testing.T) {
+	mu.Lock()
+	defer mu.Unlock()
+	if refs[t] <= 0 {
+		panic("testdb: release without matching acquire")
+	}
+	refs[t]--
+	if refs[t] == 0 {
+		delete(refs, t)
+		ready.Broadcast()
+	}
 }
 
 // DropTables drops every table in DATABASE(). Views and other objects are left

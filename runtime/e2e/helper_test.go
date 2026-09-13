@@ -50,41 +50,49 @@ func requireDBMode(t *testing.T) string {
 	}
 }
 
-// goldHTTPEnv is the shared GraphQL/REST gold-path fixture: real library
-// pack, storage provider (memory or MySQL), seeded simplified ABox, and
-// an httptest server.
-type goldHTTPEnv struct {
+// goldEnv is the shared gold-path fixture: real library pack, storage
+// (memory or MySQL), and seeded simplified ABox. GraphQL tests use API
+// via Server.Exec; REST tests also start Server (httptest).
+type goldEnv struct {
 	Backend  string
 	PackDir  string
 	Ontology *ir.Ontology
 	Provider spi.StorageProvider
 	Engine   *engine.Engine
+	API      *api.Server
 	Ctx      spi.RequestContext
 	IDs      libraryIDs
 	Server   *httptest.Server
 }
 
-// setupGoldHTTP loads library-pack, picks memory vs MySQL from TEST_DB_URL,
-// prepares storage per E2E_DB_MODE, and starts the HTTP API.
-func setupGoldHTTP(t *testing.T) goldHTTPEnv {
+// setupGoldAPI loads library-pack, picks memory vs MySQL from TEST_DB_URL,
+// prepares storage per E2E_DB_MODE, and builds the GraphQL API in-process.
+func setupGoldAPI(t *testing.T) goldEnv {
 	t.Helper()
 	mode := requireDBMode(t)
 	if mode == dbModeInit {
 		t.Skip("E2E_DB_MODE=init is for TestInitGoldDB only")
 	}
 	env := prepareGoldStorage(t, mode)
-
 	srv, err := api.New(env.Engine)
 	if err != nil {
 		t.Fatalf("api.New err = %v", err)
 	}
-	ts := httptest.NewServer(srv.Handler())
+	env.API = srv
+	return env
+}
+
+// setupGoldHTTP is setupGoldAPI plus an httptest server for REST.
+func setupGoldHTTP(t *testing.T) goldEnv {
+	t.Helper()
+	env := setupGoldAPI(t)
+	ts := httptest.NewServer(env.API.Handler())
 	t.Cleanup(ts.Close)
 	env.Server = ts
 	return env
 }
 
-func prepareGoldStorage(t *testing.T, mode string) goldHTTPEnv {
+func prepareGoldStorage(t *testing.T, mode string) goldEnv {
 	t.Helper()
 	if mode == dbModeInit || mode == dbModeReuse {
 		if testdb.DSN() == "" {
@@ -121,7 +129,7 @@ func prepareGoldStorage(t *testing.T, mode string) goldHTTPEnv {
 		ids = seedLibrary(t, eng, dir, ctx)
 	}
 
-	return goldHTTPEnv{
+	return goldEnv{
 		Backend:  backend,
 		PackDir:  dir,
 		Ontology: onto,

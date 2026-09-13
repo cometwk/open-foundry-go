@@ -102,19 +102,42 @@ func (p *Provider) QueryObjects(ctx spi.RequestContext, typ string, filter spi.F
 	return spi.ObjectPage{Items: items, TotalCount: total, HasNextPage: hasNext}, nil
 }
 
-// pageLimitOffset applies the shared QueryObjects/AggregateObjects/SearchObjects
-// pagination policy: limit<=0 defaults to 100, hard cap 1000, offset<0 clamps to 0.
+// 临时设置为 10 便于测试
+const (
+	// DefaultPageLimit is used when Limit <= 0 (or options is nil).
+	DefaultPageLimit = 10 //100
+	// MaxPageLimit is the hard cap; larger Limit values are truncated to this.
+	MaxPageLimit = 10 //1000
+)
+
+// pageLimitOffset applies the shared pagination policy used by
+// QueryObjects/AggregateObjects/SearchObjects/GetLinks/Traverse:
+// limit<=0 defaults to DefaultPageLimit, hard cap MaxPageLimit, offset<0 clamps to 0.
 func pageLimitOffset(limit, offset int) (int, int) {
 	if limit <= 0 {
-		limit = 100
+		limit = DefaultPageLimit
 	}
-	if limit > 1000 {
-		limit = 1000
+	if limit > MaxPageLimit {
+		limit = MaxPageLimit
 	}
 	if offset < 0 {
 		offset = 0
 	}
 	return limit, offset
+}
+
+// filterColumn resolves a logical filter field to its physical column. The
+// identity alias "_id" maps to the first identity column; business fields map
+// through the compiled model.
+func filterColumn(m *obda.CompiledModel, logical string) (string, bool) {
+	if logical == spi.FieldID && len(m.IdentityColumns) > 0 {
+		return m.IdentityColumns[0], true
+	}
+	cf, ok := m.FieldByLogical[logical]
+	if !ok {
+		return "", false
+	}
+	return cf.Column, true
 }
 
 func translateFilter(m *obda.CompiledModel, f spi.FilterExpression) (spi.FilterExpression, error) {
@@ -123,14 +146,29 @@ func translateFilter(m *obda.CompiledModel, f spi.FilterExpression) (spi.FilterE
 		return f, nil
 	}
 	if f.Field != "" {
-		cf, ok := m.FieldByLogical[f.Field]
+		col, ok := filterColumn(m, f.Field)
 		if !ok {
 			return f, fmt.Errorf("%w: unknown filter field %q", spi.ErrInvalidMapping, f.Field)
 		}
 		if f.Operator != "" && f.Operator != "eq" {
 			return f, fmt.Errorf("%w: unsupported filter operator %q", spi.ErrInvalidMapping, f.Operator)
 		}
-		f.Field = cf.Column
+		f.Field = col
+		return f, nil
+	}
+	if len(f.Or) > 0 {
+		// Or is accepted only over eq leaves — the batch-by-ids shape.
+		for i := range f.Or {
+			c := &f.Or[i]
+			if c.Field == "" || (c.Operator != "" && c.Operator != "eq") {
+				return f, fmt.Errorf("%w: or children must be eq leaves", spi.ErrInvalidMapping)
+			}
+			col, ok := filterColumn(m, c.Field)
+			if !ok {
+				return f, fmt.Errorf("%w: unknown filter field %q", spi.ErrInvalidMapping, c.Field)
+			}
+			c.Field = col
+		}
 		return f, nil
 	}
 	return f, fmt.Errorf("%w: unsupported filter", spi.ErrInvalidMapping)

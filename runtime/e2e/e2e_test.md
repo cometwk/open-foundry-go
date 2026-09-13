@@ -12,19 +12,19 @@
 
 ## 入口怎么拆
 
-- **情况 1**：`TestGoldPath_GraphQLREST_HTTP` 默认 `fresh`，`go test ./e2e/` 不变
+- **情况 1**：`TestGoldPath_GraphQL` / `TestGoldPath_REST` 默认 `fresh`，`go test ./e2e/` 不变
 - **情况 2 初始化**：独立 `TestInitGoldDB`，默认 Skip；只有 `E2E_DB_MODE=init` 才跑
 - **情况 2 测试**：同一个 `TestGoldPath_...`，`E2E_DB_MODE=reuse` 时走「只连接」
 
 ```bash
 # 情况 1（默认）
-cd runtime && go test ./e2e/ -count=1 -run GraphQLREST
+cd runtime && go test ./e2e/ -count=1 -run 'GraphQL|REST'
 
 # 情况 2：先准备库
 E2E_DB_MODE=init go test ./e2e/ -count=1 -run TestInitGoldDB
 
 # 情况 2：反复只读
-E2E_DB_MODE=reuse go test ./e2e/ -count=1 -run GraphQLREST
+E2E_DB_MODE=reuse go test ./e2e/ -count=1 -run 'GraphQL|REST'
 ```
 
 ## SQL 打印

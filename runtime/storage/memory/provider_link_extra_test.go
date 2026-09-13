@@ -124,15 +124,23 @@ func TestTraverse_MultiStep_NodesAreFinalStep(t *testing.T) {
 	if len(res.Edges) != 2 {
 		t.Errorf("edges = %d, want 2 (both hops) (AE8)", len(res.Edges))
 	}
-	if len(res.Visited) != 1 {
-		t.Fatalf("visited = %d, want 1 (Part only)", len(res.Visited))
+	// Intermediates are no longer a TraversalResult bucket: the Part hop is
+	// observable through its edge endpoints, and payloads hydrate at the
+	// Expand layer from those edges.
+	endpoints := map[string]bool{}
+	for _, e := range res.Edges {
+		endpoints[e["_fromId"].(string)] = true
+		endpoints[e["_toId"].(string)] = true
 	}
-	if res.Visited[0]["_id"] != pt["_id"] {
-		t.Errorf("visited _id = %v, want Part %v", res.Visited[0]["_id"], pt["_id"])
+	if !endpoints[pt["_id"].(string)] {
+		t.Errorf("Part missing from edge endpoints: %v", endpoints)
+	}
+	if endpoints[""] {
+		t.Errorf("edge with empty endpoint: %v", res.Edges)
 	}
 }
 
-func TestTraverse_OneHop_VisitedEmpty(t *testing.T) {
+func TestTraverse_OneHop_EdgesCarryTheHop(t *testing.T) {
 	p := New()
 	a, _ := tenancyA()
 	schema := spi.OntologySchema{
@@ -158,8 +166,8 @@ func TestTraverse_OneHop_VisitedEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Traverse err = %v", err)
 	}
-	if len(res.Nodes) != 1 || len(res.Visited) != 0 {
-		t.Fatalf("1-hop nodes=%d visited=%d, want 1/0", len(res.Nodes), len(res.Visited))
+	if len(res.Nodes) != 1 || len(res.Edges) != 1 {
+		t.Fatalf("1-hop nodes/edges = %d/%d, want 1/1", len(res.Nodes), len(res.Edges))
 	}
 }
 

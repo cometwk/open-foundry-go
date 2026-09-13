@@ -9,8 +9,6 @@ import (
 	"xorm.io/xorm"
 
 	_ "github.com/go-sql-driver/mysql"
-	_ "modernc.org/sqlite"
-	// _ "github.com/mattn/go-sqlite3"    // file:test.db?_busy_timeout=5000&_journal_mode=WAL
 )
 
 func NewEngine(dbDriver, dbUrl string) (*xorm.Engine, error) {

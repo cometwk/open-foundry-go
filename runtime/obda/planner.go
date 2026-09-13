@@ -334,16 +334,44 @@ type TraverseHop struct {
 	Inline            bool
 	FKColumn          string
 	FKOnPrev          bool
+	// LinkSelect projects the junction link row's columns for this hop
+	// (junction hops only) so the scanner can assemble real Edges.
+	LinkSelect []string
+	// HostSelect projects the host binding's columns for inline hops; the
+	// host alias is the previous hop alias when FKOnPrev, else this hop's
+	// target alias.
+	HostSelect []string
+}
+
+// TraverseBucket describes one hop's projected columns inside a Traverse row.
+type TraverseBucket struct {
+	Inline bool
+	Alias  string // link alias (junction) or host alias (inline)
+	Offset int    // column index of the bucket's first column
+	Cols   []string
+}
+
+// TraverseLayout maps the flat Traverse projection into buckets: terminal
+// object columns first, then one bucket per hop in path order. Scanning is
+// positional; duplicate column names across buckets are expected and safe.
+type TraverseLayout struct {
+	NodeAlias string
+	NodeCols  []string
+	Hops      []TraverseBucket
 }
 
 // PlanTraverse selects terminal object columns via a chained INNER JOIN.
 // FROM is the start object table; each hop adds the link table then the target object table.
-func PlanTraverse(start ObjectBinding, hops []TraverseHop, tenant, startID string) (*sqlast.Select, []any, error) {
+// The projection carries the terminal bucket first, then one bucket per hop
+// (junction link columns, or host columns for inline hops); TraverseLayout
+// maps the column offsets. WHERE, ORDER, and args are unaffected by the
+// projection — args stay [tenant, startID].
+func PlanTraverse(start ObjectBinding, hops []TraverseHop, tenant, startID string) (*sqlast.Select, *TraverseLayout, []any, error) {
 	if tenant == "" {
-		return nil, nil, spi.ErrTenantRequired
+		return nil, nil, nil, spi.ErrTenantRequired
 	}
 	if start.Table == "" || len(start.IdentityColumns) == 0 || len(hops) == 0 {
-		return nil, nil, spi.ErrInvalidMapping
+		return nil, nil, nil, spi.ErrInvalidMapping
 	}
 	startIDCol := start.IdentityColumns[0]
 	startAlias := "s0"
@@ -361,7 +389,7 @@ func PlanTraverse(start ObjectBinding, hops []TraverseHop, tenant, startID strin
 		nextAlias := fmt.Sprintf("s%d", i+1)
 		if h.Inline {
 			if h.FKColumn == "" || h.TargetTable == "" {
-				return nil, nil, spi.ErrInvalidMapping
+				return nil, nil, nil, spi.ErrInvalidMapping
 			}
 			sel.Joins = append(sel.Joins, sqlast.Join{
 				Kind:  "INNER",
@@ -388,7 +416,7 @@ func PlanTraverse(start ObjectBinding, hops []TraverseHop, tenant, startID strin
 			continue
 		}
 		if h.LinkTable == "" || h.TargetTable == "" || h.FromCol == "" || h.ToCol == "" {
-			return nil, nil, spi.ErrInvalidMapping
+			return nil, nil, nil, spi.ErrInvalidMapping
 		}
 		linkAlias := fmt.Sprintf("l%d", i)
 		endCol, peerFK := h.FromCol, h.ToCol
@@ -430,9 +458,38 @@ func PlanTraverse(start ObjectBinding, hops []TraverseHop, tenant, startID strin
 	last := hops[len(hops)-1]
 	termAlias := fmt.Sprintf("s%d", len(hops))
 	linkAlias := fmt.Sprintf("l%d", len(hops)-1)
-	cols := make([]sqlast.Expr, len(last.TargetSelect))
-	for i, c := range last.TargetSelect {
-		cols[i] = sqlast.Identifier{Qualifier: termAlias, Name: c}
+	cols := make([]sqlast.Expr, 0, len(last.TargetSelect))
+	for _, c := range last.TargetSelect {
+		cols = append(cols, sqlast.Identifier{Qualifier: termAlias, Name: c})
+	}
+	layout := &TraverseLayout{
+		NodeAlias: termAlias,
+		NodeCols:  append([]string(nil), last.TargetSelect...),
+		Hops:      make([]TraverseBucket, 0, len(hops)),
+	}
+	offset := len(last.TargetSelect)
+	for i, h := range hops {
+		var bucketCols []string
+		alias := fmt.Sprintf("l%d", i)
+		if h.Inline {
+			bucketCols = h.HostSelect
+			alias = fmt.Sprintf("s%d", i)
+			if !h.FKOnPrev {
+				alias = fmt.Sprintf("s%d", i+1)
+			}
+		} else {
+			bucketCols = h.LinkSelect
+		}
+		for _, c := range bucketCols {
+			cols = append(cols, sqlast.Identifier{Qualifier: alias, Name: c})
+		}
+		layout.Hops = append(layout.Hops, TraverseBucket{
+			Inline: h.Inline,
+			Alias:  alias,
+			Offset: offset,
+			Cols:   append([]string(nil), bucketCols...),
+		})
+		offset += len(bucketCols)
 	}
 	sel.Columns = cols
 	sel.Order = append(sel.Order, sqlast.Order{
@@ -453,7 +510,7 @@ func PlanTraverse(start ObjectBinding, hops []TraverseHop, tenant, startID strin
 			Field: sqlast.Identifier{Qualifier: linkAlias, Name: last.LinkIdentityCol},
 		})
 	}
-	return sel, []any{tenant, startID}, nil
+	return sel, layout, []any{tenant, startID}, nil
 }
 
 func inlineHopOn(h TraverseHop, prevAlias, nextAlias string) *sqlast.Predicate {
@@ -490,6 +547,24 @@ func compileFilter(f spi.FilterExpression, known map[string]struct{}, next int) 
 			return nil, nil, fmt.Errorf("%w: unsupported filter operator %q", spi.ErrInvalidMapping, f.Operator)
 		}
 		return eq(ident(f.Field), next), []any{f.Value}, nil
+	}
+	if len(f.Or) > 0 {
+		// Or is accepted only over eq leaves — the batch-by-ids shape. Children
+		// carrying compound expressions or other operators stay unsupported so
+		// args order (textual ? appearance) stays trivially correct.
+		children := make([]*sqlast.Predicate, 0, len(f.Or))
+		args := make([]any, 0, len(f.Or))
+		for _, c := range f.Or {
+			if c.Field == "" || (c.Operator != "" && c.Operator != "eq") {
+				return nil, nil, fmt.Errorf("%w: or children must be eq leaves", spi.ErrInvalidMapping)
+			}
+			if _, ok := known[c.Field]; !ok {
+				return nil, nil, fmt.Errorf("%w: unknown filter field %q", spi.ErrInvalidMapping, c.Field)
+			}
+			children = append(children, eq(ident(c.Field), next+len(args)))
+			args = append(args, c.Value)
+		}
+		return &sqlast.Predicate{Op: "or", Children: children}, args, nil
 	}
 	return nil, nil, fmt.Errorf("%w: unsupported filter", spi.ErrInvalidMapping)
 }

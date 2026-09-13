@@ -1,64 +1,58 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/openfoundry/runtime/bootstrap"
-	"github.com/openfoundry/runtime/spi"
 )
 
-func TestSeed_SQLiteIdempotent(t *testing.T) {
-	base, dbPath := writeSeedFixture(t)
+func TestSeed_MemoryCreates(t *testing.T) {
+	base, _ := writeSeedFixture(t)
 	prev := conf
 	conf = &bootstrap.Conf{
 		BaseDir:     base,
 		DomainPacks: "fixture",
 		TenantID:    "t1",
 		SeedTenant:  "default",
-		DBDriver:    "sqlite",
-		DBURL:       dbPath,
+		DBDriver:    bootstrap.BackendMemory,
 	}
 	t.Cleanup(func() { conf = prev })
 
-	out := filepath.Join(t.TempDir(), "schema.sql")
-	if err := ddl("", out, true, false); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := seed(); err != nil {
-		t.Fatal(err)
-	}
-	if got := queryWidgetNames(t, conf); got != "Ada" {
-		t.Fatalf("after first seed name=%q", got)
-	}
-
-	if err := seed(); err != nil {
-		t.Fatal(err)
-	}
-	if got := queryWidgetNames(t, conf); got != "Ada" {
-		t.Fatalf("after second seed name=%q", got)
+	// Memory is per-process: each seed() opens a fresh instance, so the
+	// observable contract is the seed report. Skip-existing idempotence on
+	// one instance is covered by bootstrap.TestApplySeeds_LibraryDemoIdempotent.
+	out := captureStdout(t, func() {
+		if err := seed(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(out, "Seed: created 1 object(s) + 0 link(s), skipped 0 existing") {
+		t.Fatalf("seed report: %s", out)
 	}
 }
 
-func TestSeed_RequiresSchema(t *testing.T) {
-	base, dbPath := writeSeedFixture(t)
-	prev := conf
-	conf = &bootstrap.Conf{
-		BaseDir:     base,
-		DomainPacks: "fixture",
-		TenantID:    "t1",
-		SeedTenant:  "default",
-		DBDriver:    "sqlite",
-		DBURL:       dbPath,
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Cleanup(func() { conf = prev })
-
-	if err := seed(); err == nil {
-		t.Fatal("seed without ddl err = nil, want schema verification failure")
+	os.Stdout = w
+	defer func() { os.Stdout = old }()
+	fn()
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
 	}
+	var buf strings.Builder
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatal(err)
+	}
+	return buf.String()
 }
 
 func TestSeed_NilConf(t *testing.T) {
@@ -136,30 +130,4 @@ models:
 		}
 	}
 	return base, filepath.Join(t.TempDir(), "t.db")
-}
-
-func queryWidgetNames(t *testing.T, c *bootstrap.Conf) string {
-	t.Helper()
-	b, err := bootstrap.Open(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer b.DB.Close()
-	if err := b.ApplySchema(); err != nil {
-		t.Fatal(err)
-	}
-	page, err := b.SPI.QueryObjects(
-		bootstrap.SeedContext(c.SeedTenant),
-		"Widget",
-		spi.FilterExpression{Field: "name", Operator: "eq", Value: "Ada"},
-		&spi.QueryOptions{Limit: 5},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if page.TotalCount != 1 {
-		t.Fatalf("Widget count=%d, want 1", page.TotalCount)
-	}
-	name, _ := page.Items[0]["name"].(string)
-	return name
 }

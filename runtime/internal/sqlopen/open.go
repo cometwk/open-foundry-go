@@ -6,10 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/qustavo/sqlhooks/v2"
-	"modernc.org/sqlite"
-
 	"github.com/go-sql-driver/mysql"
+	"github.com/qustavo/sqlhooks/v2"
 )
 
 // Hooks satisfies the sqlhook.Hooks interface
@@ -27,7 +25,6 @@ func (h *Hooks) After(ctx context.Context, query string, args ...interface{}) (c
 }
 
 func init() {
-	sql.Register("sqlite-hooks", sqlhooks.Wrap(&sqlite.Driver{}, &Hooks{}))
 	sql.Register("mysql-hooks", sqlhooks.Wrap(&mysql.MySQLDriver{}, &Hooks{}))
 }
 

@@ -201,7 +201,14 @@ func TestGetLinksAndTraverse(t *testing.T) {
 	if len(tr.Nodes) != 1 {
 		t.Fatalf("nodes=%d", len(tr.Nodes))
 	}
-	assertTerminalOnly(t, tr)
+	// Junction edges reuse the GetLinks assembler: same link id, same ends.
+	assertEdgesLen(t, tr, 1)
+	if tr.Edges[0][spi.FieldID] != created[spi.FieldID] {
+		t.Fatalf("edge id=%v want link %v (identity must match GetLinks)", tr.Edges[0][spi.FieldID], created[spi.FieldID])
+	}
+	if tr.Edges[0][spi.LinkFieldFromID] != readerID || tr.Edges[0][spi.LinkFieldToID] != bookID {
+		t.Fatalf("edge ends from=%v to=%v", tr.Edges[0][spi.LinkFieldFromID], tr.Edges[0][spi.LinkFieldToID])
+	}
 	if tr.Nodes[0][spi.FieldID] != bookID {
 		t.Fatalf("node=%v", tr.Nodes[0][spi.FieldID])
 	}
@@ -212,12 +219,16 @@ func TestGetLinksAndTraverse(t *testing.T) {
 	if len(inTr.Nodes) != 1 || inTr.Nodes[0][spi.FieldID] != readerID {
 		t.Fatalf("inbound nodes=%v", inTr.Nodes)
 	}
-	assertTerminalOnly(t, inTr)
+	// Inbound traverses walk the same rows; edge endpoints stay row-shaped.
+	assertEdgesLen(t, inTr, 1)
+	if inTr.Edges[0][spi.FieldID] != created[spi.FieldID] {
+		t.Fatalf("inbound edge id=%v", inTr.Edges[0][spi.FieldID])
+	}
 	empty, err := p.Traverse(ctx, readerID, spi.TraversalPath{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertTerminalOnly(t, empty)
+	assertEdgesLen(t, empty, 0)
 	if len(empty.Nodes) != 0 {
 		t.Fatalf("empty steps nodes=%d", len(empty.Nodes))
 	}
@@ -328,10 +339,12 @@ func TestTraverseTwoHopTerminal(t *testing.T) {
 		t.Fatal(err)
 	}
 	branchID := branch[spi.FieldID].(string)
-	if _, err := p.CreateLink(ctx, "Borrows", readerID, bookID, nil); err != nil {
+	borrows, err := p.CreateLink(ctx, "Borrows", readerID, bookID, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.CreateLink(ctx, "AvailableAt", bookID, branchID, nil); err != nil {
+	available, err := p.CreateLink(ctx, "AvailableAt", bookID, branchID, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
 	path := spi.TraversalPath{Steps: []spi.TraversalStep{
@@ -345,7 +358,8 @@ func TestTraverseTwoHopTerminal(t *testing.T) {
 	if len(tr.Nodes) != 1 || tr.Nodes[0][spi.FieldID] != branchID {
 		t.Fatalf("nodes=%v", tr.Nodes)
 	}
-	assertTerminalOnly(t, tr)
+	// Both hops project their link rows; cartesian repeats dedup by identity.
+	assertEdgeIDs(t, tr, borrows[spi.FieldID].(string), available[spi.FieldID].(string))
 	if err := p.DeleteObject(ctx, "Book", bookID, "soft"); err != nil {
 		t.Fatal(err)
 	}
@@ -356,6 +370,7 @@ func TestTraverseTwoHopTerminal(t *testing.T) {
 	if len(hidden.Nodes) != 0 {
 		t.Fatalf("soft-deleted middle still present: %+v", hidden.Nodes)
 	}
+	assertEdgesLen(t, hidden, 0)
 	shown, err := p.Traverse(ctx, readerID, path, &spi.TraversalOptions{IncludeDeleted: true})
 	if err != nil {
 		t.Fatal(err)
@@ -363,6 +378,7 @@ func TestTraverseTwoHopTerminal(t *testing.T) {
 	if len(shown.Nodes) != 1 || shown.Nodes[0][spi.FieldID] != branchID {
 		t.Fatalf("IncludeDeleted middle=%v", shown.Nodes)
 	}
+	assertEdgesLen(t, shown, 2)
 }
 
 func TestTraverseDuplicateTerminalsAndPaging(t *testing.T) {
@@ -384,6 +400,8 @@ func TestTraverseDuplicateTerminalsAndPaging(t *testing.T) {
 	if tr.Nodes[0][spi.FieldID] != bookID || tr.Nodes[1][spi.FieldID] != bookID {
 		t.Fatalf("dup ids=%v %v", tr.Nodes[0][spi.FieldID], tr.Nodes[1][spi.FieldID])
 	}
+	// Two parallel links are two distinct edges; Nodes keep row semantics.
+	assertEdgesLen(t, tr, 2)
 	page, err := p.Traverse(ctx, readerID, spi.TraversalPath{Steps: []spi.TraversalStep{{LinkType: "Borrows"}}}, &spi.TraversalOptions{Limit: 1, Offset: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -391,6 +409,7 @@ func TestTraverseDuplicateTerminalsAndPaging(t *testing.T) {
 	if len(page.Nodes) != 1 || page.TotalCount != 2 {
 		t.Fatalf("page nodes=%d total=%d", len(page.Nodes), page.TotalCount)
 	}
+	assertEdgesLen(t, page, 1)
 	past, err := p.Traverse(ctx, readerID, spi.TraversalPath{Steps: []spi.TraversalStep{{LinkType: "Borrows"}}}, &spi.TraversalOptions{Limit: 10, Offset: 10})
 	if err != nil {
 		t.Fatal(err)
@@ -398,6 +417,7 @@ func TestTraverseDuplicateTerminalsAndPaging(t *testing.T) {
 	if len(past.Nodes) != 0 || past.TotalCount != 2 {
 		t.Fatalf("offset past nodes=%d total=%d", len(past.Nodes), past.TotalCount)
 	}
+	assertEdgesLen(t, past, 0)
 }
 
 func TestTraverseLimitDefaultsAndCap(t *testing.T) {
@@ -410,7 +430,8 @@ func TestTraverseLimitDefaultsAndCap(t *testing.T) {
 	if err := db.QueryRow(`SELECT from_id, to_id, created_at FROM borrows LIMIT 1`).Scan(&fromID, &toID, &createdAt); err != nil {
 		t.Fatal(err)
 	}
-	for i := 1; i < 1001; i++ {
+	total := mysqlobda.MaxPageLimit + 1
+	for i := 1; i < total; i++ {
 		mustExec(t, db, `INSERT INTO borrows (id, tenant_id, from_id, to_id, version, created_at, updated_at) VALUES (?, 't1', ?, ?, 1, ?, ?)`,
 			fmt.Sprintf("extra-%d", i), fromID, toID, createdAt, createdAt)
 	}
@@ -418,15 +439,15 @@ func TestTraverseLimitDefaultsAndCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(zero.Nodes) != 100 || zero.TotalCount != 1001 {
+	if len(zero.Nodes) != mysqlobda.DefaultPageLimit || zero.TotalCount != total {
 		t.Fatalf("limit 0 nodes=%d total=%d", len(zero.Nodes), zero.TotalCount)
 	}
-	capped, err := p.Traverse(ctx, readerID, spi.TraversalPath{Steps: []spi.TraversalStep{{LinkType: "Borrows"}}}, &spi.TraversalOptions{Limit: 1001})
+	capped, err := p.Traverse(ctx, readerID, spi.TraversalPath{Steps: []spi.TraversalStep{{LinkType: "Borrows"}}}, &spi.TraversalOptions{Limit: total})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(capped.Nodes) != 1000 || capped.TotalCount != 1001 {
-		t.Fatalf("limit 1001 nodes=%d total=%d", len(capped.Nodes), capped.TotalCount)
+	if len(capped.Nodes) != mysqlobda.MaxPageLimit || capped.TotalCount != total {
+		t.Fatalf("limit %d nodes=%d total=%d", total, len(capped.Nodes), capped.TotalCount)
 	}
 }
 
@@ -443,7 +464,7 @@ func TestTraverseBrokenTypeChainEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertTerminalOnly(t, tr)
+	assertEdgesLen(t, tr, 0)
 	if len(tr.Nodes) != 0 || tr.TotalCount != 0 {
 		t.Fatalf("broken chain nodes=%d total=%d", len(tr.Nodes), tr.TotalCount)
 	}
@@ -465,6 +486,7 @@ func TestTraverseSoftDeletedStartStillFound(t *testing.T) {
 	if len(tr.Nodes) != 1 || tr.Nodes[0][spi.FieldID] != bookID {
 		t.Fatalf("soft-deleted start nodes=%v", tr.Nodes)
 	}
+	assertEdgesLen(t, tr, 1)
 }
 
 func TestTraverseSoftDeletedHopLink(t *testing.T) {
@@ -496,6 +518,7 @@ func TestTraverseSoftDeletedHopLink(t *testing.T) {
 	if len(hidden.Nodes) != 0 {
 		t.Fatalf("soft-deleted hop link still present: %+v", hidden.Nodes)
 	}
+	assertEdgesLen(t, hidden, 0)
 	shown, err := p.Traverse(ctx, readerID, path, &spi.TraversalOptions{IncludeDeleted: true})
 	if err != nil {
 		t.Fatal(err)
@@ -503,6 +526,7 @@ func TestTraverseSoftDeletedHopLink(t *testing.T) {
 	if len(shown.Nodes) != 1 || shown.Nodes[0][spi.FieldID] != branchID {
 		t.Fatalf("IncludeDeleted hop link=%v", shown.Nodes)
 	}
+	assertEdgesLen(t, shown, 2)
 }
 
 func TestTraverseHidesDeletedPeerUntilIncludeDeleted(t *testing.T) {
@@ -521,6 +545,7 @@ func TestTraverseHidesDeletedPeerUntilIncludeDeleted(t *testing.T) {
 	if len(hidden.Nodes) != 0 {
 		t.Fatalf("default included deleted peer: %+v", hidden.Nodes)
 	}
+	assertEdgesLen(t, hidden, 0)
 	shown, err := p.Traverse(ctx, readerID, spi.TraversalPath{Steps: []spi.TraversalStep{{LinkType: "Borrows"}}}, &spi.TraversalOptions{IncludeDeleted: true})
 	if err != nil {
 		t.Fatal(err)
@@ -528,15 +553,32 @@ func TestTraverseHidesDeletedPeerUntilIncludeDeleted(t *testing.T) {
 	if len(shown.Nodes) != 1 || shown.Nodes[0][spi.FieldID] != bookID {
 		t.Fatalf("IncludeDeleted peer=%v", shown.Nodes)
 	}
+	assertEdgesLen(t, shown, 1)
 }
 
-func assertTerminalOnly(t *testing.T, tr spi.TraversalResult) {
+func assertEdgesLen(t *testing.T, tr spi.TraversalResult, want int) {
 	t.Helper()
-	if tr.Edges == nil || tr.Visited == nil {
-		t.Fatalf("nil graph slices edges=%v visited=%v", tr.Edges, tr.Visited)
+	if tr.Edges == nil {
+		t.Fatal("nil edges slice")
 	}
-	if len(tr.Edges) != 0 || len(tr.Visited) != 0 {
-		t.Fatalf("edges=%d visited=%d", len(tr.Edges), len(tr.Visited))
+	if len(tr.Edges) != want {
+		t.Fatalf("edges=%d want %d: %+v", len(tr.Edges), want, tr.Edges)
+	}
+}
+
+func assertEdgeIDs(t *testing.T, tr spi.TraversalResult, want ...string) {
+	t.Helper()
+	got := map[string]bool{}
+	for _, e := range tr.Edges {
+		got[fmt.Sprint(e[spi.FieldID])] = true
+	}
+	if len(got) != len(want) {
+		t.Fatalf("distinct edges=%d want %d: %v", len(got), len(want), got)
+	}
+	for _, id := range want {
+		if !got[id] {
+			t.Fatalf("missing edge %q in %v", id, got)
+		}
 	}
 }
 

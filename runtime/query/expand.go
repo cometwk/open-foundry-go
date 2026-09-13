@@ -154,10 +154,10 @@ func neighbors(parentID string, step spi.TraversalStep, edges []spi.OntologyLink
 	return out
 }
 
-func assemblePath(startID string, startObj spi.OntologyObject, fields []string, steps []spi.TraversalStep, tr spi.TraversalResult) *ExpandResult {
+func assemblePath(startID string, startObj spi.OntologyObject, fields []string, steps []spi.TraversalStep, tr spi.TraversalResult, hydrated map[string]spi.OntologyObject) *ExpandResult {
 	objs := map[string]spi.OntologyObject{}
 	putObj(objs, startObj)
-	for _, o := range tr.Visited {
+	for _, o := range hydrated {
 		putObj(objs, o)
 	}
 	for _, o := range tr.Nodes {

@@ -5,7 +5,29 @@
 - Sync Engine
 - Security and Governance 相关的内容，如 Authorisation, Permission, Audit 等
 
-单元测试：
 
-- 当单元测试需要案例时，要求采用 domain-packs/library-pack/library-pack.md 里提到的简化版
-- MySQL 测试时，加载 .env 中的 TEST_DB_URL 真实数据库，不要自行启动 mysql docker
+### 单元测试规范
+
+1. **测试案例要求**
+* 当单元测试需要案例时，要求采用 `domain-packs/library-pack/library-pack.md` 里提到的简化版。
+
+
+2. **环境变量加载模式**
+在运行需要本地配置的测试时，统一采用以下通用加载模式（确保 `.env` 中的环境变量能自动导出并传递给 Go 测试子进程）：
+```bash
+set -a; [ -f .env ] && . .env; set +a
+
+```
+
+
+3. **MySQL 测试要求**
+* 运行 MySQL 测试前，先通过上述模式加载 `.env`，使 `TEST_DB_URL` 生效。
+* 采用真实数据库，**不要自行启动 MySQL Docker**。
+
+
+**标准执行命令示例：**
+```bash
+set -a; [ -f ../.env ] && . ../.env; set +a; \
+go test ./storage/mysqlobda/... ./obda/dialect/mysql/... -v 2>&1 | tail -250
+
+```

@@ -105,7 +105,7 @@ func TestResolveOutputPath_FallsBackToBaseDir(t *testing.T) {
 	}
 }
 
-func TestDDL_ExecuteForceSQLite(t *testing.T) {
+func TestDDL_RenderMySQL(t *testing.T) {
 	base := t.TempDir()
 	dir := filepath.Join(base, "domain-packs", "fixture")
 	files := map[string]string{
@@ -161,36 +161,36 @@ models:
 			t.Fatal(err)
 		}
 	}
-	dbPath := filepath.Join(t.TempDir(), "t.db")
+	// DDL rendering is dialect-explicit and database-free; the memory driver
+	// carries no SQL dialect of its own.
 	prev := conf
 	conf = &bootstrap.Conf{
 		BaseDir:     base,
 		DomainPacks: "fixture",
-		DBDriver:    "sqlite",
-		DBURL:       dbPath,
+		DBDriver:    bootstrap.BackendMemory,
 	}
 	t.Cleanup(func() { conf = prev })
 
 	out := filepath.Join(t.TempDir(), "schema.sql")
-	if err := ddl("", out, true, false); err != nil {
+	if err := ddl("mysql", out, false, false); err != nil {
 		t.Fatal(err)
 	}
 	body, err := os.ReadFile(out)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(body), `CREATE TABLE IF NOT EXISTS "widget"`) {
+	if !strings.Contains(string(body), "CREATE TABLE IF NOT EXISTS `widget`") {
 		t.Fatalf("got %s", body)
 	}
 
-	if err := ddl("", out, true, true); err != nil {
+	if err := ddl("mysql", out, false, true); err != nil {
 		t.Fatal(err)
 	}
 	body, err = os.ReadFile(out)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(body), `DROP TABLE IF EXISTS "widget";`) {
+	if !strings.Contains(string(body), "DROP TABLE IF EXISTS `widget`;") {
 		t.Fatalf("force missing drop: %s", body)
 	}
 }
