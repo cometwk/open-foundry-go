@@ -1,6 +1,7 @@
 ---
 title: "跨方言移植 OBDA Provider：预设的 SQL 分叉可能是幻觉，真正的分叉在 DB 强制不变式里"
 date: 2026-08-28
+last_updated: 2026-09-13
 category: design-patterns
 module: "runtime/obda/dialect/mysql + runtime/storage/mysqlobda (OBDA MySQL storage provider)"
 problem_type: design_pattern
@@ -17,6 +18,8 @@ tags: [mysql, sqlite, obda, dialect-porting, soft-delete, unique-index, partial-
 # 跨方言移植 OBDA Provider：预设的 SQL 分叉可能是幻觉，真正的分叉在 DB 强制不变式里
 
 ## Context（背景）
+
+> **2026-09-13 注（refresh）：** 本文引用的 sqlite 参考实现——`runtime/storage/sqliteobda/` 与 `runtime/obda/dialect/sqlite/`——已在 PR #8（Traverse 收敛于 Nodes+Edges）中随「mysql | memory」后端收敛整体删除。MySQL 侧的 `of_active` 机制仍在 `runtime/obda/dialect/mysql/ddl.go` 生效并被集成测试锁定。文中 sqlite 证据链按写作时点保留：本文的价值是移植方法论（预判分叉前先 grep 参考实现、枚举 DB 强制不变式），作为历史案例阅读。
 
 本次工作把 SQLite OBDA provider 移植到 MySQL：新增 `runtime/obda/dialect/mysql/`（方言）与 `runtime/storage/mysqlobda/`（存储 provider），驱动为 `github.com/go-sql-driver/mysql v1.10.0`（`runtime/go.mod:13`），通过 blank import 注册到 `database/sql`（`runtime/storage/mysqlobda/provider.go:12`，注释明确说明 provider 只说 `database/sql` 和驱动错误文本）。
 
@@ -76,7 +79,7 @@ CREATE UNIQUE INDEX `admission_from_active`
 
 语义等价性：活跃行 `of_active = 1`，同一 `(tenant_id, from_id, 1)` 第二次插入必然冲突；软删除行 `of_active = NULL`，MySQL 唯一索引中 NULL 互不相撞，永远不会挡住新链接。**利用了同一个"NULL 不冲突"规则，方向相反**：天真方案被它坑，正确方案靠它实现"软删除让位"。
 
-**Schema 校验同构镜像。** `runtime/obda/dialect/mysql/introspect.go:137-164` 的 `HasUniqueIndex(indexes, columns, requireActiveKey)`：`requireActiveKey` 为真时把 `ActiveKeyColumn` 追加进期望列集（`introspect.go:139-141`），即要求 information_schema 里看到的唯一索引确实带 `of_active` 后缀（注释见 `introspect.go:134-136`）。DDL 生成与 introspection 校验两侧共用同一常量，防止漂移。
+**Schema 校验同构镜像。** `HasUniqueIndex(indexes, columns, requireActiveKey)`：`requireActiveKey` 为真时把 `ActiveKeyColumn` 追加进期望列集，即要求 information_schema 里看到的唯一索引确实带 `of_active` 后缀。（2026-09-13 更新：该函数写作时在 `runtime/obda/dialect/mysql/introspect.go:137-164`，PR #7 的 dialect-boundary 重构后移至 `runtime/storage/mysqlobda/introspect.go:143`，语义不变。）DDL 生成与 introspection 校验两侧共用同一常量，防止漂移。
 
 ## Why This Matters（为什么重要）
 
@@ -142,5 +145,5 @@ CREATE UNIQUE INDEX `admission_from_active`
 
 - `docs/plans/2026-08-27-001-feat-mysql-obda-provider-plan.md` — 本次 MySQL provider 移植的需求计划；其 R5「无 RETURNING 分叉」预判被本文第 1 节推翻。
 - `docs/plans/2026-08-21-001-feat-obda-sqlite-storage-provider-plan.md` — 被移植的 sqlite 参考实现计划；U6 记录部分唯一索引的基数兜底。
-- `docs/design/obda-spec-v3.md` / `docs/design/open-foundry-obda-mapping-spec-v3.md` — 规范层写明 `CREATE UNIQUE INDEX ... WHERE deleted_at IS NULL` 的部分索引 DDL，即 MySQL `of_active` 机制所等价替代的机制。
+- `docs/design/obda-spec-v3.md` — 规范层写明 `CREATE UNIQUE INDEX ... WHERE deleted_at IS NULL` 的部分索引 DDL，即 MySQL `of_active` 机制所等价替代的机制。（原文同时引用的 `open-foundry-obda-mapping-spec-v3.md` 已在后续提交中删除。）
 - `docs/brainstorms/2026-08-21-obda-mysql-storage-provider-requirements.md` — MySQL OBDA 的原始架构愿景（sidecar 具体条款已被 2026-08-27 计划收窄）。

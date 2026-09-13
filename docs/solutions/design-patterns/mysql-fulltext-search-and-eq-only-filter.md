@@ -1,6 +1,7 @@
 ---
 title: "MySQL OBDA 的 FULLTEXT 契约按列清单 fail-closed，搜索绑定顺序跟 `?` 出现位走"
 date: 2026-09-10
+last_updated: 2026-09-13
 category: design-patterns
 module: "runtime/obda + runtime/obda/dialect/mysql + runtime/storage/mysqlobda (AggregateObjects / SearchObjects)"
 problem_type: design_pattern
@@ -56,13 +57,15 @@ LIMIT ? OFFSET ?
 
 因此无 filter 时 `PlanSearch` 返回 `args = [query, tenant, query]`：SELECT MATCH、租户、WHERE MATCH。带 eq filter 时为 `[query, tenant, filter, query]`——filter 的 `?` 落在 WHERE 树里、第二次 MATCH 之前。分页再追加 `limit+1` / `offset`。计数子查询去掉 ORDER BY 与 LIMIT，仍消费同一组 MATCH/租户/filter 参数。
 
-sqlite 方言继续读 `FullTextMatch.Source`（FTS5 虚拟表），本次不改（无生产调用方）。AST 同时保留 `Source` 与 `Columns`。
+sqlite 方言当时继续读 `FullTextMatch.Source`（FTS5 虚拟表），本次不改（无生产调用方）；AST 同时保留 `Source` 与 `Columns`。（2026-09-13 注：sqlite 方言与 sqliteobda 已在 PR #8 的后端收敛中整体删除，运行时只剩 mysql | memory；此句按写作时点保留。）
 
 ### 3. 三接口 filter 只放行单叶子 eq
 
-`compileFilter`（planner）与 `translateFilter`（mysqlobda）同一规则：`Operator == ""` 或 `"eq"` 视为等值；其余操作符与 And/Or/Not 一律 `fmt.Errorf("%w: unsupported filter ...", spi.ErrInvalidMapping)`。
+`compileFilter`（planner）与 `translateFilter`（mysqlobda）同一规则：`Operator == ""` 或 `"eq"` 视为等值；其余操作符与 And/Not 一律 `fmt.Errorf("%w: unsupported filter ...", spi.ErrInvalidMapping)`。
 
-共享 `compileFilter` 会改变 sqliteobda.QueryObjects 的非 eq 行为（静默 eq → 显式错误）。这是预期一致化；既有 sqlite 测试只传空/eq filter。
+（2026-09-13 更新：PR #8 为 batch-by-ids 读拓宽了一条窄通道——`Or` 在**全部子节点均为 eq 叶子**时放行，其余 Or 形状以及 And/Not 仍拒绝。eq-leaves-only 的限制正是第 2 节的绑定顺序约束：Or 子节点按数组序渲染，只有扁平 eq 叶子才能让 args 切片平凡正确。详见 `docs/solutions/architecture-patterns/traverse-nodes-edges-batch-hydration.md`。）
+
+共享 `compileFilter` 曾改变 sqliteobda.QueryObjects 的非 eq 行为（静默 eq → 显式错误）；那是预期一致化，既有 sqlite 测试只传空/eq filter。（sqliteobda 现已删除。）
 
 聚合入参校验（空 Fields、非法 fn、`sum(*)`）走普通 `fmt.Errorf` 文本，不新造 sentinel——映射错误才用 `ErrInvalidMapping`。
 
@@ -105,10 +108,11 @@ args = [tenant, query, query]  // 与 SELECT MATCH 先行的 SQL 错位
 args = [query, tenant, query]  // 对应 SELECT MATCH、WHERE tenant、WHERE MATCH
 ```
 
-**filter：** `Operator: "ne"` → `ErrInvalidMapping`；`Operator: ""` 与 `"eq"` 放行。
+**filter：** `Operator: "ne"` → `ErrInvalidMapping`；`Operator: ""` 与 `"eq"` 放行；`Or` 仅当全部子节点为 eq 叶子时放行（2026-09 起的 batch-by-ids 通道），其余 Or 形状与 And/Not 拒绝。
 
 ## Related（相关文档）
 
 - `docs/plans/2026-09-10-001-feat-mysqlobda-aggregate-search-plan.md` — 本次计划；KTD3/KTD6/KTD8 是上述三条的决策原文。KTD6 初稿写过 `[tenant, query, query]`，执行时按 MySQL `?` 出现位改为 `[query, tenant, query]`。
+- `docs/solutions/architecture-patterns/traverse-nodes-edges-batch-hydration.md` — 后继拓展：第 3 节的 eq-only 规则在 PR #8 中被 Or-over-eq（batch-by-ids）窄通道拓宽，限制本身仍由本文第 2 节的绑定顺序约束锁死。
 - `docs/solutions/design-patterns/mysql-port-divergence-of-active-unique-index.md` — 同构先例：DDL 与 introspection 共享约定、精确文本断言 + 真 MySQL 集成锁语义。
 - `docs/design/obda-spec-v3.md` — SearchObjects / AggregateObjects 既定闭环。

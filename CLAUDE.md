@@ -31,3 +31,9 @@ set -a; [ -f ../.env ] && . ../.env; set +a; \
 go test ./storage/mysqlobda/... ./obda/dialect/mysql/... -v 2>&1 | tail -250
 
 ```
+
+
+### 知识库
+
+`docs/solutions/` — 已归档的问题解决方案（bug 修复、最佳实践、模式），按类别分目录，带 YAML frontmatter（module、tags、problem_type），在相关领域实现或调试时可查阅。
+`CONCEPTS.md` — 项目共享领域词汇表（实体、命名流程、状态概念），熟悉代码库或讨论领域概念时可参考。
