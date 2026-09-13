@@ -1,16 +1,17 @@
 package e2e_test
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
-	"io"
-	"net/http"
 	"testing"
+
+	"github.com/openfoundry/runtime/api"
+	"github.com/openfoundry/runtime/spi"
 )
 
-func TestGoldPath_GraphQLREST_HTTP(t *testing.T) {
-	env := setupGoldHTTP(t)
-	ts := env.Server
+func TestGoldPath_GraphQL(t *testing.T) {
+	env := setupGoldAPI(t)
+	srv := env.API
 	ids := env.IDs
 	t.Logf("storage backend = %s", env.Backend)
 
@@ -21,7 +22,7 @@ func TestGoldPath_GraphQLREST_HTTP(t *testing.T) {
 			`{ branch(id: "` + ids.west + `") { id name } }`,
 		}
 		for _, q := range queries {
-			res := gql(t, ts.URL, "gold", q)
+			res := gql(t, srv, "gold", q)
 			if len(res.Errors) > 0 {
 				t.Fatalf("query %s errors = %v", q, res.Errors)
 			}
@@ -29,7 +30,7 @@ func TestGoldPath_GraphQLREST_HTTP(t *testing.T) {
 	})
 
 	t.Run("AE2 borrowers nested", func(t *testing.T) {
-		res := gql(t, ts.URL, "gold", `{ book(id: "`+ids.tb1+`") { borrowers { name } } }`)
+		res := gql(t, srv, "gold", `{ book(id: "`+ids.tb1+`") { borrowers { name } } }`)
 		if len(res.Errors) > 0 {
 			t.Fatalf("errors = %v", res.Errors)
 		}
@@ -41,7 +42,7 @@ func TestGoldPath_GraphQLREST_HTTP(t *testing.T) {
 		if !names["小明"] || !names["老王"] || len(names) != 2 {
 			t.Fatalf("borrowers = %v, want 小明 and 老王", list)
 		}
-		bad := gql(t, ts.URL, "gold", `{ book(id: "`+ids.tb1+`") { borrowers { isbn } } }`)
+		bad := gql(t, srv, "gold", `{ book(id: "`+ids.tb1+`") { borrowers { isbn } } }`)
 		if len(bad.Errors) == 0 {
 			t.Fatal("expected schema error for borrowers { isbn }")
 		}
@@ -50,8 +51,7 @@ func TestGoldPath_GraphQLREST_HTTP(t *testing.T) {
 	t.Run("two hop branches readers", func(t *testing.T) {
 		// Both backends rebuild the hop tree: Traverse returns per-hop Edges
 		// and the engine batch-hydrates intermediates from them.
-
-		res := gql(t, ts.URL, "gold", `{
+		res := gql(t, srv, "gold", `{
 			book(id: "`+ids.tb2+`") {
 				branches { name readers { name id } }
 			}
@@ -68,40 +68,17 @@ func TestGoldPath_GraphQLREST_HTTP(t *testing.T) {
 			t.Fatalf("branch name = %v, want 主馆", br["name"])
 		}
 		readers := br["readers"].([]any)
-		gqlIDs := map[string]bool{}
 		gqlNames := map[string]bool{}
 		for _, item := range readers {
-			m := item.(map[string]any)
-			gqlIDs[m["id"].(string)] = true
-			gqlNames[m["name"].(string)] = true
+			gqlNames[item.(map[string]any)["name"].(string)] = true
 		}
 		if !gqlNames["小明"] || !gqlNames["老王"] || len(gqlNames) != 2 {
 			t.Fatalf("readers = %v, want 小明 and 老王", readers)
 		}
-
-		code, body := rest(t, ts.URL+"/api/v1/book/"+ids.tb2+"/follow?path=branches,readers", "gold")
-		if code != 200 {
-			t.Fatalf("follow status = %d body = %s", code, body)
-		}
-		var follow struct {
-			Nodes []map[string]any `json:"nodes"`
-		}
-		if err := json.Unmarshal(body, &follow); err != nil {
-			t.Fatal(err)
-		}
-		if len(follow.Nodes) != 2 {
-			t.Fatalf("follow nodes = %v, want 2", follow.Nodes)
-		}
-		for _, n := range follow.Nodes {
-			id, _ := n["id"].(string)
-			if !gqlIDs[id] {
-				t.Fatalf("follow node id %s not in GraphQL readers %v", id, gqlIDs)
-			}
-		}
 	})
 
 	t.Run("borrowers empty without Borrows", func(t *testing.T) {
-		res := gql(t, ts.URL, "gold", `{
+		res := gql(t, srv, "gold", `{
 			book(id: "`+ids.quantum+`") {
 				title
 				borrowers { name }
@@ -121,7 +98,7 @@ func TestGoldPath_GraphQLREST_HTTP(t *testing.T) {
 	})
 
 	t.Run("list search aggregate", func(t *testing.T) {
-		list := gql(t, ts.URL, "gold", `{ books(first: 1) { totalCount edges { node { title } } pageInfo { hasNextPage } } }`)
+		list := gql(t, srv, "gold", `{ books(first: 1) { totalCount edges { node { title } } pageInfo { hasNextPage } } }`)
 		if len(list.Errors) > 0 {
 			t.Fatalf("list errors = %v", list.Errors)
 		}
@@ -129,7 +106,7 @@ func TestGoldPath_GraphQLREST_HTTP(t *testing.T) {
 			t.Fatalf("list = %v", list.Data)
 		}
 
-		blank := gql(t, ts.URL, "gold", `{ searchBooks(query: "  ") { totalCount } }`)
+		blank := gql(t, srv, "gold", `{ searchBooks(query: "  ") { totalCount } }`)
 		if len(blank.Errors) > 0 {
 			t.Fatalf("blank search errors = %v", blank.Errors)
 		}
@@ -140,7 +117,7 @@ func TestGoldPath_GraphQLREST_HTTP(t *testing.T) {
 		// library.obda.yaml does not declare Book search.fields yet, so MySQL
 		// FULLTEXT search is unsupported; memory still does substring match.
 		if env.Backend == backendMemory {
-			search := gql(t, ts.URL, "gold", `{ searchBooks(query: "人类简史") { totalCount hits { node { title } } } }`)
+			search := gql(t, srv, "gold", `{ searchBooks(query: "人类简史") { totalCount hits { node { title } } } }`)
 			if len(search.Errors) > 0 {
 				t.Fatalf("search errors = %v", search.Errors)
 			}
@@ -151,14 +128,14 @@ func TestGoldPath_GraphQLREST_HTTP(t *testing.T) {
 			t.Log("skip non-blank FTS hit assert on mysql (no search.fields in library.obda.yaml)")
 		}
 
-		agg := gql(t, ts.URL, "gold", `{ bookAggregate(fields: [{ field: "*", fn: COUNT, alias: "n" }]) { totalGroups groups { values } } }`)
+		agg := gql(t, srv, "gold", `{ bookAggregate(fields: [{ field: "*", fn: COUNT, alias: "n" }]) { totalGroups groups { values } } }`)
 		if len(agg.Errors) > 0 {
 			t.Fatalf("aggregate errors = %v", agg.Errors)
 		}
 	})
 
 	t.Run("nested registered_at and borrows", func(t *testing.T) {
-		res := gql(t, ts.URL, "gold", `{
+		res := gql(t, srv, "gold", `{
 			reader(id: "`+ids.xiaoHong+`") {
 				name
 				branch { name }
@@ -180,7 +157,7 @@ func TestGoldPath_GraphQLREST_HTTP(t *testing.T) {
 			t.Fatalf("xiao_hong borrowedBooks = %v, want empty", books)
 		}
 
-		sapiens := gql(t, ts.URL, "gold", `{ book(id: "`+ids.sapiens+`") { branches { name } } }`)
+		sapiens := gql(t, srv, "gold", `{ book(id: "`+ids.sapiens+`") { branches { name } } }`)
 		if len(sapiens.Errors) > 0 {
 			t.Fatalf("sapiens errors = %v", sapiens.Errors)
 		}
@@ -194,33 +171,17 @@ func TestGoldPath_GraphQLREST_HTTP(t *testing.T) {
 		}
 	})
 
-	t.Run("AE7 REST book", func(t *testing.T) {
-		code, body := rest(t, ts.URL+"/api/v1/book/"+ids.sapiens, "gold")
-		if code != 200 {
-			t.Fatalf("REST GET status = %d body = %s", code, body)
-		}
-		var obj map[string]any
-		_ = json.Unmarshal(body, &obj)
-		if obj["title"] != "人类简史" || obj["id"] != ids.sapiens {
-			t.Fatalf("REST = %v", obj)
-		}
-		code, body = rest(t, ts.URL+"/api/v1/book/missing", "gold")
-		if code != 404 || !bytes.Contains(body, []byte("OBJECT_NOT_FOUND")) {
-			t.Fatalf("REST miss status = %d body = %s", code, body)
-		}
-	})
-
 	t.Run("cross tenant", func(t *testing.T) {
-		miss := gql(t, ts.URL, "other", `{ book(id: "`+ids.sapiens+`") { title } }`)
+		miss := gql(t, srv, "other", `{ book(id: "`+ids.sapiens+`") { title } }`)
 		if miss.Data["book"] != nil {
 			t.Fatalf("cross-tenant get = %v, want null", miss.Data["book"])
 		}
-		list := gql(t, ts.URL, "other", `{ books { totalCount edges { node { id } } } }`)
+		list := gql(t, srv, "other", `{ books { totalCount edges { node { id } } } }`)
 		if list.Data["books"].(map[string]any)["totalCount"].(float64) != 0 {
 			t.Fatalf("cross-tenant list = %v", list.Data)
 		}
 		// Blank search is empty on both backends; non-blank FTS differs (see above).
-		search := gql(t, ts.URL, "other", `{ searchBooks(query: "  ") { totalCount } }`)
+		search := gql(t, srv, "other", `{ searchBooks(query: "  ") { totalCount } }`)
 		if len(search.Errors) > 0 {
 			t.Fatalf("cross-tenant blank search errors = %v", search.Errors)
 		}
@@ -228,74 +189,31 @@ func TestGoldPath_GraphQLREST_HTTP(t *testing.T) {
 			t.Fatalf("cross-tenant search = %v", search.Data)
 		}
 		if env.Backend == backendMemory {
-			hit := gql(t, ts.URL, "other", `{ searchBooks(query: "人类简史") { totalCount } }`)
+			hit := gql(t, srv, "other", `{ searchBooks(query: "人类简史") { totalCount } }`)
 			if hit.Data["searchBooks"].(map[string]any)["totalCount"].(float64) != 0 {
 				t.Fatalf("cross-tenant search hit = %v", hit.Data)
 			}
-		}
-		code, _ := rest(t, ts.URL+"/api/v1/book/"+ids.sapiens, "other")
-		if code != 404 {
-			t.Fatalf("cross-tenant REST status = %d, want 404", code)
-		}
-	})
-
-	t.Run("missing tenant and auth ignored", func(t *testing.T) {
-		code, body := rest(t, ts.URL+"/api/v1/book/"+ids.sapiens, "")
-		if code != 400 || !bytes.Contains(body, []byte("MISSING_TENANT")) {
-			t.Fatalf("missing tenant REST = %d %s", code, body)
-		}
-		res := gql(t, ts.URL, "gold", `{ book(id: "`+ids.sapiens+`") { title } }`)
-		if res.Data["book"].(map[string]any)["title"] != "人类简史" {
-			t.Fatalf("auth-ignored graphql = %v", res.Data)
 		}
 	})
 }
 
 type gqlRes struct {
-	Data   map[string]any `json:"data"`
-	Errors []any          `json:"errors"`
+	Data   map[string]any
+	Errors []any
 }
 
-func gql(t *testing.T, base, tenant, query string) gqlRes {
+func gql(t *testing.T, srv *api.Server, tenant, query string) gqlRes {
 	t.Helper()
-	payload, _ := json.Marshal(map[string]any{"query": query})
-	req, err := http.NewRequest(http.MethodPost, base+"/graphql", bytes.NewReader(payload))
-	if err != nil {
-		t.Fatal(err)
+	rc := spi.RequestContext{TenantID: tenant, ActorID: "test"}
+	res := srv.Exec(context.Background(), rc, query, nil)
+	out := gqlRes{}
+	if len(res.Data) > 0 {
+		if err := json.Unmarshal(res.Data, &out.Data); err != nil {
+			t.Fatalf("decode %s: %v", res.Data, err)
+		}
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-OpenFoundry-Tenant", tenant)
-	req.Header.Set("Authorization", "Bearer ignored")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		t.Fatalf("graphql HTTP %d body %s", resp.StatusCode, raw)
-	}
-	var out gqlRes
-	if err := json.Unmarshal(raw, &out); err != nil {
-		t.Fatalf("decode %s: %v", raw, err)
+	for _, e := range res.Errors {
+		out.Errors = append(out.Errors, e)
 	}
 	return out
-}
-
-func rest(t *testing.T, url, tenant string) (int, []byte) {
-	t.Helper()
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tenant != "" {
-		req.Header.Set("X-OpenFoundry-Tenant", tenant)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	return resp.StatusCode, body
 }

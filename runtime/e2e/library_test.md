@@ -6,7 +6,7 @@
 
 不把 pack 拷进 `runtime/`。测试通过 `pack.LibraryPackDir()` 从仓库根加载 `domain-packs/library-pack`，pack 仍是唯一真相源。案例固定为 `library-pack.md` 的**简化版**：Reader / Book / Branch，关系只有 `Borrows` / `RegisteredAt` / `AvailableAt`。
 
-存储停在 **memory + Engine + SPI**，不起 HTTP，也不依赖真实 MySQL。往上的 GraphQL / REST 形状由 `graphql_rest_test.go` 锁。
+存储停在 **memory + Engine + SPI**，不起 HTTP，也不依赖真实 MySQL。往上的 GraphQL 形状由 `graphql_test.go`（`Server.Exec`）锁，REST 形状由 `rest_test.go` 锁。
 
 ---
 
@@ -47,4 +47,4 @@ pack.LoadDir
 
 - 证明 pack 加载、IR、schema 投影、`ApplySchema`、Engine 动词、SPI（query / traverse / transaction / soft-delete）是串起来的。
 - 用最小但真实的领域故事（馆藏、读者、借阅关系）当验收场景，比纯 mock 更能抓住「层之间没接上」的问题。
-- `graphql_rest_test.go` 再往上走 HTTP / GraphQL；本文件停在 Engine + memory SPI。
+- `graphql_test.go` / `rest_test.go` 再往上走 GraphQL 与 REST；本文件停在 Engine + memory SPI。
