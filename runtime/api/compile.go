@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"sync"
 
@@ -28,7 +29,7 @@ func memoFrom(ctx context.Context) *expandMemo {
 	return m
 }
 
-func (m *expandMemo) lookup(startID, field string) ([]spi.OntologyObject, bool) {
+func (m *expandMemo) lookup(startID, field, fp string) ([]spi.OntologyObject, bool) {
 	if m == nil {
 		return nil, false
 	}
@@ -38,6 +39,11 @@ func (m *expandMemo) lookup(startID, field string) ([]spi.OntologyObject, bool) 
 	if !ok {
 		return nil, false
 	}
+	if fp != "" {
+		if kids, ok := fields[field+"\x1f"+fp]; ok {
+			return kids, true
+		}
+	}
 	kids, ok := fields[field]
 	if !ok {
 		return nil, false
@@ -45,7 +51,7 @@ func (m *expandMemo) lookup(startID, field string) ([]spi.OntologyObject, bool) 
 	return kids, true
 }
 
-func (m *expandMemo) merge(src map[string]map[string][]spi.OntologyObject) {
+func (m *expandMemo) merge(src map[string]map[string][]spi.OntologyObject, startID, field, fp string) {
 	if m == nil || src == nil {
 		return
 	}
@@ -55,8 +61,12 @@ func (m *expandMemo) merge(src map[string]map[string][]spi.OntologyObject) {
 		if m.adj[pid] == nil {
 			m.adj[pid] = map[string][]spi.OntologyObject{}
 		}
-		for field, kids := range fields {
-			m.adj[pid][field] = unionNodes(m.adj[pid][field], kids)
+		for f, kids := range fields {
+			slot := f
+			if pid == startID && f == field && fp != "" {
+				slot = f + "\x1f" + fp
+			}
+			m.adj[pid][slot] = unionNodes(m.adj[pid][slot], kids)
 		}
 	}
 }
@@ -110,6 +120,7 @@ func compileExpand(ctx context.Context, ont *ir.Ontology, startType, fieldName s
 		StartType: startType,
 		Mode:      query.ExpandTraverse,
 		Paths:     paths,
+		Project:   query.IntermediateProject(ont, startType, paths, names),
 	}, nil
 }
 
@@ -173,4 +184,13 @@ func immediateSelected(names []string, prefix string) []string {
 		out = append(out, name)
 	}
 	return out
+}
+
+func selectionFingerprint(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	cp := append([]string(nil), names...)
+	sort.Strings(cp)
+	return strings.Join(cp, "\x1f")
 }

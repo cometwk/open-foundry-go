@@ -38,6 +38,7 @@ func TestGoldPath_REST(t *testing.T) {
 		if !names["小明"] || !names["老王"] || len(names) != 2 {
 			t.Fatalf("follow nodes = %v, want 小明 and 老王", follow.Nodes)
 		}
+		assertTwoHopSQLBaseline(t, env.Backend)
 	})
 
 	t.Run("AE7 REST book", func(t *testing.T) {
@@ -76,6 +77,7 @@ func TestGoldPath_REST(t *testing.T) {
 
 func rest(t *testing.T, url, tenant string) (int, []byte) {
 	t.Helper()
+	resetSQLCount()
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		t.Fatal(err)

@@ -201,6 +201,9 @@ type QueryOptions struct {
 	IncludeDeleted bool
 	AsOfVersion    *int
 	AsOfTime       *DateTime
+	// SkipTotalCount leaves TotalCount at 0 and skips the COUNT query on
+	// SQL providers. The zero value keeps today's counting behavior.
+	SkipTotalCount bool
 }
 
 // OrderBy sorts a query result.
@@ -227,6 +230,18 @@ type TraversalOptions struct {
 	Limit          int
 	Offset         int
 	IncludeDeleted bool
+	// SkipTotalCount leaves TotalCount at 0 and skips the COUNT subquery
+	// on SQL providers. The zero value keeps today's counting behavior.
+	SkipTotalCount bool
+	// StartConfirmed tells SQL providers the start object was already
+	// loaded by the caller (GraphQL root / REST CheckStart). The zero
+	// value keeps today's missing-start ErrObjectNotFound check.
+	StartConfirmed bool
+	// Project maps object type → logical field names to include in
+	// HopObjects. Nil keeps today's shape (no hop payloads; callers
+	// hydrate intermediates). A present type with an empty list means
+	// skeleton only (id / type / tenant) so expand can skip hydration.
+	Project map[string][]string
 }
 
 // ObjectPage is a page of objects.
@@ -249,12 +264,16 @@ type LinkPage struct {
 //
 // Nodes are objects at the last TraversalPath step only. Edges are every
 // link walked (deduplicated by link identity). Intermediate payloads are an
-// Expand-layer concern: callers hydrate them from Edges in batches. This
-// shape matches the TS SPI (packages/spi TraversalResult).
+// Expand-layer concern: callers hydrate them from Edges in batches unless
+// Project filled HopObjects. This shape matches the TS SPI
+// (packages/spi TraversalResult) when HopObjects is unset.
 type TraversalResult struct {
 	Nodes      []OntologyObject
 	Edges      []OntologyLink
 	TotalCount int
+	// HopObjects[i] holds unique objects for path hop i when Project
+	// named that hop's target type. Nil when Project is unset.
+	HopObjects [][]OntologyObject
 }
 
 // BulkMutationRequest batches object mutations.

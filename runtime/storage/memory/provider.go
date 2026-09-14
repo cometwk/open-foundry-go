@@ -160,6 +160,25 @@ func cloneObject(o spi.OntologyObject) (spi.OntologyObject, error) {
 	return out, nil
 }
 
+// projectObject keeps identity plus the named logical fields. An empty
+// field list is a skeleton so expand can stitch a path without a hydrate.
+func projectObject(obj spi.OntologyObject, fields []string) spi.OntologyObject {
+	out := spi.OntologyObject{
+		spi.FieldID:       obj[spi.FieldID],
+		spi.FieldType:     obj[spi.FieldType],
+		spi.FieldTenantID: obj[spi.FieldTenantID],
+	}
+	for _, f := range fields {
+		if f == "" || f == "id" || f == spi.FieldID {
+			continue
+		}
+		if v, ok := obj[f]; ok {
+			out[f] = v
+		}
+	}
+	return out
+}
+
 // now stamps the current UTC time as both _createdAt and _updatedAt; called
 // when a clone-marshalable time is the cheapest way to remain JSON-safe.
 func systemTimestamps() (now any) {
@@ -722,16 +741,20 @@ func (p *Provider) GetLinks(ctx spi.RequestContext, objectID, linkType, directio
 		matched = append(matched, link)
 	}
 
-	totalCount := len(matched)
-	if limit < 0 {
-		limit = totalCount
+	matchedN := len(matched)
+	totalCount := matchedN
+	if options != nil && options.SkipTotalCount {
+		totalCount = 0
 	}
-	if offset > totalCount {
-		offset = totalCount
+	if limit < 0 {
+		limit = matchedN
+	}
+	if offset > matchedN {
+		offset = matchedN
 	}
 	end := offset + limit
-	if end > totalCount {
-		end = totalCount
+	if end > matchedN {
+		end = matchedN
 	}
 	sliced := matched[offset:end]
 	items := make([]spi.OntologyLink, 0, len(sliced))
@@ -745,7 +768,7 @@ func (p *Provider) GetLinks(ctx spi.RequestContext, objectID, linkType, directio
 	return spi.LinkPage{
 		Items:       items,
 		TotalCount:  totalCount,
-		HasNextPage: offset+limit < totalCount,
+		HasNextPage: offset+limit < matchedN,
 	}, nil
 }
 
@@ -781,8 +804,12 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 	totalNodesSeen := 0
 	currentIDs := map[string]struct{}{startID: {}}
 	stepNodes := map[string]spi.OntologyObject{}
+	var hopObjects [][]spi.OntologyObject
+	if options != nil && options.Project != nil {
+		hopObjects = make([][]spi.OntologyObject, len(path.Steps))
+	}
 
-	for _, step := range path.Steps {
+	for si, step := range path.Steps {
 		if len(currentIDs) == 0 || totalNodesSeen >= maxTraversalNodes {
 			break
 		}
@@ -847,6 +874,25 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 			}
 		}
 		currentIDs = nextIDs
+		if hopObjects != nil && si < len(path.Steps)-1 {
+			seen := map[string]struct{}{}
+			for _, n := range stepNodes {
+				typ, _ := n[spi.FieldType].(string)
+				fields, ok := options.Project[typ]
+				if !ok {
+					continue
+				}
+				id, _ := n[spi.FieldID].(string)
+				if id == "" {
+					continue
+				}
+				if _, dup := seen[id]; dup {
+					continue
+				}
+				seen[id] = struct{}{}
+				hopObjects[si] = append(hopObjects[si], projectObject(n, fields))
+			}
+		}
 	}
 
 	nodes := make([]spi.OntologyObject, 0, len(stepNodes))
@@ -866,21 +912,26 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 		edges = append(edges, c)
 	}
 
-	totalCount := len(nodes)
-	if limit < 0 {
-		limit = totalCount
+	nodeN := len(nodes)
+	totalCount := nodeN
+	if options != nil && options.SkipTotalCount {
+		totalCount = 0
 	}
-	if offset > totalCount {
-		offset = totalCount
+	if limit < 0 {
+		limit = nodeN
+	}
+	if offset > nodeN {
+		offset = nodeN
 	}
 	end := offset + limit
-	if end > totalCount {
-		end = totalCount
+	if end > nodeN {
+		end = nodeN
 	}
 	return spi.TraversalResult{
 		Nodes:      nodes[offset:end],
 		Edges:      edges,
 		TotalCount: totalCount,
+		HopObjects: hopObjects,
 	}, nil
 }
 
@@ -1089,7 +1140,11 @@ func (p *Provider) QueryObjects(ctx spi.RequestContext, typ string, filter spi.F
 			matched = append(matched, obj)
 		}
 	}
-	totalCount := len(matched)
+	matchedN := len(matched)
+	totalCount := matchedN
+	if options != nil && options.SkipTotalCount {
+		totalCount = 0
+	}
 
 	// Sort: reverse-iterate OrderBy so multi-key is leftmost-first
 	// (mirrors TS `[...orderBy].reverse()`). Comparator: nil sorts last.
@@ -1108,12 +1163,12 @@ func (p *Provider) QueryObjects(ctx spi.RequestContext, typ string, filter spi.F
 	if limit > maxQueryLimit {
 		limit = maxQueryLimit
 	}
-	if offset > len(matched) {
-		offset = len(matched)
+	if offset > matchedN {
+		offset = matchedN
 	}
 	end := offset + limit
-	if end > len(matched) {
-		end = len(matched)
+	if end > matchedN {
+		end = matchedN
 	}
 	sliced := matched[offset:end]
 
@@ -1128,7 +1183,7 @@ func (p *Provider) QueryObjects(ctx spi.RequestContext, typ string, filter spi.F
 	return spi.ObjectPage{
 		Items:       items,
 		TotalCount:  totalCount,
-		HasNextPage: offset+limit < totalCount,
+		HasNextPage: offset+limit < matchedN,
 	}, nil
 }
 

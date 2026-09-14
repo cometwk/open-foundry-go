@@ -774,3 +774,64 @@ func TestPlanTraverseLayoutInlineHopAliases(t *testing.T) {
 		t.Fatalf("empty bucket layout=%+v", layout)
 	}
 }
+
+func TestPlanTraverseInlineMinHostSelect(t *testing.T) {
+	hop := obda.TraverseHop{
+		Direction:       "outbound",
+		Inline:          true,
+		FKColumn:        "branch_id",
+		FKOnPrev:        true,
+		TargetTable:     "branch",
+		TargetIDCol:     "id",
+		TargetTenantCol: "tenant_id",
+		TargetSelect:    []string{"id", "name"},
+		HostSelect:      []string{"id", "tenant_id", "branch_id", "version", "created_at", "updated_at", "deleted_at"},
+	}
+	_, layout, _, err := obda.PlanTraverse(obda.ObjectBinding{
+		Table:           "reader",
+		TenantColumn:    "tenant_id",
+		IdentityColumns: []string{"id"},
+	}, []obda.TraverseHop{hop}, "t1", "r1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(layout.Hops[0].Cols) != fmt.Sprint(hop.HostSelect) {
+		t.Fatalf("host cols=%v", layout.Hops[0].Cols)
+	}
+	for _, c := range layout.Hops[0].Cols {
+		if c == "name" {
+			t.Fatal("inline host bucket must not project business columns")
+		}
+	}
+}
+
+func TestPlanTraverseMidSelectAfterHopBuckets(t *testing.T) {
+	h1 := admittedHop(false, false)
+	h1.LinkSelect = []string{"id", "from_id", "to_id"}
+	h1.MidSelect = []string{"id", "ward_name"}
+	h2 := admittedHop(false, false)
+	h2.LinkSelect = []string{"id", "from_id"}
+	sel, layout, args, err := obda.PlanTraverse(startPatient(), []obda.TraverseHop{h1, h2}, "t1", "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(args) != 2 {
+		t.Fatalf("args=%v", args)
+	}
+	if len(layout.Mids) != 1 {
+		t.Fatalf("mids=%+v", layout.Mids)
+	}
+	mid := layout.Mids[0]
+	wantOff := len(h2.TargetSelect) + len(h1.LinkSelect) + len(h2.LinkSelect)
+	if mid.Alias != "s1" || mid.Offset != wantOff || fmt.Sprint(mid.Cols) != "[id ward_name]" {
+		t.Fatalf("mid=%+v want alias s1 offset %d", mid, wantOff)
+	}
+	// Hop bucket offsets stay before the mid bucket (existing scanners unchanged).
+	if layout.Hops[0].Offset != len(h2.TargetSelect) {
+		t.Fatalf("hop0 offset=%d", layout.Hops[0].Offset)
+	}
+	last := sel.Columns[len(sel.Columns)-1].(sqlast.Identifier)
+	if last.Qualifier != "s1" || last.Name != "ward_name" {
+		t.Fatalf("last col=%+v", last)
+	}
+}

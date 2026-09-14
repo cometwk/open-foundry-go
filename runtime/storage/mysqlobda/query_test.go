@@ -3,10 +3,12 @@ package mysqlobda_test
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/openfoundry/runtime/spi"
+	"github.com/openfoundry/runtime/storage/mysqlobda"
 )
 
 func TestQueryLimitZeroMeansHundred(t *testing.T) {
@@ -27,6 +29,83 @@ func TestQueryLimitZeroMeansHundred(t *testing.T) {
 	}
 	if page.Cursor != "" {
 		t.Fatalf("cursor should stay empty: %q", page.Cursor)
+	}
+}
+
+func TestQuerySkipTotalCount(t *testing.T) {
+	p, _ := activateReader(t)
+	ctx := spi.RequestContext{TenantID: "t1"}
+	for i := 0; i < 3; i++ {
+		if _, err := p.CreateObject(ctx, "Reader", map[string]any{"name": string(rune('a' + i))}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	counted, err := p.QueryObjects(ctx, "Reader", spi.FilterExpression{}, nil)
+	if err != nil || counted.TotalCount != 3 {
+		t.Fatalf("default TotalCount=%d err=%v, want 3", counted.TotalCount, err)
+	}
+	skipped, err := p.QueryObjects(ctx, "Reader", spi.FilterExpression{}, &spi.QueryOptions{SkipTotalCount: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if skipped.TotalCount != 0 || len(skipped.Items) != 3 {
+		t.Fatalf("skip TotalCount=%d items=%d", skipped.TotalCount, len(skipped.Items))
+	}
+}
+
+func TestQueryIDBatchBypassesPageCap(t *testing.T) {
+	p, db := activateReader(t)
+	ctx := spi.RequestContext{TenantID: "t1"}
+	first, err := p.CreateObject(ctx, "Reader", map[string]any{"name": "r0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := []string{first[spi.FieldID].(string)}
+	var createdAt string
+	if err := db.QueryRow(`SELECT created_at FROM reader LIMIT 1`).Scan(&createdAt); err != nil {
+		t.Fatal(err)
+	}
+	n := mysqlobda.MaxPageLimit + 1
+	const batch = 200
+	for i := 1; i < n; {
+		var b strings.Builder
+		b.WriteString(`INSERT INTO reader (id, tenant_id, name, version, created_at, updated_at) VALUES `)
+		args := make([]any, 0, batch*4)
+		k := 0
+		for ; i < n && k < batch; i, k = i+1, k+1 {
+			if k > 0 {
+				b.WriteByte(',')
+			}
+			id := fmt.Sprintf("batch-%d", i)
+			ids = append(ids, id)
+			b.WriteString(`(?, 't1', ?, 1, ?, ?)`)
+			args = append(args, id, id, createdAt, createdAt)
+		}
+		mustExec(t, db, b.String(), args...)
+	}
+	ors := make([]spi.FilterExpression, 0, n)
+	for _, id := range ids {
+		ors = append(ors, spi.FilterExpression{Field: spi.FieldID, Operator: "eq", Value: id})
+	}
+	all, err := p.QueryObjects(ctx, "Reader", spi.FilterExpression{Or: ors}, &spi.QueryOptions{
+		Limit: n, SkipTotalCount: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM reader WHERE tenant_id = 't1'`).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if len(all.Items) != n {
+		t.Fatalf("id batch items=%d hasNext=%v stored=%d ids=%d, want %d (must not clamp)", len(all.Items), all.HasNextPage, stored, len(ids), n)
+	}
+	clamped, err := p.QueryObjects(ctx, "Reader", spi.FilterExpression{}, &spi.QueryOptions{Limit: n})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(clamped.Items) != mysqlobda.MaxPageLimit {
+		t.Fatalf("plain page items=%d, want clamped %d", len(clamped.Items), mysqlobda.MaxPageLimit)
 	}
 }
 

@@ -207,6 +207,13 @@ func TestInlineTraverseOneHop(t *testing.T) {
 	if len(out.Items) != 1 || out.Items[0][spi.FieldID] != tr.Edges[0][spi.FieldID] {
 		t.Fatalf("GetLinks/Traverse inline identity diverged: %+v vs %+v", out.Items, tr.Edges)
 	}
+	if _, ok := tr.Edges[0]["name"]; ok {
+		t.Fatalf("inline edge leaked host business column: %v", tr.Edges[0])
+	}
+	if tr.Edges[0][spi.FieldVersion] != out.Items[0][spi.FieldVersion] ||
+		tr.Edges[0][spi.FieldCreatedAt] != out.Items[0][spi.FieldCreatedAt] {
+		t.Fatalf("inline edge system fields diverged: %+v vs %+v", tr.Edges[0], out.Items[0])
+	}
 }
 
 func activateInline(t *testing.T) (*mysqlobda.Provider, *sql.DB, string, string) {

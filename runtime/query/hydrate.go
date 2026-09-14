@@ -20,6 +20,7 @@ func hydrateByIDs(eng *engine.Engine, ctx spi.RequestContext, typ string, ids []
 	page, err := eng.QueryObjects(ctx, typ, spi.FilterExpression{Or: ors}, &spi.QueryOptions{
 		Limit:          len(ids),
 		IncludeDeleted: includeDeleted,
+		SkipTotalCount: true,
 	})
 	if err != nil {
 		return nil, err
@@ -35,7 +36,7 @@ func hydrateByIDs(eng *engine.Engine, ctx spi.RequestContext, typ string, ids []
 // keeps a self-typed intermediate hydrated even when it shares a type with
 // the terminal or start. Every remaining type costs at most one
 // QueryObjects.
-func hydrateEdges(eng *engine.Engine, ctx spi.RequestContext, edges []spi.OntologyLink, terminalType, startType, startID string, terminalIDs map[string]struct{}, includeDeleted bool) (map[string]spi.OntologyObject, error) {
+func hydrateEdges(eng *engine.Engine, ctx spi.RequestContext, edges []spi.OntologyLink, terminalType, startType, startID string, terminalIDs map[string]struct{}, includeDeleted bool, project map[string][]string) (map[string]spi.OntologyObject, error) {
 	buckets := map[string]map[string]struct{}{}
 	for _, e := range edges {
 		collectEndpoint(buckets, e[spi.LinkFieldFromType], e[spi.LinkFieldFromID])
@@ -57,6 +58,9 @@ func hydrateEdges(eng *engine.Engine, ctx spi.RequestContext, edges []spi.Ontolo
 	}
 	objs := map[string]spi.OntologyObject{}
 	for typ, set := range buckets {
+		if _, skip := project[typ]; skip {
+			continue
+		}
 		ids := make([]string, 0, len(set))
 		for id := range set {
 			ids = append(ids, id)

@@ -86,7 +86,7 @@ func execExpand(eng *engine.Engine, ctx spi.RequestContext, ex *Expand) (Result,
 	case ExpandTraverse:
 		termSeen := map[string]bool{}
 		for _, path := range ex.Paths {
-			got, err := expandTraverse(eng, ctx, startObj, ex.StartType, ex.StartID, path)
+			got, err := expandTraverse(eng, ctx, startObj, ex.StartType, ex.StartID, path, ex.Project)
 			if err != nil {
 				return Result{}, err
 			}
@@ -118,9 +118,17 @@ func expandGetLinks(eng *engine.Engine, ctx spi.RequestContext, startType, start
 	if err != nil {
 		return nil, err
 	}
-	page, err := eng.GetLinks(ctx, startID, steps[0].LinkType, steps[0].Direction, &spi.QueryOptions{Limit: HopCap})
+	page, err := eng.GetLinks(ctx, startID, steps[0].LinkType, steps[0].Direction, &spi.QueryOptions{
+		Limit: hopCap, SkipTotalCount: true,
+	})
 	if err != nil {
 		return nil, err
+	}
+	// HasNextPage means the provider's +1 probe saw more than hopCap rows.
+	// Duplicate links must not mask overflow, so this does not wait for the
+	// unique-neighbor window to fill.
+	if page.HasNextPage {
+		return nil, fmt.Errorf("%w: hard cap %d", spi.ErrTraversalLimitExceeded, hopCap)
 	}
 	seen := map[string]bool{}
 	ids := make([]string, 0, len(page.Items))
@@ -131,9 +139,6 @@ func expandGetLinks(eng *engine.Engine, ctx spi.RequestContext, startType, start
 		}
 		seen[tid] = true
 		ids = append(ids, tid)
-		if len(ids) >= HopCap {
-			break
-		}
 	}
 	// One batched read replaces the per-neighbor GetObject loop; missing
 	// objects prune silently, query errors propagate.
@@ -156,12 +161,14 @@ func expandGetLinks(eng *engine.Engine, ctx spi.RequestContext, startType, start
 	return &ExpandResult{FirstHop: kids, Terminals: kids, Adjacency: adj}, nil
 }
 
-func expandTraverse(eng *engine.Engine, ctx spi.RequestContext, startObj spi.OntologyObject, startType, startID string, fields []string) (*ExpandResult, error) {
+func expandTraverse(eng *engine.Engine, ctx spi.RequestContext, startObj spi.OntologyObject, startType, startID string, fields []string, project map[string][]string) (*ExpandResult, error) {
 	steps, err := resolveSteps(eng.Ontology(), startType, fields)
 	if err != nil {
 		return nil, err
 	}
-	tr, err := eng.Traverse(ctx, startID, spi.TraversalPath{Steps: steps}, &spi.TraversalOptions{Limit: HopCap})
+	tr, err := eng.Traverse(ctx, startID, spi.TraversalPath{Steps: steps}, &spi.TraversalOptions{
+		Limit: hopCap, SkipTotalCount: true, StartConfirmed: true, Project: project,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -172,16 +179,17 @@ func expandTraverse(eng *engine.Engine, ctx spi.RequestContext, startObj spi.Ont
 	// Intermediates hydrate from Edges endpoints — same row window as Nodes,
 	// so a truncated fan-out yields a consistent partial tree. Terminal ids
 	// are excluded (tr.Nodes carries them); only those ids, not the whole
-	// type, so a self-typed intermediate stays hydrated.
+	// type, so a self-typed intermediate stays hydrated. Types named in
+	// Project are skipped (HopObjects / skeletons fill them).
 	terminalIDs := map[string]struct{}{}
 	for _, n := range tr.Nodes {
 		if id, _ := n[spi.FieldID].(string); id != "" {
 			terminalIDs[id] = struct{}{}
 		}
 	}
-	hydrated, err := hydrateEdges(eng, ctx, tr.Edges, terminalType, startType, startID, terminalIDs, false)
+	hydrated, err := hydrateEdges(eng, ctx, tr.Edges, terminalType, startType, startID, terminalIDs, false, project)
 	if err != nil {
 		return nil, err
 	}
-	return assemblePath(startID, startObj, fields, steps, tr, hydrated), nil
+	return assemblePath(startID, startObj, fields, steps, tr, hydrated, project), nil
 }

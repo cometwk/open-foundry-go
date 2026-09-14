@@ -21,6 +21,7 @@ func (p *Provider) QueryObjects(ctx spi.RequestContext, typ string, filter spi.F
 	if options != nil && (options.AsOfTime != nil || options.AsOfVersion != nil) {
 		return spi.ObjectPage{}, spi.ErrUnsupportedCapability
 	}
+	idBatch := isIDEqBatch(filter)
 	phys, err := translateFilter(m, filter)
 	if err != nil {
 		return spi.ObjectPage{}, err
@@ -52,21 +53,29 @@ func (p *Provider) QueryObjects(ctx spi.RequestContext, typ string, filter spi.F
 	for _, col := range m.IdentityColumns {
 		sel.Order = append(sel.Order, sqlast.Order{Field: sqlast.Identifier{Name: col}})
 	}
-	countSel := *sel
-	countSel.Limit = nil
-	countStmt, err := p.dialect.Render(&countSel)
-	if err != nil {
-		return spi.ObjectPage{}, err
-	}
 	var total int
-	if err := p.db.QueryRow("SELECT COUNT(*) FROM ("+countStmt.SQL+") AS q", args...).Scan(&total); err != nil {
-		return spi.ObjectPage{}, mysqldialect.Classify(err)
+	if options == nil || !options.SkipTotalCount {
+		countSel := *sel
+		countSel.Limit = nil
+		countStmt, err := p.dialect.Render(&countSel)
+		if err != nil {
+			return spi.ObjectPage{}, err
+		}
+		if err := p.db.QueryRow("SELECT COUNT(*) FROM ("+countStmt.SQL+") AS q", args...).Scan(&total); err != nil {
+			return spi.ObjectPage{}, mysqldialect.Classify(err)
+		}
 	}
 	limit, offset := 0, 0
 	if options != nil {
 		limit, offset = options.Limit, options.Offset
 	}
-	limit, offset = pageLimitOffset(limit, offset)
+	if idBatch && limit > 0 {
+		if offset < 0 {
+			offset = 0
+		}
+	} else {
+		limit, offset = pageLimitOffset(limit, offset)
+	}
 	sel.Limit = &sqlast.LimitOffset{Limit: sqlast.Param{}, Offset: sqlast.Param{}}
 	pageArgs := append(append([]any{}, args...), limit+1, offset)
 	stmt, err := p.dialect.Render(sel)
@@ -102,12 +111,11 @@ func (p *Provider) QueryObjects(ctx spi.RequestContext, typ string, filter spi.F
 	return spi.ObjectPage{Items: items, TotalCount: total, HasNextPage: hasNext}, nil
 }
 
-// 临时设置为 10 便于测试
 const (
 	// DefaultPageLimit is used when Limit <= 0 (or options is nil).
-	DefaultPageLimit = 10 //100
+	DefaultPageLimit = 100
 	// MaxPageLimit is the hard cap; larger Limit values are truncated to this.
-	MaxPageLimit = 10 //1000
+	MaxPageLimit = 1000
 )
 
 // pageLimitOffset applies the shared pagination policy used by
@@ -129,6 +137,61 @@ func pageLimitOffset(limit, offset int) (int, int) {
 // filterColumn resolves a logical filter field to its physical column. The
 // identity alias "_id" maps to the first identity column; business fields map
 // through the compiled model.
+// isIDEqBatch is the hydrate-by-ids channel: Or of eq leaves on _id.
+// Those calls pass Limit=len(ids); clamping them to MaxPageLimit would
+// silently drop rows.
+func isIDEqBatch(f spi.FilterExpression) bool {
+	if f.Field != "" || f.Not != nil || len(f.And) > 0 || len(f.Or) == 0 {
+		return false
+	}
+	for _, c := range f.Or {
+		if c.Field != spi.FieldID {
+			return false
+		}
+		if c.Operator != "" && c.Operator != "eq" {
+			return false
+		}
+		if len(c.Or) > 0 || len(c.And) > 0 || c.Not != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// midColumns maps a projection hint's logical fields onto physical columns.
+// Identity columns are always included so assemble can mint _id. A hint that
+// only names id/_id (or unknown fields) returns nil — expand synthesizes
+// skeletons from edge endpoints instead of widening the SELECT.
+func midColumns(m *obda.CompiledModel, fields []string) []string {
+	if m == nil || len(fields) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	cols := append([]string(nil), m.IdentityColumns...)
+	for _, c := range cols {
+		seen[c] = struct{}{}
+	}
+	nIdent := len(cols)
+	for _, f := range fields {
+		if f == "" || f == "id" || f == spi.FieldID {
+			continue
+		}
+		cf, ok := m.FieldByLogical[f]
+		if !ok || cf.Column == "" {
+			continue
+		}
+		if _, dup := seen[cf.Column]; dup {
+			continue
+		}
+		seen[cf.Column] = struct{}{}
+		cols = append(cols, cf.Column)
+	}
+	if len(cols) == nIdent {
+		return nil
+	}
+	return cols
+}
+
 func filterColumn(m *obda.CompiledModel, logical string) (string, bool) {
 	if logical == spi.FieldID && len(m.IdentityColumns) > 0 {
 		return m.IdentityColumns[0], true

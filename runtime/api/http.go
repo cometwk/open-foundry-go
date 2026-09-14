@@ -93,6 +93,7 @@ func (s *Server) serveRESTFollow(w http.ResponseWriter, r *http.Request) {
 		Mode:       query.ExpandTraverse,
 		Paths:      [][]string{fields},
 		CheckStart: true,
+		Project:    query.IntermediateProject(s.engine.Ontology(), typ, [][]string{fields}, nil),
 	}})
 	if err != nil {
 		if errors.Is(err, query.ErrInvalidFollowPath) {
@@ -101,6 +102,10 @@ func (s *Server) serveRESTFollow(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, spi.ErrObjectNotFound) {
 			writeError(w, http.StatusNotFound, "OBJECT_NOT_FOUND", "object not found")
+			return
+		}
+		if errors.Is(err, spi.ErrTraversalLimitExceeded) {
+			writeError(w, http.StatusUnprocessableEntity, "TRAVERSAL_LIMIT_EXCEEDED", err.Error())
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())

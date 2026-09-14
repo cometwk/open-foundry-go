@@ -43,7 +43,8 @@ func (n *node) irField(name string) *ir.Field {
 }
 
 func (s *Server) resolveLink(ctx context.Context, n *node, fieldName string) ([]any, error) {
-	if kids, ok := memoFrom(ctx).lookup(n.idString(), fieldName); ok {
+	fp := selectionFingerprint(graphql.SelectedFieldNames(ctx))
+	if kids, ok := memoFrom(ctx).lookup(n.idString(), fieldName, fp); ok {
 		return s.wrapMany(fieldName, n.typ, kids), nil
 	}
 	ex, err := compileExpand(ctx, s.engine.Ontology(), n.typ, fieldName)
@@ -56,7 +57,7 @@ func (s *Server) resolveLink(ctx context.Context, n *node, fieldName string) ([]
 		return nil, err
 	}
 	if res.Expand != nil {
-		memoFrom(ctx).merge(res.Expand.Adjacency)
+		memoFrom(ctx).merge(res.Expand.Adjacency, n.idString(), fieldName, fp)
 		return s.wrapMany(fieldName, n.typ, res.Expand.FirstHop), nil
 	}
 	return []any{}, nil

@@ -160,12 +160,12 @@ func openLibraryStorage(t *testing.T, packDir string, onto *ir.Ontology, schema 
 	var db *sql.DB
 	switch mode {
 	case dbModeReuse:
-		db = testdb.Connect(t)
+		db = testdb.OpenDriver(t, sqlCountDriver, false, false)
 	case dbModeInit:
-		db = testdb.OpenKeep(t)
+		db = testdb.OpenDriver(t, sqlCountDriver, true, false)
 		mustInit(t, db, raw, schema)
 	default:
-		db = testdb.Open(t)
+		db = testdb.OpenDriver(t, sqlCountDriver, true, true)
 		mustInit(t, db, raw, schema)
 	}
 

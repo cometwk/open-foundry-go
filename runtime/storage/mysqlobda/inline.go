@@ -179,6 +179,42 @@ func (p *Provider) loadInlineLink(tx DBTX, act *activation, l *obda.CompiledLink
 	return assembleInlineLink(l, tenant, biz)
 }
 
+// inlineEdgeColumns is the host-table projection needed to synthesize an
+// inline edge: identity, tenant, FK, version, timestamps. Business columns
+// are omitted — they belong on the object, not the derived link.
+func inlineEdgeColumns(l *obda.CompiledLink, host *obda.CompiledModel) []string {
+	seen := map[string]struct{}{}
+	var cols []string
+	add := func(c string) {
+		if c == "" {
+			return
+		}
+		if _, ok := seen[c]; ok {
+			return
+		}
+		seen[c] = struct{}{}
+		cols = append(cols, c)
+	}
+	for _, c := range host.IdentityColumns {
+		add(c)
+	}
+	add(host.TenantColumn)
+	add(l.FKColumn)
+	if !host.Omit.Version {
+		add("version")
+	}
+	if !host.Omit.CreatedAt {
+		add("created_at")
+	}
+	if !host.Omit.UpdatedAt {
+		add("updated_at")
+	}
+	if !host.Omit.DeletedAt {
+		add("deleted_at")
+	}
+	return cols
+}
+
 func assembleInlineLink(l *obda.CompiledLink, tenant string, biz map[string]any) (spi.OntologyLink, error) {
 	hostID := ""
 	if len(l.IdentityColumns) > 0 {
@@ -234,7 +270,7 @@ func joinBindingForInline(l *obda.CompiledLink, host, peer *obda.CompiledModel, 
 		PeerTable:       peer.Table,
 		PeerIDCol:       firstCol(peer.IdentityColumns),
 		PeerTenantCol:   peer.TenantColumn,
-		SelectColumns:   host.Binding().SelectColumns,
+		SelectColumns:   inlineEdgeColumns(l, host),
 		OmitLinkDeleted: l.Omit.DeletedAt || includeDeleted,
 		OmitPeerDeleted: peer.Omit.DeletedAt,
 		Inline:          true,

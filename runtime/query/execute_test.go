@@ -2,6 +2,7 @@ package query
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/openfoundry/runtime/engine"
@@ -102,11 +103,52 @@ func TestExecute_Expand_GetLinksVsTraverseVsFork(t *testing.T) {
 	if rec.getObject != 0 || rec.queryObjects != 1 {
 		t.Fatalf("2-hop GetObject/QueryObjects = %d/%d, want 0/1 (intermediate B batch)", rec.getObject, rec.queryObjects)
 	}
+	if rec.lastTraverse == nil || !rec.lastTraverse.StartConfirmed || !rec.lastTraverse.SkipTotalCount {
+		t.Fatalf("2-hop Traverse options = %+v, want StartConfirmed+SkipTotalCount", rec.lastTraverse)
+	}
 	if len(two.Expand.Terminals) != 1 || two.Expand.Terminals[0]["name"] != "C1" {
 		t.Fatalf("2-hop terminals = %+v", two.Expand.Terminals)
 	}
 	if len(two.Expand.Adjacency[ids.b]["c"]) != 1 {
 		t.Fatalf("adjacency b.c = %+v", two.Expand.Adjacency[ids.b]["c"])
+	}
+
+	rec.getLinks, rec.traverse, rec.getObject, rec.queryObjects = 0, 0, 0, 0
+	proj, err := Execute(e, ctx, Op{Expand: &Expand{
+		StartType: "A", StartID: ids.a, Mode: ExpandTraverse,
+		Paths:   [][]string{{"b", "c"}},
+		Project: map[string][]string{"B": {"name"}},
+	}})
+	if err != nil {
+		t.Fatalf("projected Expand err = %v", err)
+	}
+	if rec.queryObjects != 0 {
+		t.Fatalf("projected QueryObjects = %d, want 0 (B came from Traverse)", rec.queryObjects)
+	}
+	if rec.lastTraverse == nil || rec.lastTraverse.Project["B"] == nil {
+		t.Fatalf("projected Traverse options = %+v", rec.lastTraverse)
+	}
+	if len(proj.Expand.FirstHop) != 1 || proj.Expand.FirstHop[0]["name"] != "B1" {
+		t.Fatalf("projected FirstHop = %+v", proj.Expand.FirstHop)
+	}
+
+	rec.getLinks, rec.traverse, rec.getObject, rec.queryObjects = 0, 0, 0, 0
+	skel, err := Execute(e, ctx, Op{Expand: &Expand{
+		StartType: "A", StartID: ids.a, Mode: ExpandTraverse,
+		Paths:   [][]string{{"b", "c"}},
+		Project: map[string][]string{"B": {}},
+	}})
+	if err != nil {
+		t.Fatalf("skeleton Expand err = %v", err)
+	}
+	if rec.queryObjects != 0 {
+		t.Fatalf("skeleton QueryObjects = %d, want 0", rec.queryObjects)
+	}
+	if len(skel.Expand.FirstHop) != 1 || objectID(skel.Expand.FirstHop[0]) != ids.b {
+		t.Fatalf("skeleton FirstHop = %+v", skel.Expand.FirstHop)
+	}
+	if _, has := skel.Expand.FirstHop[0]["name"]; has {
+		t.Fatalf("skeleton must not carry name: %+v", skel.Expand.FirstHop[0])
 	}
 
 	rec.getLinks, rec.traverse, rec.getObject, rec.queryObjects = 0, 0, 0, 0
@@ -256,6 +298,7 @@ type countStore struct {
 	getLinks, traverse int
 	getObject          int
 	queryObjects       int
+	lastTraverse       *spi.TraversalOptions
 }
 
 func (c *countStore) ApplySchema(ctx spi.RequestContext, s spi.OntologySchema) (spi.MigrationResult, error) {
@@ -278,6 +321,7 @@ func (c *countStore) GetLinks(ctx spi.RequestContext, objectID, linkType, direct
 }
 func (c *countStore) Traverse(ctx spi.RequestContext, startID string, path spi.TraversalPath, options *spi.TraversalOptions) (spi.TraversalResult, error) {
 	c.traverse++
+	c.lastTraverse = options
 	return c.inner.Traverse(ctx, startID, path, options)
 }
 func (c *countStore) QueryObjects(ctx spi.RequestContext, typ string, filter spi.FilterExpression, options *spi.QueryOptions) (spi.ObjectPage, error) {
@@ -335,6 +379,92 @@ func TestExecute_Expand_LeafBatchHydrationScalesWithTypes(t *testing.T) {
 }
 
 func aobj(id string) spi.OntologyObject { return spi.OntologyObject{spi.FieldID: id} }
+
+func TestExecute_Expand_LeafOverflow(t *testing.T) {
+	restore := OverrideHopCap(2)
+	t.Cleanup(restore)
+
+	leaf := Op{Expand: &Expand{
+		StartType: "A", Mode: ExpandGetLinks, Paths: [][]string{{"leaf"}},
+	}}
+
+	t.Run("HasNextPage is overflow", func(t *testing.T) {
+		rec := &linksPageStore{countStore: &countStore{inner: memory.New()}}
+		e, ctx, ids := seedNav(t, rec)
+		leaf.Expand.StartID = ids.a
+		rec.page = spi.LinkPage{
+			Items: []spi.OntologyLink{{
+				spi.LinkFieldFromID: ids.a,
+				spi.LinkFieldToID:   ids.l,
+			}},
+			HasNextPage: true,
+		}
+		_, err := Execute(e, ctx, leaf)
+		if !errors.Is(err, spi.ErrTraversalLimitExceeded) {
+			t.Fatalf("err=%v want ErrTraversalLimitExceeded", err)
+		}
+		if !strings.Contains(err.Error(), "2") {
+			t.Fatalf("error %q missing cap", err)
+		}
+	})
+
+	t.Run("window not full succeeds", func(t *testing.T) {
+		e, ctx, ids := seedNav(t, memory.New())
+		leaf.Expand.StartID = ids.a
+		got, err := Execute(e, ctx, leaf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Expand.FirstHop) != 1 {
+			t.Fatalf("FirstHop=%d want 1", len(got.Expand.FirstHop))
+		}
+	})
+
+	t.Run("exact window without next page succeeds", func(t *testing.T) {
+		e, ctx, ids := seedNav(t, memory.New())
+		l2, err := e.CreateObject(ctx, "L", map[string]any{"name": "L2"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		mustLink(t, e, ctx, "AL", aobj(ids.a), l2)
+		leaf.Expand.StartID = ids.a
+		got, err := Execute(e, ctx, leaf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Expand.FirstHop) != 2 {
+			t.Fatalf("FirstHop=%d want 2", len(got.Expand.FirstHop))
+		}
+	})
+
+	t.Run("duplicate links still overflow", func(t *testing.T) {
+		rec := &linksPageStore{countStore: &countStore{inner: memory.New()}}
+		e, ctx, ids := seedNav(t, rec)
+		leaf.Expand.StartID = ids.a
+		dup := spi.OntologyLink{
+			spi.LinkFieldFromID: ids.a,
+			spi.LinkFieldToID:   ids.l,
+		}
+		rec.page = spi.LinkPage{
+			Items:       []spi.OntologyLink{dup, dup, dup},
+			HasNextPage: true,
+		}
+		_, err := Execute(e, ctx, leaf)
+		if !errors.Is(err, spi.ErrTraversalLimitExceeded) {
+			t.Fatalf("err=%v want ErrTraversalLimitExceeded", err)
+		}
+	})
+}
+
+type linksPageStore struct {
+	*countStore
+	page spi.LinkPage
+}
+
+func (s *linksPageStore) GetLinks(ctx spi.RequestContext, objectID, linkType, direction string, options *spi.QueryOptions) (spi.LinkPage, error) {
+	s.getLinks++
+	return s.page, nil
+}
 
 func TestExecute_Expand_OneHopTraverseSkipsHydration(t *testing.T) {
 	rec := &countStore{inner: memory.New()}

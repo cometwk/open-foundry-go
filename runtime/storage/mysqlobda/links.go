@@ -284,7 +284,7 @@ func (p *Provider) GetLinks(ctx spi.RequestContext, objectID, linkType, directio
 		if err != nil {
 			return spi.LinkPage{}, err
 		}
-		scanCols = host.Binding().SelectColumns
+		scanCols = inlineEdgeColumns(l, host)
 		sel.Order = []sqlast.Order{{Field: sqlast.Identifier{Qualifier: "l", Name: firstCol(host.IdentityColumns)}}}
 	} else {
 		peerName := l.ToObject
@@ -322,15 +322,17 @@ func (p *Provider) GetLinks(ctx spi.RequestContext, objectID, linkType, directio
 		limit, offset = options.Limit, options.Offset
 	}
 	limit, offset = pageLimitOffset(limit, offset)
-	countSel := *sel
-	countSel.Limit = nil
-	countStmt, err := p.dialect.Render(&countSel)
-	if err != nil {
-		return spi.LinkPage{}, err
-	}
 	var total int
-	if err := p.db.QueryRow("SELECT COUNT(*) FROM ("+countStmt.SQL+") AS q", args...).Scan(&total); err != nil {
-		return spi.LinkPage{}, mysqldialect.Classify(err)
+	if options == nil || !options.SkipTotalCount {
+		countSel := *sel
+		countSel.Limit = nil
+		countStmt, err := p.dialect.Render(&countSel)
+		if err != nil {
+			return spi.LinkPage{}, err
+		}
+		if err := p.db.QueryRow("SELECT COUNT(*) FROM ("+countStmt.SQL+") AS q", args...).Scan(&total); err != nil {
+			return spi.LinkPage{}, mysqldialect.Classify(err)
+		}
 	}
 	sel.Limit = &sqlast.LimitOffset{}
 	stmt, err := p.dialect.Render(sel)
@@ -389,12 +391,15 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 	if err != nil {
 		return spi.TraversalResult{}, spi.ErrObjectNotFound
 	}
-	if _, err := p.loadObject(p.db, startModel, ctx.TenantID, startID); err != nil {
-		return spi.TraversalResult{}, spi.ErrObjectNotFound
+	if options == nil || !options.StartConfirmed {
+		if _, err := p.loadObject(p.db, startModel, ctx.TenantID, startID); err != nil {
+			return spi.TraversalResult{}, spi.ErrObjectNotFound
+		}
 	}
 	includeDeleted := options != nil && options.IncludeDeleted
 	hops := make([]obda.TraverseHop, 0, len(path.Steps))
 	hopLinks := make([]*obda.CompiledLink, 0, len(path.Steps))
+	hopModels := make([]*obda.CompiledModel, 0, len(path.Steps))
 	prevType := startType
 	prevModel := startModel
 	var terminal *obda.CompiledModel
@@ -444,15 +449,25 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 			if hop.FKOnPrev {
 				host = prevModel
 			}
-			hop.HostSelect = host.Binding().SelectColumns
+			hop.HostSelect = inlineEdgeColumns(l, host)
 		} else {
 			hop.LinkSelect = l.Binding().SelectColumns
 		}
 		hops = append(hops, hop)
 		hopLinks = append(hopLinks, l)
+		hopModels = append(hopModels, peer)
 		prevType = peerName
 		prevModel = peer
 		terminal = peer
+	}
+	if options != nil && options.Project != nil {
+		for i := 0; i < len(hops)-1; i++ {
+			fields, ok := options.Project[hopModels[i].Name]
+			if !ok || len(fields) == 0 {
+				continue
+			}
+			hops[i].MidSelect = midColumns(hopModels[i], fields)
+		}
 	}
 	sel, layout, args, err := obda.PlanTraverse(startModel.Binding(), hops, ctx.TenantID, startID)
 	if err != nil {
@@ -463,31 +478,33 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 		limit, offset = options.Limit, options.Offset
 	}
 	limit, offset = pageLimitOffset(limit, offset)
-	countSel := *sel
-	countSel.Limit = nil
-	countSel.Order = nil
-	// The count subquery is a MySQL derived table, which rejects duplicate
-	// column names (s1.id and l0.id both derive to "id"). Projecting a single
-	// terminal column keeps the derived-table names unique; the count is row
-	// count either way.
-	countSel.Columns = []sqlast.Expr{sqlast.Identifier{
-		Qualifier: layout.NodeAlias,
-		Name:      firstCol(terminal.IdentityColumns),
-	}}
-	countStmt, err := p.dialect.Render(&countSel)
-	if err != nil {
-		return spi.TraversalResult{}, err
-	}
 	var total int
-	if err := p.db.QueryRow("SELECT COUNT(*) FROM ("+countStmt.SQL+") AS q", args...).Scan(&total); err != nil {
-		return spi.TraversalResult{}, mysqldialect.Classify(err)
+	if options == nil || !options.SkipTotalCount {
+		countSel := *sel
+		countSel.Limit = nil
+		countSel.Order = nil
+		// The count subquery is a MySQL derived table, which rejects duplicate
+		// column names (s1.id and l0.id both derive to "id"). Projecting a single
+		// terminal column keeps the derived-table names unique; the count is row
+		// count either way.
+		countSel.Columns = []sqlast.Expr{sqlast.Identifier{
+			Qualifier: layout.NodeAlias,
+			Name:      firstCol(terminal.IdentityColumns),
+		}}
+		countStmt, err := p.dialect.Render(&countSel)
+		if err != nil {
+			return spi.TraversalResult{}, err
+		}
+		if err := p.db.QueryRow("SELECT COUNT(*) FROM ("+countStmt.SQL+") AS q", args...).Scan(&total); err != nil {
+			return spi.TraversalResult{}, mysqldialect.Classify(err)
+		}
 	}
 	sel.Limit = &sqlast.LimitOffset{Limit: sqlast.Param{}, Offset: sqlast.Param{}}
 	stmt, err := p.dialect.Render(sel)
 	if err != nil {
 		return spi.TraversalResult{}, err
 	}
-	rows, err := p.db.Query(stmt.SQL, append(append([]any{}, args...), limit, offset)...)
+	rows, err := p.db.Query(stmt.SQL, append(append([]any{}, args...), limit+1, offset)...)
 	if err != nil {
 		return spi.TraversalResult{}, mysqldialect.Classify(err)
 	}
@@ -497,10 +514,31 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 	for _, b := range layout.Hops {
 		totalCols += len(b.Cols)
 	}
+	for _, b := range layout.Mids {
+		totalCols += len(b.Cols)
+	}
 	nodes := make([]spi.OntologyObject, 0)
 	edges := make([]spi.OntologyLink, 0)
 	seen := make(map[string]struct{})
+	var hopObjects [][]spi.OntologyObject
+	var seenMid []map[string]struct{}
+	if options != nil && options.Project != nil {
+		hopObjects = make([][]spi.OntologyObject, len(hops))
+		seenMid = make([]map[string]struct{}, len(hops))
+		for i := range seenMid {
+			seenMid[i] = map[string]struct{}{}
+		}
+	}
 	for rows.Next() {
+		if len(nodes) >= limit {
+			// Probe row: discard without assembling. Overflow is a hard
+			// error only at the page cap; smaller pages keep today's
+			// paging semantics (TotalCount is authoritative).
+			if limit >= MaxPageLimit {
+				return spi.TraversalResult{}, fmt.Errorf("%w: hard cap %d", spi.ErrTraversalLimitExceeded, MaxPageLimit)
+			}
+			break
+		}
 		dest, err := scan(rows, totalCols)
 		if err != nil {
 			return spi.TraversalResult{}, err
@@ -539,6 +577,25 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 			seen[key] = struct{}{}
 			edges = append(edges, edge)
 		}
+		for i, b := range layout.Mids {
+			if hopObjects == nil || len(b.Cols) == 0 {
+				continue
+			}
+			midBiz := bizMap(dest[b.Offset:b.Offset+len(b.Cols)], b.Cols)
+			obj, err := p.assemble(hopModels[i], ctx.TenantID, midBiz)
+			if err != nil {
+				return spi.TraversalResult{}, err
+			}
+			id, _ := obj[spi.FieldID].(string)
+			if id == "" {
+				continue
+			}
+			if _, dup := seenMid[i][id]; dup {
+				continue
+			}
+			seenMid[i][id] = struct{}{}
+			hopObjects[i] = append(hopObjects[i], obj)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return spi.TraversalResult{}, err
@@ -547,6 +604,7 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 		Nodes:      nodes,
 		Edges:      edges,
 		TotalCount: total,
+		HopObjects: hopObjects,
 	}, nil
 }
 
