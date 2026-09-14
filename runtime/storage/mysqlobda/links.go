@@ -284,7 +284,7 @@ func (p *Provider) GetLinks(ctx spi.RequestContext, objectID, linkType, directio
 		if err != nil {
 			return spi.LinkPage{}, err
 		}
-		scanCols = host.Binding().SelectColumns
+		scanCols = inlineEdgeColumns(l, host)
 		sel.Order = []sqlast.Order{{Field: sqlast.Identifier{Qualifier: "l", Name: firstCol(host.IdentityColumns)}}}
 	} else {
 		peerName := l.ToObject
@@ -449,7 +449,7 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 			if hop.FKOnPrev {
 				host = prevModel
 			}
-			hop.HostSelect = host.Binding().SelectColumns
+			hop.HostSelect = inlineEdgeColumns(l, host)
 		} else {
 			hop.LinkSelect = l.Binding().SelectColumns
 		}

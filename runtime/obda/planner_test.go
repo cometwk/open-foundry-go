@@ -775,6 +775,36 @@ func TestPlanTraverseLayoutInlineHopAliases(t *testing.T) {
 	}
 }
 
+func TestPlanTraverseInlineMinHostSelect(t *testing.T) {
+	hop := obda.TraverseHop{
+		Direction:       "outbound",
+		Inline:          true,
+		FKColumn:        "branch_id",
+		FKOnPrev:        true,
+		TargetTable:     "branch",
+		TargetIDCol:     "id",
+		TargetTenantCol: "tenant_id",
+		TargetSelect:    []string{"id", "name"},
+		HostSelect:      []string{"id", "tenant_id", "branch_id", "version", "created_at", "updated_at", "deleted_at"},
+	}
+	_, layout, _, err := obda.PlanTraverse(obda.ObjectBinding{
+		Table:           "reader",
+		TenantColumn:    "tenant_id",
+		IdentityColumns: []string{"id"},
+	}, []obda.TraverseHop{hop}, "t1", "r1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(layout.Hops[0].Cols) != fmt.Sprint(hop.HostSelect) {
+		t.Fatalf("host cols=%v", layout.Hops[0].Cols)
+	}
+	for _, c := range layout.Hops[0].Cols {
+		if c == "name" {
+			t.Fatal("inline host bucket must not project business columns")
+		}
+	}
+}
+
 func TestPlanTraverseMidSelectAfterHopBuckets(t *testing.T) {
 	h1 := admittedHop(false, false)
 	h1.LinkSelect = []string{"id", "from_id", "to_id"}
