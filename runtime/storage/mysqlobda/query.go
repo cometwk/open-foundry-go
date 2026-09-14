@@ -21,6 +21,7 @@ func (p *Provider) QueryObjects(ctx spi.RequestContext, typ string, filter spi.F
 	if options != nil && (options.AsOfTime != nil || options.AsOfVersion != nil) {
 		return spi.ObjectPage{}, spi.ErrUnsupportedCapability
 	}
+	idBatch := isIDEqBatch(filter)
 	phys, err := translateFilter(m, filter)
 	if err != nil {
 		return spi.ObjectPage{}, err
@@ -68,7 +69,13 @@ func (p *Provider) QueryObjects(ctx spi.RequestContext, typ string, filter spi.F
 	if options != nil {
 		limit, offset = options.Limit, options.Offset
 	}
-	limit, offset = pageLimitOffset(limit, offset)
+	if idBatch && limit > 0 {
+		if offset < 0 {
+			offset = 0
+		}
+	} else {
+		limit, offset = pageLimitOffset(limit, offset)
+	}
 	sel.Limit = &sqlast.LimitOffset{Limit: sqlast.Param{}, Offset: sqlast.Param{}}
 	pageArgs := append(append([]any{}, args...), limit+1, offset)
 	stmt, err := p.dialect.Render(sel)
@@ -130,6 +137,27 @@ func pageLimitOffset(limit, offset int) (int, int) {
 // filterColumn resolves a logical filter field to its physical column. The
 // identity alias "_id" maps to the first identity column; business fields map
 // through the compiled model.
+// isIDEqBatch is the hydrate-by-ids channel: Or of eq leaves on _id.
+// Those calls pass Limit=len(ids); clamping them to MaxPageLimit would
+// silently drop rows.
+func isIDEqBatch(f spi.FilterExpression) bool {
+	if f.Field != "" || f.Not != nil || len(f.And) > 0 || len(f.Or) == 0 {
+		return false
+	}
+	for _, c := range f.Or {
+		if c.Field != spi.FieldID {
+			return false
+		}
+		if c.Operator != "" && c.Operator != "eq" {
+			return false
+		}
+		if len(c.Or) > 0 || len(c.And) > 0 || c.Not != nil {
+			return false
+		}
+	}
+	return true
+}
+
 func filterColumn(m *obda.CompiledModel, logical string) (string, bool) {
 	if logical == spi.FieldID && len(m.IdentityColumns) > 0 {
 		return m.IdentityColumns[0], true

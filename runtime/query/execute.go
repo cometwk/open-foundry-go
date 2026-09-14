@@ -167,7 +167,7 @@ func expandTraverse(eng *engine.Engine, ctx spi.RequestContext, startObj spi.Ont
 		return nil, err
 	}
 	tr, err := eng.Traverse(ctx, startID, spi.TraversalPath{Steps: steps}, &spi.TraversalOptions{
-		Limit: hopCap, SkipTotalCount: true,
+		Limit: hopCap, SkipTotalCount: true, StartConfirmed: true,
 	})
 	if err != nil {
 		return nil, err

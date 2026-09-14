@@ -233,6 +233,10 @@ type TraversalOptions struct {
 	// SkipTotalCount leaves TotalCount at 0 and skips the COUNT subquery
 	// on SQL providers. The zero value keeps today's counting behavior.
 	SkipTotalCount bool
+	// StartConfirmed tells SQL providers the start object was already
+	// loaded by the caller (GraphQL root / REST CheckStart). The zero
+	// value keeps today's missing-start ErrObjectNotFound check.
+	StartConfirmed bool
 }
 
 // ObjectPage is a page of objects.

@@ -259,6 +259,13 @@ func TestGetLinksAndTraverse(t *testing.T) {
 	if !errors.Is(err, spi.ErrObjectNotFound) {
 		t.Fatalf("err=%v", err)
 	}
+	confirmed, err := p.Traverse(ctx, "missing", spi.TraversalPath{Steps: []spi.TraversalStep{{LinkType: "Borrows"}}}, &spi.TraversalOptions{StartConfirmed: true})
+	if err != nil {
+		t.Fatalf("StartConfirmed missing start err=%v", err)
+	}
+	if len(confirmed.Nodes) != 0 {
+		t.Fatalf("StartConfirmed missing start nodes=%d", len(confirmed.Nodes))
+	}
 }
 
 func TestHardDeleteCascadesLinks(t *testing.T) {

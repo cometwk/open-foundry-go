@@ -103,6 +103,9 @@ func TestExecute_Expand_GetLinksVsTraverseVsFork(t *testing.T) {
 	if rec.getObject != 0 || rec.queryObjects != 1 {
 		t.Fatalf("2-hop GetObject/QueryObjects = %d/%d, want 0/1 (intermediate B batch)", rec.getObject, rec.queryObjects)
 	}
+	if rec.lastTraverse == nil || !rec.lastTraverse.StartConfirmed || !rec.lastTraverse.SkipTotalCount {
+		t.Fatalf("2-hop Traverse options = %+v, want StartConfirmed+SkipTotalCount", rec.lastTraverse)
+	}
 	if len(two.Expand.Terminals) != 1 || two.Expand.Terminals[0]["name"] != "C1" {
 		t.Fatalf("2-hop terminals = %+v", two.Expand.Terminals)
 	}
@@ -257,6 +260,7 @@ type countStore struct {
 	getLinks, traverse int
 	getObject          int
 	queryObjects       int
+	lastTraverse       *spi.TraversalOptions
 }
 
 func (c *countStore) ApplySchema(ctx spi.RequestContext, s spi.OntologySchema) (spi.MigrationResult, error) {
@@ -279,6 +283,7 @@ func (c *countStore) GetLinks(ctx spi.RequestContext, objectID, linkType, direct
 }
 func (c *countStore) Traverse(ctx spi.RequestContext, startID string, path spi.TraversalPath, options *spi.TraversalOptions) (spi.TraversalResult, error) {
 	c.traverse++
+	c.lastTraverse = options
 	return c.inner.Traverse(ctx, startID, path, options)
 }
 func (c *countStore) QueryObjects(ctx spi.RequestContext, typ string, filter spi.FilterExpression, options *spi.QueryOptions) (spi.ObjectPage, error) {

@@ -391,8 +391,10 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 	if err != nil {
 		return spi.TraversalResult{}, spi.ErrObjectNotFound
 	}
-	if _, err := p.loadObject(p.db, startModel, ctx.TenantID, startID); err != nil {
-		return spi.TraversalResult{}, spi.ErrObjectNotFound
+	if options == nil || !options.StartConfirmed {
+		if _, err := p.loadObject(p.db, startModel, ctx.TenantID, startID); err != nil {
+			return spi.TraversalResult{}, spi.ErrObjectNotFound
+		}
 	}
 	includeDeleted := options != nil && options.IncludeDeleted
 	hops := make([]obda.TraverseHop, 0, len(path.Steps))
