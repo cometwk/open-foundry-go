@@ -10,6 +10,20 @@ import (
 // HopCap is the MANY cap per start object per hop (Phase 6 linkPageLimit).
 const HopCap = 1000
 
+// hopCap is the expand window used by GetLinks/Traverse. Production stays
+// at HopCap; tests override it via OverrideHopCap so overflow can be
+// exercised without seeding MaxPageLimit+1 rows.
+var hopCap = HopCap
+
+// OverrideHopCap sets the expand window for the current test. The returned
+// restore func must be deferred (or passed to t.Cleanup) so later tests
+// see the production cap.
+func OverrideHopCap(n int) func() {
+	prev := hopCap
+	hopCap = n
+	return func() { hopCap = prev }
+}
+
 // Op is exactly one Query IR operation.
 type Op struct {
 	Get       *Get

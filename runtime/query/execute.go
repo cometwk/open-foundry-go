@@ -118,9 +118,15 @@ func expandGetLinks(eng *engine.Engine, ctx spi.RequestContext, startType, start
 	if err != nil {
 		return nil, err
 	}
-	page, err := eng.GetLinks(ctx, startID, steps[0].LinkType, steps[0].Direction, &spi.QueryOptions{Limit: HopCap})
+	page, err := eng.GetLinks(ctx, startID, steps[0].LinkType, steps[0].Direction, &spi.QueryOptions{Limit: hopCap})
 	if err != nil {
 		return nil, err
+	}
+	// HasNextPage means the provider's +1 probe saw more than hopCap rows.
+	// Duplicate links must not mask overflow, so this does not wait for the
+	// unique-neighbor window to fill.
+	if page.HasNextPage {
+		return nil, fmt.Errorf("%w: hard cap %d", spi.ErrTraversalLimitExceeded, hopCap)
 	}
 	seen := map[string]bool{}
 	ids := make([]string, 0, len(page.Items))
@@ -131,9 +137,6 @@ func expandGetLinks(eng *engine.Engine, ctx spi.RequestContext, startType, start
 		}
 		seen[tid] = true
 		ids = append(ids, tid)
-		if len(ids) >= HopCap {
-			break
-		}
 	}
 	// One batched read replaces the per-neighbor GetObject loop; missing
 	// objects prune silently, query errors propagate.
@@ -161,7 +164,7 @@ func expandTraverse(eng *engine.Engine, ctx spi.RequestContext, startObj spi.Ont
 	if err != nil {
 		return nil, err
 	}
-	tr, err := eng.Traverse(ctx, startID, spi.TraversalPath{Steps: steps}, &spi.TraversalOptions{Limit: HopCap})
+	tr, err := eng.Traverse(ctx, startID, spi.TraversalPath{Steps: steps}, &spi.TraversalOptions{Limit: hopCap})
 	if err != nil {
 		return nil, err
 	}

@@ -3,11 +3,13 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/openfoundry/runtime/spi"
 	"github.com/openfoundry/runtime/storage/memory"
 )
 
@@ -216,6 +218,37 @@ func TestHTTP_FollowMissingStart(t *testing.T) {
 	if code != 404 || !bytes.Contains(body, []byte("OBJECT_NOT_FOUND")) {
 		t.Fatalf("soft-deleted start status = %d body = %s", code, body)
 	}
+}
+
+func TestHTTP_FollowTraversalLimit(t *testing.T) {
+	inner := &getLinksCounter{inner: memory.New()}
+	rec := &traverseErrStore{
+		getLinksCounter: inner,
+		err:             fmt.Errorf("%w: hard cap %d", spi.ErrTraversalLimitExceeded, 1000),
+	}
+	s, ids := seedSupplyChainOn(t, rec)
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+
+	code, body := restGET(t, ts.URL+"/api/v1/facility/"+ids.facility+"/follow?path=inventoryRecords", "gold", "")
+	if code != http.StatusUnprocessableEntity || !bytes.Contains(body, []byte("TRAVERSAL_LIMIT_EXCEEDED")) {
+		t.Fatalf("follow overflow status = %d body = %s", code, body)
+	}
+	if !bytes.Contains(body, []byte("1000")) {
+		t.Fatalf("follow overflow body missing cap: %s", body)
+	}
+}
+
+type traverseErrStore struct {
+	*getLinksCounter
+	err error
+}
+
+func (c *traverseErrStore) Traverse(ctx spi.RequestContext, startID string, path spi.TraversalPath, options *spi.TraversalOptions) (spi.TraversalResult, error) {
+	if c.err != nil {
+		return spi.TraversalResult{}, c.err
+	}
+	return c.getLinksCounter.Traverse(ctx, startID, path, options)
 }
 
 type gqlHTTP struct {

@@ -1,11 +1,13 @@
 package e2e_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"testing"
 
 	"github.com/openfoundry/runtime/api"
+	"github.com/openfoundry/runtime/query"
 	"github.com/openfoundry/runtime/spi"
 )
 
@@ -195,6 +197,24 @@ func TestGoldPath_GraphQL(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestOverflow_GraphQLLeaf(t *testing.T) {
+	// tb1 already has two borrowers; a 1-row expand window must overflow
+	// on both memory (GetLinks HasNextPage) and MySQL. No extra seed.
+	t.Cleanup(query.OverrideHopCap(1))
+	env := setupGoldAPI(t)
+	res := gql(t, env.API, "gold", `{ book(id: "`+env.IDs.tb1+`") { borrowers { name } } }`)
+	if len(res.Errors) == 0 {
+		t.Fatal("expected overflow in errors[]")
+	}
+	blob, _ := json.Marshal(res.Errors)
+	if !bytes.Contains(blob, []byte("traversal limit")) {
+		t.Fatalf("errors = %s, want traversal limit", blob)
+	}
+	if !bytes.Contains(blob, []byte("1")) {
+		t.Fatalf("errors missing cap: %s", blob)
+	}
 }
 
 type gqlRes struct {

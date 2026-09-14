@@ -103,6 +103,10 @@ func (s *Server) serveRESTFollow(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "OBJECT_NOT_FOUND", "object not found")
 			return
 		}
+		if errors.Is(err, spi.ErrTraversalLimitExceeded) {
+			writeError(w, http.StatusUnprocessableEntity, "TRAVERSAL_LIMIT_EXCEEDED", err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
 		return
 	}

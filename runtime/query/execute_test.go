@@ -2,6 +2,7 @@ package query
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/openfoundry/runtime/engine"
@@ -335,6 +336,92 @@ func TestExecute_Expand_LeafBatchHydrationScalesWithTypes(t *testing.T) {
 }
 
 func aobj(id string) spi.OntologyObject { return spi.OntologyObject{spi.FieldID: id} }
+
+func TestExecute_Expand_LeafOverflow(t *testing.T) {
+	restore := OverrideHopCap(2)
+	t.Cleanup(restore)
+
+	leaf := Op{Expand: &Expand{
+		StartType: "A", Mode: ExpandGetLinks, Paths: [][]string{{"leaf"}},
+	}}
+
+	t.Run("HasNextPage is overflow", func(t *testing.T) {
+		rec := &linksPageStore{countStore: &countStore{inner: memory.New()}}
+		e, ctx, ids := seedNav(t, rec)
+		leaf.Expand.StartID = ids.a
+		rec.page = spi.LinkPage{
+			Items: []spi.OntologyLink{{
+				spi.LinkFieldFromID: ids.a,
+				spi.LinkFieldToID:   ids.l,
+			}},
+			HasNextPage: true,
+		}
+		_, err := Execute(e, ctx, leaf)
+		if !errors.Is(err, spi.ErrTraversalLimitExceeded) {
+			t.Fatalf("err=%v want ErrTraversalLimitExceeded", err)
+		}
+		if !strings.Contains(err.Error(), "2") {
+			t.Fatalf("error %q missing cap", err)
+		}
+	})
+
+	t.Run("window not full succeeds", func(t *testing.T) {
+		e, ctx, ids := seedNav(t, memory.New())
+		leaf.Expand.StartID = ids.a
+		got, err := Execute(e, ctx, leaf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Expand.FirstHop) != 1 {
+			t.Fatalf("FirstHop=%d want 1", len(got.Expand.FirstHop))
+		}
+	})
+
+	t.Run("exact window without next page succeeds", func(t *testing.T) {
+		e, ctx, ids := seedNav(t, memory.New())
+		l2, err := e.CreateObject(ctx, "L", map[string]any{"name": "L2"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		mustLink(t, e, ctx, "AL", aobj(ids.a), l2)
+		leaf.Expand.StartID = ids.a
+		got, err := Execute(e, ctx, leaf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Expand.FirstHop) != 2 {
+			t.Fatalf("FirstHop=%d want 2", len(got.Expand.FirstHop))
+		}
+	})
+
+	t.Run("duplicate links still overflow", func(t *testing.T) {
+		rec := &linksPageStore{countStore: &countStore{inner: memory.New()}}
+		e, ctx, ids := seedNav(t, rec)
+		leaf.Expand.StartID = ids.a
+		dup := spi.OntologyLink{
+			spi.LinkFieldFromID: ids.a,
+			spi.LinkFieldToID:   ids.l,
+		}
+		rec.page = spi.LinkPage{
+			Items:       []spi.OntologyLink{dup, dup, dup},
+			HasNextPage: true,
+		}
+		_, err := Execute(e, ctx, leaf)
+		if !errors.Is(err, spi.ErrTraversalLimitExceeded) {
+			t.Fatalf("err=%v want ErrTraversalLimitExceeded", err)
+		}
+	})
+}
+
+type linksPageStore struct {
+	*countStore
+	page spi.LinkPage
+}
+
+func (s *linksPageStore) GetLinks(ctx spi.RequestContext, objectID, linkType, direction string, options *spi.QueryOptions) (spi.LinkPage, error) {
+	s.getLinks++
+	return s.page, nil
+}
 
 func TestExecute_Expand_OneHopTraverseSkipsHydration(t *testing.T) {
 	rec := &countStore{inner: memory.New()}
