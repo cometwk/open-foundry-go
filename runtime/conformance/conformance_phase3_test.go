@@ -152,6 +152,35 @@ func TestConformance_Traverse(t *testing.T) {
 	}
 }
 
+func TestConformance_SkipTotalCount(t *testing.T) {
+	e, p, ctx := setupProvider(t)
+	s, _ := e.CreateObject(ctx, "Supplier", map[string]any{"name": "Acme"})
+	pt, _ := e.CreateObject(ctx, "Part", map[string]any{"sku": "P1"})
+	if _, err := e.CreateLink(ctx, "Supplies", s["_id"].(string), pt["_id"].(string), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	counted, err := p.QueryObjects(ctx, "Supplier", spi.FilterExpression{}, nil)
+	if err != nil || counted.TotalCount != 1 {
+		t.Fatalf("default QueryObjects TotalCount=%d err=%v, want 1", counted.TotalCount, err)
+	}
+	skipped, err := p.QueryObjects(ctx, "Supplier", spi.FilterExpression{}, &spi.QueryOptions{SkipTotalCount: true})
+	if err != nil || skipped.TotalCount != 0 || len(skipped.Items) != 1 {
+		t.Fatalf("skip QueryObjects total=%d items=%d err=%v", skipped.TotalCount, len(skipped.Items), err)
+	}
+
+	links, err := p.GetLinks(ctx, s["_id"].(string), "Supplies", "outbound", &spi.QueryOptions{SkipTotalCount: true})
+	if err != nil || links.TotalCount != 0 || len(links.Items) != 1 {
+		t.Fatalf("skip GetLinks total=%d items=%d err=%v", links.TotalCount, len(links.Items), err)
+	}
+	tr, err := p.Traverse(ctx, s["_id"].(string), spi.TraversalPath{
+		Steps: []spi.TraversalStep{{LinkType: "Supplies", Direction: "outbound"}},
+	}, &spi.TraversalOptions{SkipTotalCount: true})
+	if err != nil || tr.TotalCount != 0 || len(tr.Nodes) != 1 {
+		t.Fatalf("skip Traverse total=%d nodes=%d err=%v", tr.TotalCount, len(tr.Nodes), err)
+	}
+}
+
 func TestConformance_UpdateLink(t *testing.T) {
 	e, _, ctx := setupProvider(t)
 	s, _ := e.CreateObject(ctx, "Supplier", map[string]any{"name": "Acme"})

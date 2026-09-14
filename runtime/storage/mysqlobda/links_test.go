@@ -423,6 +423,23 @@ func TestTraverseDuplicateTerminalsAndPaging(t *testing.T) {
 	assertEdgesLen(t, past, 0)
 }
 
+func TestGetLinksSkipTotalCountKeepsHasNextPage(t *testing.T) {
+	p, _, readerID, bookID := activateLibrary(t, spi.CardinalityManyToMany)
+	ctx := spi.RequestContext{TenantID: "t1"}
+	for i := 0; i < 3; i++ {
+		if _, err := p.CreateLink(ctx, "Borrows", readerID, bookID, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := p.GetLinks(ctx, readerID, "Borrows", "outbound", &spi.QueryOptions{Limit: 2, SkipTotalCount: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.TotalCount != 0 || len(page.Items) != 2 || !page.HasNextPage {
+		t.Fatalf("skip GetLinks total=%d items=%d hasNext=%v", page.TotalCount, len(page.Items), page.HasNextPage)
+	}
+}
+
 func TestHopCapWithinMaxPageLimit(t *testing.T) {
 	if query.HopCap > mysqlobda.MaxPageLimit {
 		t.Fatalf("HopCap=%d exceeds MaxPageLimit=%d; the leaf HasNextPage guard would miss overflow the provider already clamped", query.HopCap, mysqlobda.MaxPageLimit)

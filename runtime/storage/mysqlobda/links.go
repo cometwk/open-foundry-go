@@ -322,15 +322,17 @@ func (p *Provider) GetLinks(ctx spi.RequestContext, objectID, linkType, directio
 		limit, offset = options.Limit, options.Offset
 	}
 	limit, offset = pageLimitOffset(limit, offset)
-	countSel := *sel
-	countSel.Limit = nil
-	countStmt, err := p.dialect.Render(&countSel)
-	if err != nil {
-		return spi.LinkPage{}, err
-	}
 	var total int
-	if err := p.db.QueryRow("SELECT COUNT(*) FROM ("+countStmt.SQL+") AS q", args...).Scan(&total); err != nil {
-		return spi.LinkPage{}, mysqldialect.Classify(err)
+	if options == nil || !options.SkipTotalCount {
+		countSel := *sel
+		countSel.Limit = nil
+		countStmt, err := p.dialect.Render(&countSel)
+		if err != nil {
+			return spi.LinkPage{}, err
+		}
+		if err := p.db.QueryRow("SELECT COUNT(*) FROM ("+countStmt.SQL+") AS q", args...).Scan(&total); err != nil {
+			return spi.LinkPage{}, mysqldialect.Classify(err)
+		}
 	}
 	sel.Limit = &sqlast.LimitOffset{}
 	stmt, err := p.dialect.Render(sel)
@@ -463,24 +465,26 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 		limit, offset = options.Limit, options.Offset
 	}
 	limit, offset = pageLimitOffset(limit, offset)
-	countSel := *sel
-	countSel.Limit = nil
-	countSel.Order = nil
-	// The count subquery is a MySQL derived table, which rejects duplicate
-	// column names (s1.id and l0.id both derive to "id"). Projecting a single
-	// terminal column keeps the derived-table names unique; the count is row
-	// count either way.
-	countSel.Columns = []sqlast.Expr{sqlast.Identifier{
-		Qualifier: layout.NodeAlias,
-		Name:      firstCol(terminal.IdentityColumns),
-	}}
-	countStmt, err := p.dialect.Render(&countSel)
-	if err != nil {
-		return spi.TraversalResult{}, err
-	}
 	var total int
-	if err := p.db.QueryRow("SELECT COUNT(*) FROM ("+countStmt.SQL+") AS q", args...).Scan(&total); err != nil {
-		return spi.TraversalResult{}, mysqldialect.Classify(err)
+	if options == nil || !options.SkipTotalCount {
+		countSel := *sel
+		countSel.Limit = nil
+		countSel.Order = nil
+		// The count subquery is a MySQL derived table, which rejects duplicate
+		// column names (s1.id and l0.id both derive to "id"). Projecting a single
+		// terminal column keeps the derived-table names unique; the count is row
+		// count either way.
+		countSel.Columns = []sqlast.Expr{sqlast.Identifier{
+			Qualifier: layout.NodeAlias,
+			Name:      firstCol(terminal.IdentityColumns),
+		}}
+		countStmt, err := p.dialect.Render(&countSel)
+		if err != nil {
+			return spi.TraversalResult{}, err
+		}
+		if err := p.db.QueryRow("SELECT COUNT(*) FROM ("+countStmt.SQL+") AS q", args...).Scan(&total); err != nil {
+			return spi.TraversalResult{}, mysqldialect.Classify(err)
+		}
 	}
 	sel.Limit = &sqlast.LimitOffset{Limit: sqlast.Param{}, Offset: sqlast.Param{}}
 	stmt, err := p.dialect.Render(sel)

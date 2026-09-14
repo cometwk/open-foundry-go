@@ -30,6 +30,27 @@ func TestQueryLimitZeroMeansHundred(t *testing.T) {
 	}
 }
 
+func TestQuerySkipTotalCount(t *testing.T) {
+	p, _ := activateReader(t)
+	ctx := spi.RequestContext{TenantID: "t1"}
+	for i := 0; i < 3; i++ {
+		if _, err := p.CreateObject(ctx, "Reader", map[string]any{"name": string(rune('a' + i))}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	counted, err := p.QueryObjects(ctx, "Reader", spi.FilterExpression{}, nil)
+	if err != nil || counted.TotalCount != 3 {
+		t.Fatalf("default TotalCount=%d err=%v, want 3", counted.TotalCount, err)
+	}
+	skipped, err := p.QueryObjects(ctx, "Reader", spi.FilterExpression{}, &spi.QueryOptions{SkipTotalCount: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if skipped.TotalCount != 0 || len(skipped.Items) != 3 {
+		t.Fatalf("skip TotalCount=%d items=%d", skipped.TotalCount, len(skipped.Items))
+	}
+}
+
 func TestOrderByInvalidRejected(t *testing.T) {
 	p, _ := activateReader(t)
 	_, err := p.QueryObjects(spi.RequestContext{TenantID: "t1"}, "Reader", spi.FilterExpression{}, &spi.QueryOptions{

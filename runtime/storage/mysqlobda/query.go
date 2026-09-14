@@ -52,15 +52,17 @@ func (p *Provider) QueryObjects(ctx spi.RequestContext, typ string, filter spi.F
 	for _, col := range m.IdentityColumns {
 		sel.Order = append(sel.Order, sqlast.Order{Field: sqlast.Identifier{Name: col}})
 	}
-	countSel := *sel
-	countSel.Limit = nil
-	countStmt, err := p.dialect.Render(&countSel)
-	if err != nil {
-		return spi.ObjectPage{}, err
-	}
 	var total int
-	if err := p.db.QueryRow("SELECT COUNT(*) FROM ("+countStmt.SQL+") AS q", args...).Scan(&total); err != nil {
-		return spi.ObjectPage{}, mysqldialect.Classify(err)
+	if options == nil || !options.SkipTotalCount {
+		countSel := *sel
+		countSel.Limit = nil
+		countStmt, err := p.dialect.Render(&countSel)
+		if err != nil {
+			return spi.ObjectPage{}, err
+		}
+		if err := p.db.QueryRow("SELECT COUNT(*) FROM ("+countStmt.SQL+") AS q", args...).Scan(&total); err != nil {
+			return spi.ObjectPage{}, mysqldialect.Classify(err)
+		}
 	}
 	limit, offset := 0, 0
 	if options != nil {

@@ -722,16 +722,20 @@ func (p *Provider) GetLinks(ctx spi.RequestContext, objectID, linkType, directio
 		matched = append(matched, link)
 	}
 
-	totalCount := len(matched)
-	if limit < 0 {
-		limit = totalCount
+	matchedN := len(matched)
+	totalCount := matchedN
+	if options != nil && options.SkipTotalCount {
+		totalCount = 0
 	}
-	if offset > totalCount {
-		offset = totalCount
+	if limit < 0 {
+		limit = matchedN
+	}
+	if offset > matchedN {
+		offset = matchedN
 	}
 	end := offset + limit
-	if end > totalCount {
-		end = totalCount
+	if end > matchedN {
+		end = matchedN
 	}
 	sliced := matched[offset:end]
 	items := make([]spi.OntologyLink, 0, len(sliced))
@@ -745,7 +749,7 @@ func (p *Provider) GetLinks(ctx spi.RequestContext, objectID, linkType, directio
 	return spi.LinkPage{
 		Items:       items,
 		TotalCount:  totalCount,
-		HasNextPage: offset+limit < totalCount,
+		HasNextPage: offset+limit < matchedN,
 	}, nil
 }
 
@@ -866,16 +870,20 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 		edges = append(edges, c)
 	}
 
-	totalCount := len(nodes)
-	if limit < 0 {
-		limit = totalCount
+	nodeN := len(nodes)
+	totalCount := nodeN
+	if options != nil && options.SkipTotalCount {
+		totalCount = 0
 	}
-	if offset > totalCount {
-		offset = totalCount
+	if limit < 0 {
+		limit = nodeN
+	}
+	if offset > nodeN {
+		offset = nodeN
 	}
 	end := offset + limit
-	if end > totalCount {
-		end = totalCount
+	if end > nodeN {
+		end = nodeN
 	}
 	return spi.TraversalResult{
 		Nodes:      nodes[offset:end],
@@ -1089,7 +1097,11 @@ func (p *Provider) QueryObjects(ctx spi.RequestContext, typ string, filter spi.F
 			matched = append(matched, obj)
 		}
 	}
-	totalCount := len(matched)
+	matchedN := len(matched)
+	totalCount := matchedN
+	if options != nil && options.SkipTotalCount {
+		totalCount = 0
+	}
 
 	// Sort: reverse-iterate OrderBy so multi-key is leftmost-first
 	// (mirrors TS `[...orderBy].reverse()`). Comparator: nil sorts last.
@@ -1108,12 +1120,12 @@ func (p *Provider) QueryObjects(ctx spi.RequestContext, typ string, filter spi.F
 	if limit > maxQueryLimit {
 		limit = maxQueryLimit
 	}
-	if offset > len(matched) {
-		offset = len(matched)
+	if offset > matchedN {
+		offset = matchedN
 	}
 	end := offset + limit
-	if end > len(matched) {
-		end = len(matched)
+	if end > matchedN {
+		end = matchedN
 	}
 	sliced := matched[offset:end]
 
@@ -1128,7 +1140,7 @@ func (p *Provider) QueryObjects(ctx spi.RequestContext, typ string, filter spi.F
 	return spi.ObjectPage{
 		Items:       items,
 		TotalCount:  totalCount,
-		HasNextPage: offset+limit < totalCount,
+		HasNextPage: offset+limit < matchedN,
 	}, nil
 }
 

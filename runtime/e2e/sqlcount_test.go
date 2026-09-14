@@ -82,8 +82,8 @@ func isSchemaNoise(q string) bool {
 		strings.Contains(u, "FOREIGN_KEY_CHECKS")
 }
 
-// assertTwoHopSQLBaseline locks the P1 characterization: six SELECTs with
-// known roles. Memory has no SQL — skip rather than fake a count.
+// assertTwoHopSQLBaseline locks the current expand SQL shape. Memory has
+// no SQL — skip rather than fake a count. P2 drops the two COUNT queries.
 func assertTwoHopSQLBaseline(t *testing.T, backend string) {
 	t.Helper()
 	if backend != backendMySQL {
@@ -93,9 +93,7 @@ func assertTwoHopSQLBaseline(t *testing.T, backend string) {
 	wantRoles := []string{
 		"root_get",
 		"start_reload",
-		"traverse_count",
 		"traverse_page",
-		"hydrate_count",
 		"hydrate_page",
 	}
 	if len(got) != len(wantRoles) {

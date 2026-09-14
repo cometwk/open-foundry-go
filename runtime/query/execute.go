@@ -118,7 +118,9 @@ func expandGetLinks(eng *engine.Engine, ctx spi.RequestContext, startType, start
 	if err != nil {
 		return nil, err
 	}
-	page, err := eng.GetLinks(ctx, startID, steps[0].LinkType, steps[0].Direction, &spi.QueryOptions{Limit: hopCap})
+	page, err := eng.GetLinks(ctx, startID, steps[0].LinkType, steps[0].Direction, &spi.QueryOptions{
+		Limit: hopCap, SkipTotalCount: true,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +166,9 @@ func expandTraverse(eng *engine.Engine, ctx spi.RequestContext, startObj spi.Ont
 	if err != nil {
 		return nil, err
 	}
-	tr, err := eng.Traverse(ctx, startID, spi.TraversalPath{Steps: steps}, &spi.TraversalOptions{Limit: hopCap})
+	tr, err := eng.Traverse(ctx, startID, spi.TraversalPath{Steps: steps}, &spi.TraversalOptions{
+		Limit: hopCap, SkipTotalCount: true,
+	})
 	if err != nil {
 		return nil, err
 	}

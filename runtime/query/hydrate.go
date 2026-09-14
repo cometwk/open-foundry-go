@@ -20,6 +20,7 @@ func hydrateByIDs(eng *engine.Engine, ctx spi.RequestContext, typ string, ids []
 	page, err := eng.QueryObjects(ctx, typ, spi.FilterExpression{Or: ors}, &spi.QueryOptions{
 		Limit:          len(ids),
 		IncludeDeleted: includeDeleted,
+		SkipTotalCount: true,
 	})
 	if err != nil {
 		return nil, err

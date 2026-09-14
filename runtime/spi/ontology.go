@@ -201,6 +201,9 @@ type QueryOptions struct {
 	IncludeDeleted bool
 	AsOfVersion    *int
 	AsOfTime       *DateTime
+	// SkipTotalCount leaves TotalCount at 0 and skips the COUNT query on
+	// SQL providers. The zero value keeps today's counting behavior.
+	SkipTotalCount bool
 }
 
 // OrderBy sorts a query result.
@@ -227,6 +230,9 @@ type TraversalOptions struct {
 	Limit          int
 	Offset         int
 	IncludeDeleted bool
+	// SkipTotalCount leaves TotalCount at 0 and skips the COUNT subquery
+	// on SQL providers. The zero value keeps today's counting behavior.
+	SkipTotalCount bool
 }
 
 // ObjectPage is a page of objects.
