@@ -20,17 +20,19 @@ type sqlCounter struct {
 	stmts []string
 }
 
-func (c *sqlCounter) Before(ctx context.Context, query string, _ ...interface{}) (context.Context, error) {
+func (c *sqlCounter) Before(ctx context.Context, _ string, _ ...interface{}) (context.Context, error) {
+	return ctx, nil
+}
+
+// After records once per real execution. sqlhooks v2 fires Before on both
+// QueryerContext and Stmt for one database/sql call, but After only once.
+func (c *sqlCounter) After(ctx context.Context, query string, _ ...interface{}) (context.Context, error) {
 	if isSchemaNoise(query) {
 		return ctx, nil
 	}
 	c.mu.Lock()
 	c.stmts = append(c.stmts, query)
 	c.mu.Unlock()
-	return ctx, nil
-}
-
-func (c *sqlCounter) After(ctx context.Context, _ string, _ ...interface{}) (context.Context, error) {
 	return ctx, nil
 }
 
@@ -43,28 +45,8 @@ func (c *sqlCounter) Reset() {
 func (c *sqlCounter) Snapshot() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return collapseHookDupes(c.stmts)
-}
-
-// collapseHookDupes halves consecutive identical statements. sqlhooks v2
-// fires Before on both QueryerContext and Stmt for one database/sql call,
-// so a real 6-query expand shows up as 12 identical pairs.
-func collapseHookDupes(qs []string) []string {
-	var out []string
-	for i := 0; i < len(qs); {
-		j := i + 1
-		for j < len(qs) && qs[j] == qs[i] {
-			j++
-		}
-		keep := (j - i) / 2
-		if keep == 0 {
-			keep = 1
-		}
-		for k := 0; k < keep; k++ {
-			out = append(out, qs[i])
-		}
-		i = j
-	}
+	out := make([]string, len(c.stmts))
+	copy(out, c.stmts)
 	return out
 }
 
@@ -125,16 +107,6 @@ func classifyTwoHopSQL(i int, q string) string {
 		return "book_get"
 	default:
 		return "other"
-	}
-}
-
-func TestCollapseHookDupes(t *testing.T) {
-	got := collapseHookDupes([]string{"a", "a", "b", "b", "c", "c"})
-	if len(got) != 3 || got[0] != "a" || got[1] != "b" || got[2] != "c" {
-		t.Fatalf("%v", got)
-	}
-	if keep := collapseHookDupes([]string{"solo"}); len(keep) != 1 || keep[0] != "solo" {
-		t.Fatalf("%v", keep)
 	}
 }
 

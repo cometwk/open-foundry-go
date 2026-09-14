@@ -159,12 +159,12 @@ func openLibraryStorage(t *testing.T, packDir string, onto *ir.Ontology, schema 
 
 	var db *sql.DB
 	switch mode {
-	case dbModeReuse:
-		db = testdb.OpenDriver(t, sqlCountDriver, false, false)
-	case dbModeInit:
-		db = testdb.OpenDriver(t, sqlCountDriver, true, false)
+	case dbModeReuse: // 人工测试时使用
+		db = testdb.Connect(t)
+	case dbModeInit: // 人工测试时使用
+		db = testdb.OpenKeep(t)
 		mustInit(t, db, raw, schema)
-	default:
+	default: // 自动测试时使用
 		db = testdb.OpenDriver(t, sqlCountDriver, true, true)
 		mustInit(t, db, raw, schema)
 	}

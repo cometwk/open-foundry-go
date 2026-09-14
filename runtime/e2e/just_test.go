@@ -3,6 +3,8 @@ package e2e_test
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/openfoundry/runtime/internal/sqlopen"
 )
 
 func Test_JustTest(t *testing.T) {
@@ -25,6 +27,7 @@ func Test_JustTest(t *testing.T) {
 	})
 
 	t.Run("two hop branches readers", func(t *testing.T) {
+		sqlopen.LogSQL = true
 		// Both backends rebuild the hop tree: Traverse returns per-hop Edges
 		// and the engine batch-hydrates intermediates from them.
 		res := gql(t, srv, "gold", `{

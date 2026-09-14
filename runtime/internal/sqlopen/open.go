@@ -13,14 +13,19 @@ import (
 // Hooks satisfies the sqlhook.Hooks interface
 type Hooks struct{}
 
+var LogSQL = false
+
 func (h *Hooks) Before(ctx context.Context, query string, args ...interface{}) (context.Context, error) {
-	fmt.Printf("> %s\n%q\n", query, args)
 	return context.WithValue(ctx, "begin", time.Now()), nil
 }
 
+// Before 在 db.QueryContext 会触发2次，After 会触发1次
 func (h *Hooks) After(ctx context.Context, query string, args ...interface{}) (context.Context, error) {
 	begin := ctx.Value("begin").(time.Time)
-	fmt.Printf(". took: %s\n", time.Since(begin))
+	if LogSQL {
+		fmt.Printf("%s\n%q\n", query, args)
+		fmt.Printf(". took: %s\n", time.Since(begin))
+	}
 	return ctx, nil
 }
 
