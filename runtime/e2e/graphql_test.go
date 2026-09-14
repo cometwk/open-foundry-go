@@ -77,6 +77,7 @@ func TestGoldPath_GraphQL(t *testing.T) {
 		if !gqlNames["小明"] || !gqlNames["老王"] || len(gqlNames) != 2 {
 			t.Fatalf("readers = %v, want 小明 and 老王", readers)
 		}
+		assertTwoHopSQLBaseline(t, env.Backend)
 	})
 
 	t.Run("borrowers empty without Borrows", func(t *testing.T) {
@@ -224,6 +225,7 @@ type gqlRes struct {
 
 func gql(t *testing.T, srv *api.Server, tenant, query string) gqlRes {
 	t.Helper()
+	resetSQLCount()
 	rc := spi.RequestContext{TenantID: tenant, ActorID: "test"}
 	res := srv.Exec(context.Background(), rc, query, nil)
 	out := gqlRes{}

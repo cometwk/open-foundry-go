@@ -59,6 +59,7 @@ type openOptions struct {
 	dropOnOpen    bool
 	dropOnCleanup bool
 	logSQL        bool
+	driver        string
 }
 
 // Open connects to the database named in TEST_DB_URL and drops existing tables
@@ -85,6 +86,16 @@ func Connect(t *testing.T) *sql.DB {
 	return open(t, openOptions{dropOnOpen: false, dropOnCleanup: false, logSQL: true})
 }
 
+// OpenDriver is Open/OpenKeep/Connect with an explicit database/sql driver
+// name (for e2e counting wrappers). Empty driver is invalid.
+func OpenDriver(t *testing.T, driver string, dropOnOpen, dropOnCleanup bool) *sql.DB {
+	t.Helper()
+	if strings.TrimSpace(driver) == "" {
+		t.Fatal("testdb: OpenDriver requires a driver name")
+	}
+	return open(t, openOptions{driver: driver, dropOnOpen: dropOnOpen, dropOnCleanup: dropOnCleanup})
+}
+
 func open(t *testing.T, opts openOptions) *sql.DB {
 	t.Helper()
 	dsn := DSN()
@@ -108,9 +119,12 @@ func open(t *testing.T, opts openOptions) *sql.DB {
 	}()
 
 	var db *sql.DB
-	if opts.logSQL {
+	switch {
+	case opts.driver != "":
+		db, err = sql.Open(opts.driver, dsn)
+	case opts.logSQL:
 		db, err = sqlopen.Open("mysql", dsn)
-	} else {
+	default:
 		db, err = sql.Open("mysql", dsn)
 	}
 	if err != nil {

@@ -76,6 +76,7 @@ func TestGoldPath_REST(t *testing.T) {
 
 func rest(t *testing.T, url, tenant string) (int, []byte) {
 	t.Helper()
+	resetSQLCount()
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		t.Fatal(err)
