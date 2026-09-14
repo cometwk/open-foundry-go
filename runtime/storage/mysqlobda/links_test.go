@@ -391,6 +391,46 @@ func TestTraverseTwoHopTerminal(t *testing.T) {
 	assertEdgesLen(t, shown, 2)
 }
 
+func TestTraverseProjectHopObjects(t *testing.T) {
+	p, _, readerID, bookID := activateLibrary(t, spi.CardinalityManyToMany)
+	ctx := spi.RequestContext{TenantID: "t1"}
+	branch, err := p.CreateObject(ctx, "Branch", map[string]any{"name": "Central"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.CreateLink(ctx, "Borrows", readerID, bookID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.CreateLink(ctx, "AvailableAt", bookID, branch[spi.FieldID].(string), nil); err != nil {
+		t.Fatal(err)
+	}
+	path := spi.TraversalPath{Steps: []spi.TraversalStep{
+		{LinkType: "Borrows", Direction: "outbound"},
+		{LinkType: "AvailableAt", Direction: "outbound"},
+	}}
+	plain, err := p.Traverse(ctx, readerID, path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.HopObjects != nil {
+		t.Fatalf("nil Project must keep HopObjects unset: %+v", plain.HopObjects)
+	}
+	got, err := p.Traverse(ctx, readerID, path, &spi.TraversalOptions{
+		SkipTotalCount: true,
+		Project:        map[string][]string{"Book": {"title"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.HopObjects) < 1 || len(got.HopObjects[0]) != 1 {
+		t.Fatalf("HopObjects=%+v", got.HopObjects)
+	}
+	mid := got.HopObjects[0][0]
+	if mid[spi.FieldID] != bookID || mid["title"] != "Three Body Vol 1" {
+		t.Fatalf("mid payload=%v want book %s title", mid, bookID)
+	}
+}
+
 func TestTraverseDuplicateTerminalsAndPaging(t *testing.T) {
 	p, _, readerID, bookID := activateLibrary(t, spi.CardinalityManyToMany)
 	ctx := spi.RequestContext{TenantID: "t1"}

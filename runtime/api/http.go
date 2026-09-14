@@ -93,6 +93,7 @@ func (s *Server) serveRESTFollow(w http.ResponseWriter, r *http.Request) {
 		Mode:       query.ExpandTraverse,
 		Paths:      [][]string{fields},
 		CheckStart: true,
+		Project:    query.IntermediateProject(s.engine.Ontology(), typ, [][]string{fields}, nil),
 	}})
 	if err != nil {
 		if errors.Is(err, query.ErrInvalidFollowPath) {

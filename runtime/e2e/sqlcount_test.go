@@ -83,7 +83,7 @@ func isSchemaNoise(q string) bool {
 }
 
 // assertTwoHopSQLBaseline locks the current expand SQL shape. Memory has
-// no SQL — skip rather than fake a count. P2 drops COUNT and start reload.
+// no SQL — skip rather than fake a count. P3 drops the intermediate hydrate.
 func assertTwoHopSQLBaseline(t *testing.T, backend string) {
 	t.Helper()
 	if backend != backendMySQL {
@@ -93,7 +93,6 @@ func assertTwoHopSQLBaseline(t *testing.T, backend string) {
 	wantRoles := []string{
 		"root_get",
 		"traverse_page",
-		"hydrate_page",
 	}
 	if len(got) != len(wantRoles) {
 		t.Fatalf("2-hop SQL count = %d, want %d:\n%s", len(got), len(wantRoles), formatSQL(got))

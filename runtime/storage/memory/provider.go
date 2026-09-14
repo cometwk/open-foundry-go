@@ -160,6 +160,25 @@ func cloneObject(o spi.OntologyObject) (spi.OntologyObject, error) {
 	return out, nil
 }
 
+// projectObject keeps identity plus the named logical fields. An empty
+// field list is a skeleton so expand can stitch a path without a hydrate.
+func projectObject(obj spi.OntologyObject, fields []string) spi.OntologyObject {
+	out := spi.OntologyObject{
+		spi.FieldID:       obj[spi.FieldID],
+		spi.FieldType:     obj[spi.FieldType],
+		spi.FieldTenantID: obj[spi.FieldTenantID],
+	}
+	for _, f := range fields {
+		if f == "" || f == "id" || f == spi.FieldID {
+			continue
+		}
+		if v, ok := obj[f]; ok {
+			out[f] = v
+		}
+	}
+	return out
+}
+
 // now stamps the current UTC time as both _createdAt and _updatedAt; called
 // when a clone-marshalable time is the cheapest way to remain JSON-safe.
 func systemTimestamps() (now any) {
@@ -785,8 +804,12 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 	totalNodesSeen := 0
 	currentIDs := map[string]struct{}{startID: {}}
 	stepNodes := map[string]spi.OntologyObject{}
+	var hopObjects [][]spi.OntologyObject
+	if options != nil && options.Project != nil {
+		hopObjects = make([][]spi.OntologyObject, len(path.Steps))
+	}
 
-	for _, step := range path.Steps {
+	for si, step := range path.Steps {
 		if len(currentIDs) == 0 || totalNodesSeen >= maxTraversalNodes {
 			break
 		}
@@ -851,6 +874,25 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 			}
 		}
 		currentIDs = nextIDs
+		if hopObjects != nil && si < len(path.Steps)-1 {
+			seen := map[string]struct{}{}
+			for _, n := range stepNodes {
+				typ, _ := n[spi.FieldType].(string)
+				fields, ok := options.Project[typ]
+				if !ok {
+					continue
+				}
+				id, _ := n[spi.FieldID].(string)
+				if id == "" {
+					continue
+				}
+				if _, dup := seen[id]; dup {
+					continue
+				}
+				seen[id] = struct{}{}
+				hopObjects[si] = append(hopObjects[si], projectObject(n, fields))
+			}
+		}
 	}
 
 	nodes := make([]spi.OntologyObject, 0, len(stepNodes))
@@ -889,6 +931,7 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 		Nodes:      nodes[offset:end],
 		Edges:      edges,
 		TotalCount: totalCount,
+		HopObjects: hopObjects,
 	}, nil
 }
 

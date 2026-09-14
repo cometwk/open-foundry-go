@@ -315,6 +315,44 @@ func TestExec_TwoHopLink_TraverseNotGetLinks(t *testing.T) {
 	}
 }
 
+func TestExec_MemoDoesNotReuseDifferentSelection(t *testing.T) {
+	rec := &getLinksCounter{inner: memory.New()}
+	s, ids := seedSupplyChainOn(t, rec)
+	e := s.Engine()
+	if _, err := e.CreateLink(tenantRC("gold"), "InventoryOf", ids.inventory, ids.product, nil); err != nil {
+		t.Fatalf("CreateLink InventoryOf err = %v", err)
+	}
+	rc := tenantRC("gold")
+	res := s.Exec(context.Background(), rc, `{
+		withQty: facility(id: "`+ids.facility+`") {
+			inventoryRecords { quantity trackedProduct { name } }
+		}
+		noQty: facility(id: "`+ids.facility+`") {
+			inventoryRecords { trackedProduct { name } }
+		}
+	}`, nil)
+	if len(res.Errors) > 0 {
+		t.Fatalf("errors = %v", res.Errors)
+	}
+	data := decodeData(t, res.Data)
+	withQty := data["withQty"].(map[string]any)["inventoryRecords"].([]any)
+	if len(withQty) != 1 {
+		t.Fatalf("withQty = %v", withQty)
+	}
+	q, _ := withQty[0].(map[string]any)["quantity"].(float64)
+	if q != 10 {
+		t.Fatalf("withQty quantity = %v, want 10 (must not reuse the empty selection)", withQty[0])
+	}
+	noQty := data["noQty"].(map[string]any)["inventoryRecords"].([]any)
+	if len(noQty) != 1 {
+		t.Fatalf("noQty = %v", noQty)
+	}
+	tp := noQty[0].(map[string]any)["trackedProduct"].(map[string]any)
+	if tp["name"] != "Widget" {
+		t.Fatalf("noQty trackedProduct = %v", tp)
+	}
+}
+
 func TestExec_TrackedProduct_RequiresLinkNotFK(t *testing.T) {
 	s, ids := seedSupplyChain(t)
 	rc := tenantRC("gold")

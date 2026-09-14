@@ -2,6 +2,7 @@ package query
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/openfoundry/runtime/ir"
 	"github.com/openfoundry/runtime/spi"
@@ -154,7 +155,7 @@ func neighbors(parentID string, step spi.TraversalStep, edges []spi.OntologyLink
 	return out
 }
 
-func assemblePath(startID string, startObj spi.OntologyObject, fields []string, steps []spi.TraversalStep, tr spi.TraversalResult, hydrated map[string]spi.OntologyObject) *ExpandResult {
+func assemblePath(startID string, startObj spi.OntologyObject, fields []string, steps []spi.TraversalStep, tr spi.TraversalResult, hydrated map[string]spi.OntologyObject, project map[string][]string) *ExpandResult {
 	objs := map[string]spi.OntologyObject{}
 	putObj(objs, startObj)
 	for _, o := range hydrated {
@@ -163,6 +164,12 @@ func assemblePath(startID string, startObj spi.OntologyObject, fields []string, 
 	for _, o := range tr.Nodes {
 		putObj(objs, o)
 	}
+	for _, hop := range tr.HopObjects {
+		for _, o := range hop {
+			putObj(objs, o)
+		}
+	}
+	fillSkeletons(objs, tr.Edges, project)
 	adj := map[string]map[string][]spi.OntologyObject{}
 	frontier := []string{startID}
 	for i, field := range fields {
@@ -196,4 +203,141 @@ func assemblePath(startID string, startObj spi.OntologyObject, fields []string, 
 		first = []spi.OntologyObject{}
 	}
 	return &ExpandResult{FirstHop: first, Terminals: terminals, Adjacency: adj}
+}
+
+func fillSkeletons(objs map[string]spi.OntologyObject, edges []spi.OntologyLink, project map[string][]string) {
+	if project == nil {
+		return
+	}
+	add := func(typ, id any) {
+		t, _ := typ.(string)
+		i, _ := id.(string)
+		if t == "" || i == "" {
+			return
+		}
+		if _, ok := project[t]; !ok {
+			return
+		}
+		if _, ok := objs[i]; ok {
+			return
+		}
+		objs[i] = spi.OntologyObject{spi.FieldID: i, spi.FieldType: t}
+	}
+	for _, e := range edges {
+		add(e[spi.LinkFieldFromType], e[spi.LinkFieldFromID])
+		add(e[spi.LinkFieldToType], e[spi.LinkFieldToID])
+	}
+}
+
+// IntermediateProject lists scalar fields selected on each non-terminal type
+// along Expand paths. names is graphql.SelectedFieldNames scoped to paths[i][0];
+// a nil names list still records every intermediate type with an empty field
+// list (REST follow / skeleton).
+func IntermediateProject(ont *ir.Ontology, startType string, paths [][]string, names []string) map[string][]string {
+	if ont == nil || len(paths) == 0 {
+		return nil
+	}
+	out := map[string][]string{}
+	for _, path := range paths {
+		if len(path) < 2 {
+			continue
+		}
+		ot := ont.ObjectByName(startType)
+		f := fieldByName(ot, path[0])
+		if f == nil {
+			continue
+		}
+		typ := f.Type.Name
+		prefix := ""
+		for i := 1; i < len(path); i++ {
+			out[typ] = unionFieldNames(out[typ], selectedScalars(ont, typ, names, prefix))
+			cur := ont.ObjectByName(typ)
+			nf := fieldByName(cur, path[i])
+			if nf == nil {
+				break
+			}
+			if prefix == "" {
+				prefix = path[i]
+			} else {
+				prefix = prefix + "." + path[i]
+			}
+			typ = nf.Type.Name
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func selectedScalars(ont *ir.Ontology, typ string, names []string, prefix string) []string {
+	if names == nil {
+		return nil
+	}
+	ot := ont.ObjectByName(typ)
+	if ot == nil {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, name := range immediateSelected(names, prefix) {
+		f := fieldByName(ot, name)
+		if f == nil || f.Role == ir.RoleLinkNav {
+			continue
+		}
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
+}
+
+func immediateSelected(names []string, prefix string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, n := range names {
+		rest := n
+		if prefix != "" {
+			if n == prefix {
+				continue
+			}
+			p := prefix + "."
+			if !strings.HasPrefix(n, p) {
+				continue
+			}
+			rest = strings.TrimPrefix(n, p)
+		}
+		name := rest
+		if i := strings.IndexByte(rest, '.'); i >= 0 {
+			name = rest[:i]
+		}
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
+}
+
+func unionFieldNames(dst, src []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(dst)+len(src))
+	for _, n := range dst {
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	for _, n := range src {
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	return out
 }

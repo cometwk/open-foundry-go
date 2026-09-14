@@ -158,6 +158,40 @@ func isIDEqBatch(f spi.FilterExpression) bool {
 	return true
 }
 
+// midColumns maps a projection hint's logical fields onto physical columns.
+// Identity columns are always included so assemble can mint _id. A hint that
+// only names id/_id (or unknown fields) returns nil — expand synthesizes
+// skeletons from edge endpoints instead of widening the SELECT.
+func midColumns(m *obda.CompiledModel, fields []string) []string {
+	if m == nil || len(fields) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	cols := append([]string(nil), m.IdentityColumns...)
+	for _, c := range cols {
+		seen[c] = struct{}{}
+	}
+	nIdent := len(cols)
+	for _, f := range fields {
+		if f == "" || f == "id" || f == spi.FieldID {
+			continue
+		}
+		cf, ok := m.FieldByLogical[f]
+		if !ok || cf.Column == "" {
+			continue
+		}
+		if _, dup := seen[cf.Column]; dup {
+			continue
+		}
+		seen[cf.Column] = struct{}{}
+		cols = append(cols, cf.Column)
+	}
+	if len(cols) == nIdent {
+		return nil
+	}
+	return cols
+}
+
 func filterColumn(m *obda.CompiledModel, logical string) (string, bool) {
 	if logical == spi.FieldID && len(m.IdentityColumns) > 0 {
 		return m.IdentityColumns[0], true

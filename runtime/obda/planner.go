@@ -341,6 +341,10 @@ type TraverseHop struct {
 	// host alias is the previous hop alias when FKOnPrev, else this hop's
 	// target alias.
 	HostSelect []string
+	// MidSelect projects this hop's target object columns when the hop is
+	// not terminal and a projection hint asked for business fields.
+	// Empty means no extra bucket (callers synthesize id-only skeletons).
+	MidSelect []string
 }
 
 // TraverseBucket describes one hop's projected columns inside a Traverse row.
@@ -352,18 +356,21 @@ type TraverseBucket struct {
 }
 
 // TraverseLayout maps the flat Traverse projection into buckets: terminal
-// object columns first, then one bucket per hop in path order. Scanning is
-// positional; duplicate column names across buckets are expected and safe.
+// object columns first, then one bucket per hop in path order, then one
+// optional mid-object bucket per non-terminal hop. Scanning is positional;
+// duplicate column names across buckets are expected and safe.
 type TraverseLayout struct {
 	NodeAlias string
 	NodeCols  []string
 	Hops      []TraverseBucket
+	Mids      []TraverseBucket // index-aligned with non-terminal hops
 }
 
 // PlanTraverse selects terminal object columns via a chained INNER JOIN.
 // FROM is the start object table; each hop adds the link table then the target object table.
 // The projection carries the terminal bucket first, then one bucket per hop
-// (junction link columns, or host columns for inline hops); TraverseLayout
+// (junction link columns, or host columns for inline hops), then one mid
+// object bucket per non-terminal hop when MidSelect is set; TraverseLayout
 // maps the column offsets. WHERE, ORDER, and args are unaffected by the
 // projection — args stay [tenant, startID].
 func PlanTraverse(start ObjectBinding, hops []TraverseHop, tenant, startID string) (*sqlast.Select, *TraverseLayout, []any, error) {
@@ -490,6 +497,21 @@ func PlanTraverse(start ObjectBinding, hops []TraverseHop, tenant, startID strin
 			Cols:   append([]string(nil), bucketCols...),
 		})
 		offset += len(bucketCols)
+	}
+	for i, h := range hops {
+		if i == len(hops)-1 {
+			break
+		}
+		midAlias := fmt.Sprintf("s%d", i+1)
+		layout.Mids = append(layout.Mids, TraverseBucket{
+			Alias:  midAlias,
+			Offset: offset,
+			Cols:   append([]string(nil), h.MidSelect...),
+		})
+		for _, c := range h.MidSelect {
+			cols = append(cols, sqlast.Identifier{Qualifier: midAlias, Name: c})
+		}
+		offset += len(h.MidSelect)
 	}
 	sel.Columns = cols
 	sel.Order = append(sel.Order, sqlast.Order{

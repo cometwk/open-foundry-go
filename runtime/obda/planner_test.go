@@ -774,3 +774,34 @@ func TestPlanTraverseLayoutInlineHopAliases(t *testing.T) {
 		t.Fatalf("empty bucket layout=%+v", layout)
 	}
 }
+
+func TestPlanTraverseMidSelectAfterHopBuckets(t *testing.T) {
+	h1 := admittedHop(false, false)
+	h1.LinkSelect = []string{"id", "from_id", "to_id"}
+	h1.MidSelect = []string{"id", "ward_name"}
+	h2 := admittedHop(false, false)
+	h2.LinkSelect = []string{"id", "from_id"}
+	sel, layout, args, err := obda.PlanTraverse(startPatient(), []obda.TraverseHop{h1, h2}, "t1", "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(args) != 2 {
+		t.Fatalf("args=%v", args)
+	}
+	if len(layout.Mids) != 1 {
+		t.Fatalf("mids=%+v", layout.Mids)
+	}
+	mid := layout.Mids[0]
+	wantOff := len(h2.TargetSelect) + len(h1.LinkSelect) + len(h2.LinkSelect)
+	if mid.Alias != "s1" || mid.Offset != wantOff || fmt.Sprint(mid.Cols) != "[id ward_name]" {
+		t.Fatalf("mid=%+v want alias s1 offset %d", mid, wantOff)
+	}
+	// Hop bucket offsets stay before the mid bucket (existing scanners unchanged).
+	if layout.Hops[0].Offset != len(h2.TargetSelect) {
+		t.Fatalf("hop0 offset=%d", layout.Hops[0].Offset)
+	}
+	last := sel.Columns[len(sel.Columns)-1].(sqlast.Identifier)
+	if last.Qualifier != "s1" || last.Name != "ward_name" {
+		t.Fatalf("last col=%+v", last)
+	}
+}

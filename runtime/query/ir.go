@@ -79,6 +79,9 @@ type Expand struct {
 	Mode       ExpandMode
 	Paths      [][]string
 	CheckStart bool
+	// Project is the type→fields hint for Traverse. Nil means hydrate
+	// intermediates as today; a present type with an empty list is a skeleton.
+	Project map[string][]string
 }
 
 // Result is the Execute output for one op.

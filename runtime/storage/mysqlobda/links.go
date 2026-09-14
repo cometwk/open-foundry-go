@@ -399,6 +399,7 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 	includeDeleted := options != nil && options.IncludeDeleted
 	hops := make([]obda.TraverseHop, 0, len(path.Steps))
 	hopLinks := make([]*obda.CompiledLink, 0, len(path.Steps))
+	hopModels := make([]*obda.CompiledModel, 0, len(path.Steps))
 	prevType := startType
 	prevModel := startModel
 	var terminal *obda.CompiledModel
@@ -454,9 +455,19 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 		}
 		hops = append(hops, hop)
 		hopLinks = append(hopLinks, l)
+		hopModels = append(hopModels, peer)
 		prevType = peerName
 		prevModel = peer
 		terminal = peer
+	}
+	if options != nil && options.Project != nil {
+		for i := 0; i < len(hops)-1; i++ {
+			fields, ok := options.Project[hopModels[i].Name]
+			if !ok || len(fields) == 0 {
+				continue
+			}
+			hops[i].MidSelect = midColumns(hopModels[i], fields)
+		}
 	}
 	sel, layout, args, err := obda.PlanTraverse(startModel.Binding(), hops, ctx.TenantID, startID)
 	if err != nil {
@@ -503,9 +514,21 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 	for _, b := range layout.Hops {
 		totalCols += len(b.Cols)
 	}
+	for _, b := range layout.Mids {
+		totalCols += len(b.Cols)
+	}
 	nodes := make([]spi.OntologyObject, 0)
 	edges := make([]spi.OntologyLink, 0)
 	seen := make(map[string]struct{})
+	var hopObjects [][]spi.OntologyObject
+	var seenMid []map[string]struct{}
+	if options != nil && options.Project != nil {
+		hopObjects = make([][]spi.OntologyObject, len(hops))
+		seenMid = make([]map[string]struct{}, len(hops))
+		for i := range seenMid {
+			seenMid[i] = map[string]struct{}{}
+		}
+	}
 	for rows.Next() {
 		if len(nodes) >= limit {
 			// Probe row: discard without assembling. Overflow is a hard
@@ -554,6 +577,25 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 			seen[key] = struct{}{}
 			edges = append(edges, edge)
 		}
+		for i, b := range layout.Mids {
+			if hopObjects == nil || len(b.Cols) == 0 {
+				continue
+			}
+			midBiz := bizMap(dest[b.Offset:b.Offset+len(b.Cols)], b.Cols)
+			obj, err := p.assemble(hopModels[i], ctx.TenantID, midBiz)
+			if err != nil {
+				return spi.TraversalResult{}, err
+			}
+			id, _ := obj[spi.FieldID].(string)
+			if id == "" {
+				continue
+			}
+			if _, dup := seenMid[i][id]; dup {
+				continue
+			}
+			seenMid[i][id] = struct{}{}
+			hopObjects[i] = append(hopObjects[i], obj)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return spi.TraversalResult{}, err
@@ -562,6 +604,7 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 		Nodes:      nodes,
 		Edges:      edges,
 		TotalCount: total,
+		HopObjects: hopObjects,
 	}, nil
 }
 

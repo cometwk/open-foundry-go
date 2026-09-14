@@ -152,6 +152,26 @@ func TestConformance_Traverse(t *testing.T) {
 	}
 }
 
+func TestConformance_TraverseProject(t *testing.T) {
+	e, p, ctx := setupProvider(t)
+	s, _ := e.CreateObject(ctx, "Supplier", map[string]any{"name": "Acme"})
+	pt, _ := e.CreateObject(ctx, "Part", map[string]any{"sku": "P1"})
+	if _, err := e.CreateLink(ctx, "Supplies", s["_id"].(string), pt["_id"].(string), nil); err != nil {
+		t.Fatal(err)
+	}
+	path := spi.TraversalPath{Steps: []spi.TraversalStep{{LinkType: "Supplies", Direction: "outbound"}}}
+	plain, err := p.Traverse(ctx, s["_id"].(string), path, nil)
+	if err != nil || len(plain.Nodes) != 1 || plain.HopObjects != nil {
+		t.Fatalf("nil Project nodes=%d hop=%v err=%v", len(plain.Nodes), plain.HopObjects, err)
+	}
+	proj, err := p.Traverse(ctx, s["_id"].(string), path, &spi.TraversalOptions{
+		Project: map[string][]string{"Part": {"sku"}},
+	})
+	if err != nil || len(proj.Nodes) != 1 || proj.Nodes[0]["_id"] != pt["_id"] {
+		t.Fatalf("Project nodes=%v err=%v", proj.Nodes, err)
+	}
+}
+
 func TestConformance_SkipTotalCount(t *testing.T) {
 	e, p, ctx := setupProvider(t)
 	s, _ := e.CreateObject(ctx, "Supplier", map[string]any{"name": "Acme"})

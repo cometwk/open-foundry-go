@@ -114,6 +114,44 @@ func TestExecute_Expand_GetLinksVsTraverseVsFork(t *testing.T) {
 	}
 
 	rec.getLinks, rec.traverse, rec.getObject, rec.queryObjects = 0, 0, 0, 0
+	proj, err := Execute(e, ctx, Op{Expand: &Expand{
+		StartType: "A", StartID: ids.a, Mode: ExpandTraverse,
+		Paths:   [][]string{{"b", "c"}},
+		Project: map[string][]string{"B": {"name"}},
+	}})
+	if err != nil {
+		t.Fatalf("projected Expand err = %v", err)
+	}
+	if rec.queryObjects != 0 {
+		t.Fatalf("projected QueryObjects = %d, want 0 (B came from Traverse)", rec.queryObjects)
+	}
+	if rec.lastTraverse == nil || rec.lastTraverse.Project["B"] == nil {
+		t.Fatalf("projected Traverse options = %+v", rec.lastTraverse)
+	}
+	if len(proj.Expand.FirstHop) != 1 || proj.Expand.FirstHop[0]["name"] != "B1" {
+		t.Fatalf("projected FirstHop = %+v", proj.Expand.FirstHop)
+	}
+
+	rec.getLinks, rec.traverse, rec.getObject, rec.queryObjects = 0, 0, 0, 0
+	skel, err := Execute(e, ctx, Op{Expand: &Expand{
+		StartType: "A", StartID: ids.a, Mode: ExpandTraverse,
+		Paths:   [][]string{{"b", "c"}},
+		Project: map[string][]string{"B": {}},
+	}})
+	if err != nil {
+		t.Fatalf("skeleton Expand err = %v", err)
+	}
+	if rec.queryObjects != 0 {
+		t.Fatalf("skeleton QueryObjects = %d, want 0", rec.queryObjects)
+	}
+	if len(skel.Expand.FirstHop) != 1 || objectID(skel.Expand.FirstHop[0]) != ids.b {
+		t.Fatalf("skeleton FirstHop = %+v", skel.Expand.FirstHop)
+	}
+	if _, has := skel.Expand.FirstHop[0]["name"]; has {
+		t.Fatalf("skeleton must not carry name: %+v", skel.Expand.FirstHop[0])
+	}
+
+	rec.getLinks, rec.traverse, rec.getObject, rec.queryObjects = 0, 0, 0, 0
 	fork, err := Execute(e, ctx, Op{Expand: &Expand{
 		StartType: "A", StartID: ids.a, Mode: ExpandTraverse,
 		Paths: [][]string{{"b", "c"}, {"b", "d"}},

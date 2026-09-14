@@ -86,7 +86,7 @@ func execExpand(eng *engine.Engine, ctx spi.RequestContext, ex *Expand) (Result,
 	case ExpandTraverse:
 		termSeen := map[string]bool{}
 		for _, path := range ex.Paths {
-			got, err := expandTraverse(eng, ctx, startObj, ex.StartType, ex.StartID, path)
+			got, err := expandTraverse(eng, ctx, startObj, ex.StartType, ex.StartID, path, ex.Project)
 			if err != nil {
 				return Result{}, err
 			}
@@ -161,13 +161,13 @@ func expandGetLinks(eng *engine.Engine, ctx spi.RequestContext, startType, start
 	return &ExpandResult{FirstHop: kids, Terminals: kids, Adjacency: adj}, nil
 }
 
-func expandTraverse(eng *engine.Engine, ctx spi.RequestContext, startObj spi.OntologyObject, startType, startID string, fields []string) (*ExpandResult, error) {
+func expandTraverse(eng *engine.Engine, ctx spi.RequestContext, startObj spi.OntologyObject, startType, startID string, fields []string, project map[string][]string) (*ExpandResult, error) {
 	steps, err := resolveSteps(eng.Ontology(), startType, fields)
 	if err != nil {
 		return nil, err
 	}
 	tr, err := eng.Traverse(ctx, startID, spi.TraversalPath{Steps: steps}, &spi.TraversalOptions{
-		Limit: hopCap, SkipTotalCount: true, StartConfirmed: true,
+		Limit: hopCap, SkipTotalCount: true, StartConfirmed: true, Project: project,
 	})
 	if err != nil {
 		return nil, err
@@ -179,16 +179,17 @@ func expandTraverse(eng *engine.Engine, ctx spi.RequestContext, startObj spi.Ont
 	// Intermediates hydrate from Edges endpoints — same row window as Nodes,
 	// so a truncated fan-out yields a consistent partial tree. Terminal ids
 	// are excluded (tr.Nodes carries them); only those ids, not the whole
-	// type, so a self-typed intermediate stays hydrated.
+	// type, so a self-typed intermediate stays hydrated. Types named in
+	// Project are skipped (HopObjects / skeletons fill them).
 	terminalIDs := map[string]struct{}{}
 	for _, n := range tr.Nodes {
 		if id, _ := n[spi.FieldID].(string); id != "" {
 			terminalIDs[id] = struct{}{}
 		}
 	}
-	hydrated, err := hydrateEdges(eng, ctx, tr.Edges, terminalType, startType, startID, terminalIDs, false)
+	hydrated, err := hydrateEdges(eng, ctx, tr.Edges, terminalType, startType, startID, terminalIDs, false, project)
 	if err != nil {
 		return nil, err
 	}
-	return assemblePath(startID, startObj, fields, steps, tr, hydrated), nil
+	return assemblePath(startID, startObj, fields, steps, tr, hydrated, project), nil
 }
