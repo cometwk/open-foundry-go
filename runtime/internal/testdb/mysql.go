@@ -26,16 +26,24 @@ var (
 )
 
 // LoadEnv loads repo-root .env so TEST_DB_URL is visible under `go test`.
+// `go test` sets cwd to the package directory, so this walks parents until
+// it finds a .env (runtime/storage/mysqlobda is three levels below the repo
+// root; e2e is only two).
 func LoadEnv() {
 	loadEnvOnce.Do(func() {
-		for _, path := range []string{
-			".env",
-			"../.env",
-			filepath.Join("..", "..", ".env"),
-		} {
-			if err := godotenv.Load(path); err == nil {
+		dir, err := os.Getwd()
+		if err != nil {
+			return
+		}
+		for i := 0; i < 8; i++ {
+			if err := godotenv.Load(filepath.Join(dir, ".env")); err == nil {
 				return
 			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				return
+			}
+			dir = parent
 		}
 	})
 }

@@ -487,7 +487,7 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 	if err != nil {
 		return spi.TraversalResult{}, err
 	}
-	rows, err := p.db.Query(stmt.SQL, append(append([]any{}, args...), limit, offset)...)
+	rows, err := p.db.Query(stmt.SQL, append(append([]any{}, args...), limit+1, offset)...)
 	if err != nil {
 		return spi.TraversalResult{}, mysqldialect.Classify(err)
 	}
@@ -501,6 +501,15 @@ func (p *Provider) Traverse(ctx spi.RequestContext, startID string, path spi.Tra
 	edges := make([]spi.OntologyLink, 0)
 	seen := make(map[string]struct{})
 	for rows.Next() {
+		if len(nodes) >= limit {
+			// Probe row: discard without assembling. Overflow is a hard
+			// error only at the page cap; smaller pages keep today's
+			// paging semantics (TotalCount is authoritative).
+			if limit >= MaxPageLimit {
+				return spi.TraversalResult{}, fmt.Errorf("%w: hard cap %d", spi.ErrTraversalLimitExceeded, MaxPageLimit)
+			}
+			break
+		}
 		dest, err := scan(rows, totalCols)
 		if err != nil {
 			return spi.TraversalResult{}, err

@@ -102,12 +102,11 @@ func (p *Provider) QueryObjects(ctx spi.RequestContext, typ string, filter spi.F
 	return spi.ObjectPage{Items: items, TotalCount: total, HasNextPage: hasNext}, nil
 }
 
-// 临时设置为 10 便于测试
 const (
 	// DefaultPageLimit is used when Limit <= 0 (or options is nil).
-	DefaultPageLimit = 10 //100
+	DefaultPageLimit = 100
 	// MaxPageLimit is the hard cap; larger Limit values are truncated to this.
-	MaxPageLimit = 10 //1000
+	MaxPageLimit = 1000
 )
 
 // pageLimitOffset applies the shared pagination policy used by

@@ -88,4 +88,11 @@ var (
 	// ErrTransactionDomain signals a write that would cross the provider's
 	// single local transaction domain.
 	ErrTransactionDomain = errors.New("openfoundry: transaction domain")
+
+	// ErrTraversalLimitExceeded signals a Traverse or Expand fan-out that
+	// exceeded the provider's hard page cap. Callers must treat this as a
+	// failed query, not a truncated page: the probe row is discarded and
+	// no partial tree is returned. REST maps it to a request-level error
+	// (not 500); GraphQL surfaces it in errors[].
+	ErrTraversalLimitExceeded = errors.New("openfoundry: traversal limit exceeded")
 )

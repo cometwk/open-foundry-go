@@ -4,9 +4,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
+	"github.com/openfoundry/runtime/query"
 	"github.com/openfoundry/runtime/spi"
 	"github.com/openfoundry/runtime/storage/mysqlobda"
 )
@@ -420,34 +423,89 @@ func TestTraverseDuplicateTerminalsAndPaging(t *testing.T) {
 	assertEdgesLen(t, past, 0)
 }
 
+func TestHopCapWithinMaxPageLimit(t *testing.T) {
+	if query.HopCap > mysqlobda.MaxPageLimit {
+		t.Fatalf("HopCap=%d exceeds MaxPageLimit=%d; the leaf HasNextPage guard would miss overflow the provider already clamped", query.HopCap, mysqlobda.MaxPageLimit)
+	}
+}
+
 func TestTraverseLimitDefaultsAndCap(t *testing.T) {
-	p, db, readerID, bookID := activateLibrary(t, spi.CardinalityManyToMany)
-	ctx := spi.RequestContext{TenantID: "t1"}
+	path := spi.TraversalPath{Steps: []spi.TraversalStep{{LinkType: "Borrows"}}}
+
+	t.Run("overflow at hard cap", func(t *testing.T) {
+		p, db, readerID, bookID := activateLibrary(t, spi.CardinalityManyToMany)
+		ctx := spi.RequestContext{TenantID: "t1"}
+		seedBorrowsFanout(t, p, db, ctx, readerID, bookID, mysqlobda.MaxPageLimit+1)
+		_, err := p.Traverse(ctx, readerID, path, &spi.TraversalOptions{Limit: query.HopCap})
+		if !errors.Is(err, spi.ErrTraversalLimitExceeded) {
+			t.Fatalf("err=%v want ErrTraversalLimitExceeded", err)
+		}
+		if !strings.Contains(err.Error(), strconv.Itoa(mysqlobda.MaxPageLimit)) {
+			t.Fatalf("error %q missing hard cap %d", err, mysqlobda.MaxPageLimit)
+		}
+	})
+
+	t.Run("exact cap is not overflow", func(t *testing.T) {
+		p, db, readerID, bookID := activateLibrary(t, spi.CardinalityManyToMany)
+		ctx := spi.RequestContext{TenantID: "t1"}
+		seedBorrowsFanout(t, p, db, ctx, readerID, bookID, mysqlobda.MaxPageLimit)
+		tr, err := p.Traverse(ctx, readerID, path, &spi.TraversalOptions{Limit: query.HopCap})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(tr.Nodes) != mysqlobda.MaxPageLimit || tr.TotalCount != mysqlobda.MaxPageLimit {
+			t.Fatalf("exact cap nodes=%d total=%d", len(tr.Nodes), tr.TotalCount)
+		}
+	})
+
+	t.Run("default page and small page do not error", func(t *testing.T) {
+		p, db, readerID, bookID := activateLibrary(t, spi.CardinalityManyToMany)
+		ctx := spi.RequestContext{TenantID: "t1"}
+		total := mysqlobda.DefaultPageLimit + 1
+		seedBorrowsFanout(t, p, db, ctx, readerID, bookID, total)
+		zero, err := p.Traverse(ctx, readerID, path, &spi.TraversalOptions{Limit: 0})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(zero.Nodes) != mysqlobda.DefaultPageLimit || zero.TotalCount != total {
+			t.Fatalf("limit 0 nodes=%d total=%d", len(zero.Nodes), zero.TotalCount)
+		}
+		page, err := p.Traverse(ctx, readerID, path, &spi.TraversalOptions{Limit: 1, Offset: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page.Nodes) != 1 || page.TotalCount != total {
+			t.Fatalf("page nodes=%d total=%d", len(page.Nodes), page.TotalCount)
+		}
+	})
+}
+
+func seedBorrowsFanout(t *testing.T, p *mysqlobda.Provider, db *sql.DB, ctx spi.RequestContext, readerID, bookID string, total int) {
+	t.Helper()
 	if _, err := p.CreateLink(ctx, "Borrows", readerID, bookID, nil); err != nil {
 		t.Fatal(err)
+	}
+	if total <= 1 {
+		return
 	}
 	var fromID, toID, createdAt string
 	if err := db.QueryRow(`SELECT from_id, to_id, created_at FROM borrows LIMIT 1`).Scan(&fromID, &toID, &createdAt); err != nil {
 		t.Fatal(err)
 	}
-	total := mysqlobda.MaxPageLimit + 1
-	for i := 1; i < total; i++ {
-		mustExec(t, db, `INSERT INTO borrows (id, tenant_id, from_id, to_id, version, created_at, updated_at) VALUES (?, 't1', ?, ?, 1, ?, ?)`,
-			fmt.Sprintf("extra-%d", i), fromID, toID, createdAt, createdAt)
-	}
-	zero, err := p.Traverse(ctx, readerID, spi.TraversalPath{Steps: []spi.TraversalStep{{LinkType: "Borrows"}}}, &spi.TraversalOptions{Limit: 0})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(zero.Nodes) != mysqlobda.DefaultPageLimit || zero.TotalCount != total {
-		t.Fatalf("limit 0 nodes=%d total=%d", len(zero.Nodes), zero.TotalCount)
-	}
-	capped, err := p.Traverse(ctx, readerID, spi.TraversalPath{Steps: []spi.TraversalStep{{LinkType: "Borrows"}}}, &spi.TraversalOptions{Limit: total})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(capped.Nodes) != mysqlobda.MaxPageLimit || capped.TotalCount != total {
-		t.Fatalf("limit %d nodes=%d total=%d", total, len(capped.Nodes), capped.TotalCount)
+	const batch = 200
+	for i := 1; i < total; {
+		var b strings.Builder
+		b.WriteString(`INSERT INTO borrows (id, tenant_id, from_id, to_id, version, created_at, updated_at) VALUES `)
+		args := make([]any, 0, batch*5)
+		n := 0
+		for ; i < total && n < batch; i, n = i+1, n+1 {
+			if n > 0 {
+				b.WriteByte(',')
+			}
+			b.WriteString(`(?, 't1', ?, ?, 1, ?, ?)`)
+			args = append(args, fmt.Sprintf("extra-%d", i), fromID, toID, createdAt, createdAt)
+		}
+		mustExec(t, db, b.String(), args...)
 	}
 }
 
