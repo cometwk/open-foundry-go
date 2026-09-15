@@ -26,3 +26,6 @@ mysqlobda:
 
 tt:
 	go test -test.fullpath=true -timeout 30s -tags local -run TestSearchBlankQueryEmpty github.com/openfoundry/runtime/storage/mysqlobda -tags=local -count=1 -v
+max1000:
+	go test -test.fullpath=true -timeout 30s -tags local -run TestTraverseLimitDefaultsAndCap github.com/openfoundry/runtime/storage/mysqlobda -tags=local -count=1 -v
+	
