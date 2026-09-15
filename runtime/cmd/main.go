@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -15,11 +16,11 @@ var cmd = &cli.Command{
 	Usage: "Open Ontology Foundry",
 	Flags: []cli.Flag{ // 全局 Flag
 		&cli.StringFlag{
-			Name:  "config",
-			Usage: "配置文件路径",
-			Sources: cli.NewValueSourceChain(
-				cli.EnvVar("FOUNDRY_CONFIG"),
-			),
+			Name:    "config",
+			Usage:   "配置文件路径",
+			Aliases: []string{"c"},
+			Value:   "", // 默认为空字符串
+			Sources: cli.EnvVars("FOUNDRY_CONFIG"),
 		},
 		&cli.BoolFlag{
 			Name:  "verbose",
@@ -28,6 +29,7 @@ var cmd = &cli.Command{
 	},
 	Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
 		configPath := cmd.Root().String("config")
+		fmt.Println("configPath", configPath, len(configPath))
 		var err error
 		conf, err = bootstrap.LoadConfig(configPath)
 		if err != nil {
@@ -43,8 +45,8 @@ var cmd = &cli.Command{
 	Commands: []*cli.Command{
 		{
 			Name:    "ddl",
-			Aliases: []string{"a"},
 			Usage:   "打印或执行 DDL 语句",
+			Aliases: []string{"a"},
 			Flags: []cli.Flag{
 				&cli.StringFlag{
 					Name:  "dialect",
@@ -52,18 +54,18 @@ var cmd = &cli.Command{
 				},
 				&cli.StringFlag{
 					Name:    "output",
-					Aliases: []string{"o"},
 					Usage:   "将 DDL 写到指定文件；省略则打印到 stdout",
+					Aliases: []string{"o"},
 				},
 				&cli.BoolFlag{
 					Name:    "execute",
-					Aliases: []string{"x"},
 					Usage:   "执行这些 DDL",
+					Aliases: []string{"x"},
 				},
 				&cli.BoolFlag{
 					Name:    "force",
-					Aliases: []string{"f"},
 					Usage:   "先删除这些表，然后重建",
+					Aliases: []string{"f"},
 				},
 			},
 			Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -72,16 +74,16 @@ var cmd = &cli.Command{
 		},
 		{
 			Name:    "seed",
-			Aliases: []string{"s"},
 			Usage:   "将 domain pack 的 seed 数据写入数据库（幂等）",
+			Aliases: []string{"s"},
 			Action: func(ctx context.Context, cmd *cli.Command) error {
 				return seed()
 			},
 		},
 		{
 			Name:    "run",
-			Aliases: []string{"t"},
 			Usage:   "启动 GraphQL 与 REST HTTP 服务",
+			Aliases: []string{"t"},
 			Flags: []cli.Flag{
 				&cli.StringFlag{
 					Name:  "addr",
@@ -98,13 +100,13 @@ var cmd = &cli.Command{
 		},
 		{
 			Name:    "sdl",
-			Aliases: []string{"g"},
 			Usage:   "打印 graphql schema",
+			Aliases: []string{"g"},
 			Flags: []cli.Flag{
 				&cli.StringFlag{
 					Name:    "output",
-					Aliases: []string{"o"},
 					Usage:   "将 GraphQL schema 写到指定文件；省略则打印到 stdout",
+					Aliases: []string{"o"},
 				},
 			},
 			Action: func(ctx context.Context, cmd *cli.Command) error {

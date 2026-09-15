@@ -4,7 +4,7 @@
 set -e
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 BASE=${BASE:-http://localhost:4000}
-TENANT=${TENANT:-${SEED_TENANT:-system}}
+TENANT=${TENANT:-${SEED_TENANT:-gold}}
 if [ -n "${1-}" ]; then
 	case "$1" in
 	/*) QFILE=$1 ;;
@@ -25,9 +25,19 @@ if [ ! -f "$QFILE" ]; then
 fi
 QUERY=$(cat "$QFILE")
 
+ENCODE_QUERY='
+import json, sys
+print(json.dumps({"query": sys.stdin.read()}, ensure_ascii=False))
+'
+PRETTY_JSON='
+import json, sys
+json.dump(json.load(sys.stdin), sys.stdout, ensure_ascii=False, indent=4)
+print()
+'
+
 printf 'POST %s/graphql\nX-OpenFoundry-Tenant: %s\n\nquery:\n%s\n\n' "$BASE" "$TENANT" "$QUERY" >&2
 
-BODY=$(printf '%s' "$QUERY" | python3 -c 'import json,sys; print(json.dumps({"query": sys.stdin.read()}))')
+BODY=$(printf '%s' "$QUERY" | python3 -c "$ENCODE_QUERY")
 
 # printf '%s\n' "$BODY"
 
@@ -36,4 +46,4 @@ curl -sS -X POST "$BASE/graphql" \
 	-H "Content-Type: application/json" \
 	-H "X-OpenFoundry-Tenant: $TENANT" \
 	-H "Authorization: Bearer ignored" \
-	--data-binary "$BODY" | python3 -m json.tool
+	--data-binary "$BODY" | python3 -c "$PRETTY_JSON"

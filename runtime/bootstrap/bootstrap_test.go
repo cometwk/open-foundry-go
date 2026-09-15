@@ -1,6 +1,7 @@
 package bootstrap_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -168,4 +169,20 @@ func TestOpen_MemorySupplyChainRoundTrip(t *testing.T) {
 	if got["name"] != "Acme" || got["code"] != "ACME" {
 		t.Fatalf("got %#v", got)
 	}
+}
+
+func TestLoadConfig(t *testing.T) {
+	conf, err := bootstrap.LoadConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Println("conf", conf)
+}
+
+func TestLoadConfig2(t *testing.T) {
+	v, ok := os.LookupEnv("DB_DEBUG")
+	fmt.Println("v", v, ok)
+	bootstrap.LoadEnv("")
+	v, ok = os.LookupEnv("DB_DEBUG")
+	fmt.Println("v", v, ok)
 }

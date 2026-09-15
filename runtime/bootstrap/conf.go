@@ -90,6 +90,9 @@ func Open(c *Conf) (*Bootstrap, error) {
 	if err != nil {
 		return nil, err
 	}
+	if c.DBDebug {
+		sqlopen.LogSQL = true
+	}
 	return &Bootstrap{
 		Conf:     c,
 		DB:       db,

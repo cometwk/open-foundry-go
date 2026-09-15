@@ -12,7 +12,7 @@ import (
 
 func LoadEnv(envFile string) error {
 	if envFile != "" {
-		if err := godotenv.Load(envFile); err != nil {
+		if err := godotenv.Overload(envFile); err != nil {
 			return fmt.Errorf("加载 %s 文件失败: %v", envFile, err)
 		}
 		return nil
@@ -31,7 +31,7 @@ func LoadEnv(envFile string) error {
 	}
 
 	for _, path := range candidates {
-		if err := godotenv.Load(path); err == nil {
+		if err := godotenv.Overload(path); err == nil {
 			fullPath, err := filepath.Abs(path)
 			if err != nil {
 				return fmt.Errorf("获取绝对路径失败: %v", err)
