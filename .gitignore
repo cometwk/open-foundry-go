@@ -8,6 +8,7 @@ build/
 out/
 *.tsbuildinfo
 tmp
+extmp
 
 # Go binaries
 packages/cel-evaluator/cel-evaluator

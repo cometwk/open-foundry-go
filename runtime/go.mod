@@ -1,9 +1,8 @@
 module github.com/openfoundry/runtime
 
-go 1.25.0
+go 1.26.4
 
 require (
-	github.com/openfoundry/cel-evaluator v0.0.0
 	github.com/vektah/gqlparser/v2 v2.5.30
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
@@ -54,4 +53,3 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
-replace github.com/openfoundry/cel-evaluator => ../packages/cel-evaluator
