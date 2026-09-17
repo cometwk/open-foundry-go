@@ -9,13 +9,21 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/openfoundry/runtime/spi"
 	"github.com/openfoundry/runtime/storage/memory"
 )
 
+func testHandler(s *Server) http.Handler {
+	r := chi.NewRouter()
+	s.Handler(r)
+	return r
+}
+
 func TestHTTP_GraphQLAndRESTProduct(t *testing.T) {
 	s, ids := seedSupplyChain(t)
-	ts := httptest.NewServer(s.Handler())
+	ts := httptest.NewServer(testHandler(s))
 	t.Cleanup(ts.Close)
 
 	gql := graphqlPOST(t, ts.URL, "gold", `{ product(id: "`+ids.product+`") { id sku name } }`, "")
@@ -53,7 +61,7 @@ func TestHTTP_GraphQLAndRESTProduct(t *testing.T) {
 
 func TestHTTP_TenantHeader(t *testing.T) {
 	s, ids := seedSupplyChain(t)
-	ts := httptest.NewServer(s.Handler())
+	ts := httptest.NewServer(testHandler(s))
 	t.Cleanup(ts.Close)
 
 	for _, tenant := range []string{"", "   "} {
@@ -81,7 +89,7 @@ func TestHTTP_TenantHeader(t *testing.T) {
 
 func TestHTTP_RESTInventoryRecordAndFacilityComputed(t *testing.T) {
 	s, ids := seedSupplyChain(t)
-	ts := httptest.NewServer(s.Handler())
+	ts := httptest.NewServer(testHandler(s))
 	t.Cleanup(ts.Close)
 
 	code, body := restGET(t, ts.URL+"/api/v1/inventoryRecord/"+ids.inventory, "gold", "")
@@ -111,7 +119,7 @@ func TestHTTP_FollowTwoHopAndOneHop(t *testing.T) {
 	if _, err := s.Engine().CreateLink(tenantRC("gold"), "InventoryOf", ids.inventory, ids.product, nil); err != nil {
 		t.Fatalf("CreateLink InventoryOf err = %v", err)
 	}
-	ts := httptest.NewServer(s.Handler())
+	ts := httptest.NewServer(testHandler(s))
 	t.Cleanup(ts.Close)
 
 	gql := graphqlPOST(t, ts.URL, "gold", `{
@@ -175,7 +183,7 @@ func TestHTTP_FollowTwoHopAndOneHop(t *testing.T) {
 func TestHTTP_FollowIllegalPath_NoSPI(t *testing.T) {
 	rec := &getLinksCounter{inner: memory.New()}
 	s, ids := seedSupplyChainOn(t, rec)
-	ts := httptest.NewServer(s.Handler())
+	ts := httptest.NewServer(testHandler(s))
 	t.Cleanup(ts.Close)
 
 	cases := []string{
@@ -200,7 +208,7 @@ func TestHTTP_FollowIllegalPath_NoSPI(t *testing.T) {
 
 func TestHTTP_FollowMissingStart(t *testing.T) {
 	s, ids := seedSupplyChain(t)
-	ts := httptest.NewServer(s.Handler())
+	ts := httptest.NewServer(testHandler(s))
 	t.Cleanup(ts.Close)
 
 	code, body := restGET(t, ts.URL+"/api/v1/facility/missing/follow?path=inventoryRecords", "gold", "")
@@ -227,7 +235,7 @@ func TestHTTP_FollowTraversalLimit(t *testing.T) {
 		err:             fmt.Errorf("%w: hard cap %d", spi.ErrTraversalLimitExceeded, 1000),
 	}
 	s, ids := seedSupplyChainOn(t, rec)
-	ts := httptest.NewServer(s.Handler())
+	ts := httptest.NewServer(testHandler(s))
 	t.Cleanup(ts.Close)
 
 	code, body := restGET(t, ts.URL+"/api/v1/facility/"+ids.facility+"/follow?path=inventoryRecords", "gold", "")

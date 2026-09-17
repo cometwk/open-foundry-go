@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/openfoundry/runtime/bootstrap"
+	"github.com/openfoundry/runtime/internal/serve"
 )
 
 func TestRun_NilConf(t *testing.T) {
@@ -45,13 +46,15 @@ func TestRun_ServesGraphQL(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h, closeDB, err := openAPI()
+	srv, closeDB, err := openAPI()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(closeDB)
 
-	ts := httptest.NewServer(h)
+	r := serve.NewChiRouter()
+	srv.Handler(r)
+	ts := httptest.NewServer(r)
 	t.Cleanup(ts.Close)
 
 	payload, _ := json.Marshal(map[string]any{

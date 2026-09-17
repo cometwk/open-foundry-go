@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/openfoundry/runtime/api"
 	"github.com/openfoundry/runtime/bootstrap"
 	"github.com/openfoundry/runtime/engine"
@@ -86,7 +88,9 @@ func setupGoldAPI(t *testing.T) goldEnv {
 func setupGoldHTTP(t *testing.T) goldEnv {
 	t.Helper()
 	env := setupGoldAPI(t)
-	ts := httptest.NewServer(env.API.Handler())
+	r := chi.NewRouter()
+	env.API.Handler(r)
+	ts := httptest.NewServer(r)
 	t.Cleanup(ts.Close)
 	env.Server = ts
 	return env

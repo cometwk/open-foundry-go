@@ -36,6 +36,7 @@ require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/fatih/color v1.19.0
+	github.com/go-chi/chi/v5 v5.3.2
 	github.com/google/cel-go v0.27.0 // indirect
 	github.com/joho/godotenv v1.5.1
 	github.com/kelseyhightower/envconfig v1.4.0
@@ -52,4 +53,3 @@ require (
 	google.golang.org/grpc v1.82.1 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
-
