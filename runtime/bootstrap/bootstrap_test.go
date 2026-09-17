@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openfoundry/lib/env"
 	"github.com/openfoundry/runtime/bootstrap"
 	"github.com/openfoundry/runtime/pack"
 	"github.com/openfoundry/runtime/spi"
@@ -182,7 +183,7 @@ func TestLoadConfig(t *testing.T) {
 func TestLoadConfig2(t *testing.T) {
 	v, ok := os.LookupEnv("DB_DEBUG")
 	fmt.Println("v", v, ok)
-	bootstrap.LoadEnv("")
+	env.LoadEnv("")
 	v, ok = os.LookupEnv("DB_DEBUG")
 	fmt.Println("v", v, ok)
 }

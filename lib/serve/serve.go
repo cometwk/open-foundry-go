@@ -18,9 +18,9 @@ import (
 	"github.com/labstack/echo/v5"
 	"github.com/labstack/echo/v5/middleware"
 	"github.com/openfoundry/lib/env"
-	"github.com/openfoundry/lib/log"
 	"github.com/openfoundry/lib/orm"
 	"github.com/openfoundry/lib/util"
+	"github.com/openfoundry/lib/xlog"
 )
 
 type EchoServer struct {
@@ -88,12 +88,12 @@ func (e *EchoServer) Start() {
 	// 设置 slog
 	if env.IsDebug() {
 		// 输出日志到终端,方便调试
-		log.InitDebug()
+		xlog.InitDebug()
 	}
 
 	// 输出日志到文件
 	logfile := env.String("LOG_FILE", "main.log")
-	rotateHanlder := log.NewRotateFileHandler(path.Join(logdir, logfile))
+	rotateHanlder := xlog.NewRotateFileHandler(path.Join(logdir, logfile))
 	multiHandler := slog.NewMultiHandler(append(e.slogHandlers, rotateHanlder)...)
 	logger := slog.New(multiHandler)
 	slog.SetDefault(logger)
@@ -101,15 +101,15 @@ func (e *EchoServer) Start() {
 	level := env.String("LOG_LEVEL", "debug")
 	switch level {
 	case "debug":
-		log.SetLevel(slog.LevelDebug)
+		xlog.SetLevel(slog.LevelDebug)
 	case "info":
-		log.SetLevel(slog.LevelInfo)
+		xlog.SetLevel(slog.LevelInfo)
 	case "warn":
-		log.SetLevel(slog.LevelWarn)
+		xlog.SetLevel(slog.LevelWarn)
 	case "error":
-		log.SetLevel(slog.LevelError)
+		xlog.SetLevel(slog.LevelError)
 	default:
-		log.SetLevel(slog.LevelInfo)
+		xlog.SetLevel(slog.LevelInfo)
 	}
 
 	// orm 日志
@@ -290,8 +290,9 @@ func (e *EchoServer) createhttpErrorHandler() echo.HTTPErrorHandler {
 		// }
 
 		reqid := c.Response().Header().Get(echo.HeaderXRequestID)
-		logger := log.FromCtx(c.Request().Context())
-		logger.Info(fmt.Sprintf("HTTP服务错误: url: %s, %v", url, err), "reqid", reqid, "url", url, "method", method, "error", err)
+		// logger := log.FromCtx(c.Request().Context())
+		// logger.Info(fmt.Sprintf("HTTP服务错误: url: %s, %v", url, err), "reqid", reqid, "url", url, "method", method, "error", err)
+		slog.InfoContext(c.Request().Context(), fmt.Sprintf("HTTP服务错误: url: %s, %v", url, err), slog.String("reqid", reqid), slog.String("url", url), slog.String("method", method), slog.String("error", err.Error()))
 
 		// 默认错误处理
 		def := echo.DefaultHTTPErrorHandler(true)

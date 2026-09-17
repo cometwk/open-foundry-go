@@ -1,4 +1,4 @@
-package log_test
+package xlog_test
 
 import (
 	"bytes"
@@ -7,14 +7,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openfoundry/runtime/internal/log"
+	"github.com/openfoundry/lib/xlog"
 )
 
 func TestLog1(t *testing.T) {
-	log.Init()
+	xlog.Init()
 
-	ctx := log.WithRequestID(context.Background(), "123")
-	logger := slog.With(slog.String(log.MOD, "module-name"))
+	ctx := xlog.WithRequestID(context.Background(), "123")
+	logger := slog.With(slog.String(xlog.MOD, "module-name"))
 
 	slog.InfoContext(ctx, "hello2", slog.String("test", "Request 级"))
 	slog.InfoContext(ctx, "hello3", slog.String("test", "Event 级"))
@@ -25,10 +25,10 @@ func TestLog1(t *testing.T) {
 
 func TestContextHandler_WithPreservesReqID(t *testing.T) {
 	var buf bytes.Buffer
-	logger := slog.New(log.ContextHandler{Handler: slog.NewJSONHandler(&buf, nil)}).
-		With(slog.String(log.MOD, "module-name"))
+	logger := slog.New(xlog.ContextHandler{Handler: slog.NewJSONHandler(&buf, nil)}).
+		With(slog.String(xlog.MOD, "module-name"))
 
-	ctx := log.WithRequestID(context.Background(), "123")
+	ctx := xlog.WithRequestID(context.Background(), "123")
 	logger.InfoContext(ctx, "模块但有ctx", slog.String("test", "Component 级"))
 
 	out := buf.String()

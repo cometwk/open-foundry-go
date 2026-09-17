@@ -9,8 +9,8 @@ import (
 
 	"github.com/labstack/echo/v5"
 	"github.com/openfoundry/lib/env"
-	"github.com/openfoundry/lib/log"
 	"github.com/openfoundry/lib/serve/session"
+	pkglog "github.com/openfoundry/lib/xlog"
 )
 
 func sessionMiddleware() echo.MiddlewareFunc {
@@ -20,8 +20,8 @@ func sessionMiddleware() echo.MiddlewareFunc {
 			// 设置 request 中的 context 中的 reqid
 			reqid := c.Response().Header().Get(echo.HeaderXRequestID)
 			req := c.Request()
-			ctx := log.WithReqID(req.Context(), reqid) // 保存 reqid 到 context
-			ctx = session.WithSession(ctx, nil)        // TODO: 保存 session 到 context
+			ctx := pkglog.WithRequestID(req.Context(), reqid) // 保存 reqid 到 context
+			ctx = session.WithSession(ctx, nil)               // TODO: 保存 session 到 context
 			req = req.WithContext(ctx)
 			c.SetRequest(req)
 

@@ -4,14 +4,16 @@ import (
 	"database/sql"
 	"fmt"
 
-	_ "github.com/go-sql-driver/mysql"
 	"github.com/kelseyhightower/envconfig"
+	"github.com/openfoundry/lib/env"
 	"github.com/openfoundry/runtime/internal/sqlopen"
 	"github.com/openfoundry/runtime/ir"
 	"github.com/openfoundry/runtime/pack"
 	"github.com/openfoundry/runtime/spi"
 	"github.com/openfoundry/runtime/storage/memory"
 	"github.com/openfoundry/runtime/storage/mysqlobda"
+
+	_ "github.com/go-sql-driver/mysql"
 )
 
 type Conf struct {
@@ -35,7 +37,7 @@ type Conf struct {
 const BackendMemory = "memory"
 
 func LoadConfig(configPath string) (*Conf, error) {
-	if err := LoadEnv(configPath); err != nil {
+	if err := env.LoadEnv(configPath); err != nil {
 		fmt.Println("加载 env 文件失败: ", err)
 		return nil, err
 	}
@@ -46,7 +48,7 @@ func LoadConfig(configPath string) (*Conf, error) {
 		return nil, err
 	}
 
-	cfg.BaseDir = expandHome(cfg.BaseDir)
+	cfg.BaseDir = env.ExpandHome(cfg.BaseDir)
 
 	return &cfg, nil
 }

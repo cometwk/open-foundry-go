@@ -11,8 +11,7 @@ import (
 	"github.com/labstack/echo/v5"
 	"github.com/mssola/user_agent"
 	"github.com/openfoundry/lib/env"
-	"github.com/openfoundry/lib/log"
-	// "github.com/sirupsen/logrus"
+	"github.com/openfoundry/lib/xlog"
 )
 
 func readRequestBody(c *echo.Context) (string, error) {
@@ -54,8 +53,8 @@ func simpleRequestLogger() echo.MiddlewareFunc {
 			browser := fmt.Sprintf("%s %s", name, version)
 
 			// 设置context属性
-			ctx := log.WithReqID(req.Context(), reqid)
-			ctx = log.WithFeature(ctx, c.Path())
+			ctx := xlog.WithRequestID(req.Context(), reqid)
+			// ctx = log.WithFeature(ctx, c.Path())
 			req = req.WithContext(ctx)
 			c.SetRequest(req)
 
@@ -68,8 +67,6 @@ func simpleRequestLogger() echo.MiddlewareFunc {
 					requestBody, _ = readRequestBody(c)
 				}
 			}
-
-			logger := log.FromCtx(ctx)
 
 			attrs := []slog.Attr{
 				slog.String("module", "httplog"),
@@ -90,7 +87,11 @@ func simpleRequestLogger() echo.MiddlewareFunc {
 				}
 			}
 
-			logger.LogAttrs(ctx, slog.LevelInfo,
+			// logger := log.FromCtx(ctx)
+			// logger.LogAttrs(ctx, slog.LevelInfo,
+			// 	fmt.Sprintf("%s %s %s", req.Method, req.Proto, req.RequestURI),
+			// 	attrs...)
+			slog.LogAttrs(ctx, slog.LevelInfo,
 				fmt.Sprintf("%s %s %s", req.Method, req.Proto, req.RequestURI),
 				attrs...)
 
@@ -127,7 +128,7 @@ func simpleRequestLogger() echo.MiddlewareFunc {
 				}
 			}
 
-			logger.LogAttrs(ctx, slog.LevelInfo,
+			slog.LogAttrs(ctx, slog.LevelInfo,
 				fmt.Sprintf("%d %s", res.Status, req.RequestURI),
 				fields...)
 

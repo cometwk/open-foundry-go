@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openfoundry/lib/log"
 	"github.com/openfoundry/lib/orm"
+	"github.com/openfoundry/lib/xlog"
 	"github.com/stretchr/testify/assert"
 	"xorm.io/builder"
 	"xorm.io/xorm"
@@ -35,7 +35,7 @@ type testHelper struct {
 
 // newTestHelper 创建测试助手，初始化内存数据库并准备测试数据
 func newTestHelper(t *testing.T) *testHelper {
-	log.InitDebug()
+	xlog.InitDebug()
 	orm.InitDB("sqlite3", ":memory:")
 
 	th := &testHelper{

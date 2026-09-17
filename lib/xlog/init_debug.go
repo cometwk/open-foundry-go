@@ -1,4 +1,4 @@
-package log
+package xlog
 
 import (
 	"io"
@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/fatih/color"
-	"github.com/openfoundry/lib/log/xfmt"
+	"github.com/openfoundry/lib/xlog/xfmt"
 )
 
 func jsonLogReplaceAttr(groups []string, a slog.Attr) slog.Attr {
@@ -36,12 +36,14 @@ func jsonLogReplaceAttr(groups []string, a slog.Attr) slog.Attr {
 	}
 }
 
-func InitDebug(h ...string) {
-	initlog(false, h...)
+// Init 初始化日志 黑白输出, 输出格式 h = json, text, discard
+func Init(h ...string) {
+	initlog(true, h...)
 }
 
-func InitDebugNoColor(h ...string) {
-	initlog(true, h...)
+// InitDebug 初始化日志, 彩色输出,  输出格式 h = json, text, discard
+func InitDebug(h ...string) {
+	initlog(false, h...)
 }
 
 // 创建一个可变级别的 LevelVar（方便后续随时动态修改级别）
@@ -58,7 +60,7 @@ func GetLevel() slog.Level {
 func initlog(c bool, t ...string) {
 	color.NoColor = c
 	handler := NewDebugHandler(t...)
-	slog.SetDefault(slog.New(handler))
+	InitLogger(handler)
 }
 
 var opts = &slog.HandlerOptions{

@@ -3,7 +3,6 @@ package env
 import (
 	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -11,9 +10,19 @@ import (
 	"github.com/joho/godotenv"
 )
 
-func init() {
+func init() {}
+
+func LoadEnv(envFile string) error {
+	if envFile != "" {
+		if err := godotenv.Overload(envFile); err != nil {
+			return fmt.Errorf("加载 %s 文件失败: %v", envFile, err)
+		}
+		return nil
+	}
+
 	// 尝试多个可能的路径
-	paths := []string{
+	candidates := []string{
+		ExpandHome("~/.foundry/env"),
 		".env",
 		"../.env",
 		"../../.env",
@@ -23,18 +32,18 @@ func init() {
 		"../../../../../.env",
 	}
 
-	for _, path := range paths {
-		if err := godotenv.Load(path); err == nil {
+	for _, path := range candidates {
+		if err := godotenv.Overload(path); err == nil {
 			fullPath, err := filepath.Abs(path)
 			if err != nil {
-				panic(fmt.Sprintf("获取绝对路径失败: %v", err))
+				return fmt.Errorf("获取绝对路径失败: %v", err)
 			}
-			fmt.Printf("加载 .env 文件成功: %s => %s\n", path, fullPath)
-			return
+			fmt.Printf("加载 env 文件成功: %s\n", fullPath)
+			return nil
 		}
 	}
 
-	panic("加载 .env 文件失败")
+	return fmt.Errorf("env 文件未找到，请检查环境变量 FOUNDRY_CONFIG 或配置文件路径")
 }
 
 func Check(key string, description string) {
@@ -119,18 +128,17 @@ func MustDirPath(key string) string {
 
 func BaseDir() string {
 	baseDir := String("BASE_DIR", ".")
-	return tildeExpand(baseDir)
+	return ExpandHome(baseDir)
 }
 
-// 展开 ~(tilde) 字符，例如 ~/log 展开为 $HOME/log
-func tildeExpand(p string) string {
-	usr, _ := user.Current()
-	dir := usr.HomeDir
-
-	if p == "~" {
-		p = dir
-	} else if strings.HasPrefix(p, "~/") {
-		p = filepath.Join(dir, p[2:])
+// ExpandHome 用于将 ~/开头的路径替换为当前用户的真实 Home 目录
+func ExpandHome(path string) string {
+	if !strings.HasPrefix(path, "~/") {
+		return path
 	}
-	return p
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path // 如果获取失败，降级返回原路径
+	}
+	return filepath.Join(home, path[2:])
 }

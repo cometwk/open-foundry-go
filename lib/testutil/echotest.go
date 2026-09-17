@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/labstack/echo/v5"
-	"github.com/openfoundry/lib/log"
+	pkglog "github.com/openfoundry/lib/xlog"
 )
 
 // ResponseRecorder 包装了 httptest.ResponseRecorder 以提供额外的辅助方法
@@ -47,7 +47,7 @@ func sessionMiddleware() echo.MiddlewareFunc {
 				reqid = "test-req-id" // 确保测试时 reqid 不为空
 			}
 			req := c.Request()
-			ctx := log.WithReqID(req.Context(), reqid)
+			ctx := pkglog.WithRequestID(req.Context(), reqid)
 			req = req.WithContext(ctx)
 			c.SetRequest(req)
 			return next(c)

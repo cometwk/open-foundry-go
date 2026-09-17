@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	pkglog "github.com/openfoundry/lib/log"
+	pkglog "github.com/openfoundry/lib/xlog"
 	"xorm.io/xorm/log"
 	xormlog "xorm.io/xorm/log"
 )
@@ -57,7 +57,7 @@ func (x *XormLogrus) AfterSQL(context xormlog.LogContext) {
 		return
 	}
 
-	reqid := pkglog.GetReqID(context.Ctx)
+	reqid := pkglog.RequestID(context.Ctx)
 
 	// 设置每个元素的最大长度
 	const maxContentLength = 100
@@ -74,13 +74,17 @@ func (x *XormLogrus) AfterSQL(context xormlog.LogContext) {
 	}
 
 	sessionID := context.Ctx.Value(log.SessionIDKey)
-	logger := pkglog.FromCtx(context.Ctx)
-	logger.Debug(fmt.Sprintf("[SQL %s] %s %v", sessionID, context.SQL, truncatedArgs),
-		"exec_time", context.ExecuteTime.Milliseconds(),
-		"reqid", reqid,
+	// logger := pkglog.FromCtx(context.Ctx)
+	// logger.Debug(fmt.Sprintf("[SQL %s] %s %v", sessionID, context.SQL, truncatedArgs),
+	// 	"exec_time", context.ExecuteTime.Milliseconds(),
+	// 	"reqid", reqid,
+	// 	// "tx", sessionID,
+	// )
+	slog.DebugContext(context.Ctx, fmt.Sprintf("[SQL %s] %s %v", sessionID, context.SQL, truncatedArgs),
+		slog.String("exec_time", context.ExecuteTime.String()),
+		slog.String("reqid", reqid),
 		// "tx", sessionID,
 	)
-
 }
 
 // 实现 xorm 的 log.Logger 接口
