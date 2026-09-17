@@ -3,6 +3,7 @@ package mysqlobda
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -33,9 +34,9 @@ type DBTX interface {
 // must select a database; introspection resolves tables within DATABASE().
 type Provider struct {
 	spi.UnimplementedStorageProvider
-	db      *sql.DB
-	doc     *obda.Document
-	dialect *mysqldialect.Dialect
+	db       *sql.DB
+	compiled *obda.Compiled
+	dialect  *mysqldialect.Dialect
 
 	mu         sync.Mutex
 	active     *activation
@@ -49,30 +50,22 @@ type activation struct {
 	fingerprint string
 }
 
-// Open parses mapping, binds the MySQL dialect, and verifies connectivity.
-func Open(db *sql.DB, mapping []byte, opts Options) (*Provider, error) {
-	doc, err := obda.Parse(mapping)
-	if err != nil {
-		return nil, err
-	}
-	if err := obda.Validate(doc); err != nil {
-		return nil, err
+// Open binds a compiled mapping, the MySQL dialect, and verifies connectivity.
+func Open(db *sql.DB, compiled *obda.Compiled, opts Options) (*Provider, error) {
+	if compiled == nil {
+		return nil, fmt.Errorf("mysqlobda: compiled mapping required")
 	}
 	if err := db.Ping(); err != nil {
 		return nil, err
 	}
-	return &Provider{db: db, doc: doc, dialect: mysqldialect.New()}, nil
+	return &Provider{db: db, compiled: compiled, dialect: mysqldialect.New()}, nil
 }
 
 func (p *Provider) ApplySchema(ctx spi.RequestContext, schema spi.OntologySchema) (spi.MigrationResult, error) {
 	if ctx.TenantID == "" {
 		return spi.MigrationResult{}, spi.ErrTenantRequired
 	}
-	compiled, err := obda.Compile(schema, p.doc)
-	if err != nil {
-		return spi.MigrationResult{}, err
-	}
-	if err := p.verifyMappedSchema(compiled); err != nil {
+	if err := p.verifyMappedSchema(p.compiled); err != nil {
 		return spi.MigrationResult{}, err
 	}
 	fp, err := p.fingerprint()
@@ -89,7 +82,7 @@ func (p *Provider) ApplySchema(ctx spi.RequestContext, schema spi.OntologySchema
 	if to == 0 {
 		to = from + 1
 	}
-	p.active = &activation{schema: schema, compiled: compiled, version: to, fingerprint: fp}
+	p.active = &activation{schema: schema, compiled: p.compiled, version: to, fingerprint: fp}
 	p.failClosed = false
 	return spi.MigrationResult{Success: true, FromVersion: from, ToVersion: to, AppliedAt: time.Now().UTC()}, nil
 }
@@ -180,18 +173,18 @@ func (p *Provider) pin(ctx spi.RequestContext) (*activation, error) {
 }
 
 func (p *Provider) fingerprint() (string, error) {
-	names := make([]string, 0, len(p.doc.Models)+len(p.doc.Links))
+	names := make([]string, 0, len(p.compiled.Models)+len(p.compiled.Links))
 	tables := map[string]string{}
-	for name, m := range p.doc.Models {
+	for name, m := range p.compiled.Models {
 		names = append(names, "m:"+name)
-		tables["m:"+name] = m.Relation.Name
+		tables["m:"+name] = m.Table
 	}
-	for name, l := range p.doc.Links {
-		if l.Inline() {
+	for name, l := range p.compiled.Links {
+		if l.Inline {
 			continue
 		}
 		names = append(names, "l:"+name)
-		tables["l:"+name] = l.Relation.Name
+		tables["l:"+name] = l.Table
 	}
 	sort.Strings(names)
 	h := ""

@@ -9,10 +9,8 @@ import (
 	"github.com/labstack/echo/v5"
 	"github.com/openfoundry/runtime/api"
 	"github.com/openfoundry/runtime/bootstrap"
-	"github.com/openfoundry/runtime/engine"
 	"github.com/openfoundry/runtime/internal/serve"
 	"github.com/openfoundry/runtime/mcp"
-	"github.com/openfoundry/runtime/obda"
 )
 
 func run(ctx context.Context, addr string) error {
@@ -50,34 +48,15 @@ func openAPI() (*api.Server, func(), error) {
 		slog.Error("open failed", "error", err)
 		return nil, nil, err
 	}
-	if err := b.ApplySchema(); err != nil {
-		_ = b.Close()
-		slog.Error("apply schema failed", "error", err)
-		return nil, nil, err
-	}
-	compiled, err := compileMapping(b)
+	e, err := b.OpenEngine()
 	if err != nil {
 		_ = b.Close()
-		return nil, nil, err
-	}
-	e, err := engine.NewWithCompiled(b.SPI, b.Ontology, compiled)
-	if err != nil {
-		_ = b.Close()
-		slog.Error("engine.New failed", "error", err)
+		slog.Error("open engine failed", "error", err)
 		return nil, nil, err
 	}
 	srv, err := api.New(e)
 	if err != nil {
-		_ = b.Close()
-		slog.Error("api.New failed", "error", err)
 		return nil, nil, err
 	}
 	return srv, func() { _ = b.Close() }, nil
-}
-
-func compileMapping(b *bootstrap.Bootstrap) (*obda.Compiled, error) {
-	if b == nil || len(b.Mappings) == 0 || b.Mappings[0].Doc == nil {
-		return nil, fmt.Errorf("mapping required")
-	}
-	return obda.Compile(b.Schema, b.Mappings[0].Doc)
 }

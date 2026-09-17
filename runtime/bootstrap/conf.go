@@ -7,6 +7,7 @@ import (
 	"github.com/kelseyhightower/envconfig"
 	"github.com/openfoundry/lib/env"
 	"github.com/openfoundry/runtime/internal/sqlopen"
+	"github.com/openfoundry/runtime/obda"
 	"github.com/openfoundry/runtime/spi"
 	"github.com/openfoundry/runtime/storage/memory"
 	"github.com/openfoundry/runtime/storage/mysqlobda"
@@ -55,7 +56,7 @@ func LoadConfig(configPath string) (*Conf, error) {
 
 // openBackend resolves DB_DRIVER to a provider. mysql opens a *sql.DB via
 // DB_URL; memory constructs the in-process provider with no database.
-func openBackend(c *Conf, raw []byte) (*sql.DB, spi.StorageProvider, error) {
+func (c *Conf) openBackend(compiled *obda.Compiled) (*sql.DB, spi.StorageProvider, error) {
 	switch c.DBDriver {
 	case SQLMySQL:
 		if c.DBURL == "" {
@@ -65,7 +66,7 @@ func openBackend(c *Conf, raw []byte) (*sql.DB, spi.StorageProvider, error) {
 		if err != nil {
 			return nil, nil, err
 		}
-		p, err := mysqlobda.Open(db, raw, mysqlobda.Options{})
+		p, err := mysqlobda.Open(db, compiled, mysqlobda.Options{})
 		if err != nil {
 			_ = db.Close()
 			return nil, nil, err
@@ -79,13 +80,4 @@ func openBackend(c *Conf, raw []byte) (*sql.DB, spi.StorageProvider, error) {
 	default:
 		return nil, nil, fmt.Errorf("bootstrap: unsupported driver %q", c.DBDriver)
 	}
-}
-
-// Close releases the underlying database. The memory backend has none, so
-// Close is always safe to call.
-func (b *Bootstrap) Close() error {
-	if b == nil || b.DB == nil {
-		return nil
-	}
-	return b.DB.Close()
 }

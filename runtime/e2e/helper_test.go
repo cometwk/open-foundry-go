@@ -14,9 +14,7 @@ import (
 	"github.com/openfoundry/runtime/engine"
 	"github.com/openfoundry/runtime/internal/testdb"
 	"github.com/openfoundry/runtime/ir"
-	"github.com/openfoundry/runtime/obda"
 	"github.com/openfoundry/runtime/pack"
-	"github.com/openfoundry/runtime/projection"
 	"github.com/openfoundry/runtime/spi"
 	"github.com/openfoundry/runtime/storage/memory"
 	"github.com/openfoundry/runtime/storage/mysqlobda"
@@ -108,20 +106,19 @@ func prepareGoldStorage(t *testing.T, mode string) goldEnv {
 	if err != nil {
 		t.Fatalf("LibraryPackDir err = %v", err)
 	}
-	onto, err := pack.LoadDir(dir)
+	loaded, err := pack.Load(dir)
 	if err != nil {
-		t.Fatalf("LoadDir err = %v", err)
+		t.Fatalf("pack.Load err = %v", err)
 	}
-	schema := projection.ProjectStorage(onto)
 	ctx := spi.RequestContext{TenantID: "gold", ActorID: "test"}
 
-	backend, provider := openLibraryStorage(t, dir, onto, schema, mode)
-	mr, err := provider.ApplySchema(ctx, schema)
+	backend, provider := openLibraryStorage(t, loaded, mode)
+	mr, err := provider.ApplySchema(ctx, loaded.Schema)
 	if err != nil || !mr.Success {
 		t.Fatalf("ApplySchema (%s) err = %v result = %+v", backend, err, mr)
 	}
 
-	eng, err := engine.New(provider, onto)
+	eng, err := engine.New(provider, loaded.Ontology)
 	if err != nil {
 		t.Fatalf("engine.New err = %v", err)
 	}
@@ -136,7 +133,7 @@ func prepareGoldStorage(t *testing.T, mode string) goldEnv {
 	return goldEnv{
 		Backend:  backend,
 		PackDir:  dir,
-		Ontology: onto,
+		Ontology: loaded.Ontology,
 		Provider: provider,
 		Engine:   eng,
 		Ctx:      ctx,
@@ -146,20 +143,14 @@ func prepareGoldStorage(t *testing.T, mode string) goldEnv {
 
 // openLibraryStorage returns memory when TEST_DB_URL is unset; otherwise a
 // MySQL OBDA provider against the database named in TEST_DB_URL.
-func openLibraryStorage(t *testing.T, packDir string, onto *ir.Ontology, schema spi.OntologySchema, mode string) (string, spi.StorageProvider) {
+func openLibraryStorage(t *testing.T, loaded *pack.Pack, mode string) (string, spi.StorageProvider) {
 	t.Helper()
 	if testdb.DSN() == "" {
 		return backendMemory, memory.New()
 	}
-
-	mappings, err := pack.LoadMappings(packDir, onto)
-	if err != nil {
-		t.Fatalf("LoadMappings err = %v", err)
+	if loaded.Compiled == nil {
+		t.Fatal("library pack compiled mapping is nil")
 	}
-	if len(mappings) != 1 {
-		t.Fatalf("library mappings = %d, want 1", len(mappings))
-	}
-	raw := mappings[0].Raw
 
 	var db *sql.DB
 	switch mode {
@@ -167,37 +158,21 @@ func openLibraryStorage(t *testing.T, packDir string, onto *ir.Ontology, schema 
 		db = testdb.Connect(t)
 	case dbModeInit: // 人工测试时使用
 		db = testdb.OpenKeep(t)
-		mustInit(t, db, raw, schema)
+		if err := mysqlobda.InitMappedSchema(db, loaded.Compiled); err != nil {
+			t.Fatal(err)
+		}
 	default: // 自动测试时使用
 		db = testdb.OpenDriver(t, sqlCountDriver, true, true)
-		mustInit(t, db, raw, schema)
+		if err := mysqlobda.InitMappedSchema(db, loaded.Compiled); err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	p, err := mysqlobda.Open(db, raw, mysqlobda.Options{})
+	p, err := mysqlobda.Open(db, loaded.Compiled, mysqlobda.Options{})
 	if err != nil {
 		t.Fatalf("mysqlobda.Open err = %v", err)
 	}
 	return backendMySQL, p
-}
-
-func mustInit(t *testing.T, db *sql.DB, mapping []byte, schema spi.OntologySchema) {
-	t.Helper()
-	if err := mysqlobda.InitMappedSchema(db, compileMapping(t, mapping, schema)); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func compileMapping(t *testing.T, mapping []byte, schema spi.OntologySchema) *obda.Compiled {
-	t.Helper()
-	doc, err := obda.Parse(mapping)
-	if err != nil {
-		t.Fatal(err)
-	}
-	compiled, err := obda.Compile(schema, doc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return compiled
 }
 
 type libraryIDs struct {

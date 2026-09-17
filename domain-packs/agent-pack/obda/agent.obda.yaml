@@ -17,7 +17,7 @@ models:
   Account:
     relation:
       kind: table
-      name: user
+      name: ex_user
     access: readWrite
     identity:
       strategy: direct
@@ -44,7 +44,7 @@ models:
   Chat:
     relation:
       kind: table
-      name: chat
+      name: ex_chat
     access: readWrite
     identity:
       strategy: direct
@@ -63,7 +63,7 @@ models:
   Message:
     relation:
       kind: table
-      name: message
+      name: ex_message
     access: readWrite
     identity:
       strategy: direct
@@ -95,7 +95,7 @@ links:
   Vote:
     relation:
       kind: table
-      name: vote
+      name: ex_vote
     access: readWrite
     identity:
       strategy: direct

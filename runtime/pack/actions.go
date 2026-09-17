@@ -17,6 +17,10 @@ func LoadActions(packDir string, onto *ir.Ontology) ([]action.Manifest, error) {
 	if err != nil {
 		return nil, err
 	}
+	return loadActions(packDir, m, onto)
+}
+
+func loadActions(packDir string, m *Manifest, onto *ir.Ontology) ([]action.Manifest, error) {
 	if len(m.Actions) == 0 {
 		return nil, fmt.Errorf("pack: %s has empty actions list", packDir)
 	}

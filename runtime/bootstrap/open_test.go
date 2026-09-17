@@ -79,8 +79,16 @@ func TestOpen_TwoMappings(t *testing.T) {
 		TenantID:    "t1",
 		DBDriver:    "memory",
 	}
-	if _, err := bootstrap.Open(c); err == nil || !strings.Contains(err.Error(), "mappings=2") {
-		t.Fatalf("err=%v", err)
+	b, err := bootstrap.Open(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+	if len(b.Pack.Mappings) != 2 {
+		t.Fatalf("mappings=%d want 2", len(b.Pack.Mappings))
+	}
+	if b.Pack.Compiled == nil || b.Pack.Compiled.Models["Widget"] == nil || b.Pack.Compiled.Models["Gadget"] == nil {
+		t.Fatalf("compiled models=%v", b.Pack.Compiled)
 	}
 }
 

@@ -77,7 +77,7 @@ func TestCreateGetSystemFieldsStable(t *testing.T) {
 
 func TestBooleanIsGoBool(t *testing.T) {
 	raw := testdata(t, "library_bool.obda.yaml")
-	p, db := openProvider(t, raw)
+	p, db := openProvider(t, raw, branchSchema())
 	mustInit(t, db, raw, branchSchema())
 	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, branchSchema()); err != nil {
 		t.Fatal(err)
@@ -155,7 +155,7 @@ func TestCrossTenantGetIsNotFound(t *testing.T) {
 
 func TestReadOnlyMapping(t *testing.T) {
 	raw := testdata(t, "library_read.obda.yaml")
-	p, db := openProvider(t, raw)
+	p, db := openProvider(t, raw, readerSchema())
 	mustInit(t, db, raw, readerSchema())
 	mustExec(t, db, `INSERT INTO reader (id, tenant_id, name, version, created_at, updated_at) VALUES ('r1','t1','Xiao Ming', 1, 't', 't')`)
 	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, readerSchema()); err != nil {
@@ -368,7 +368,7 @@ func TestWrongTypeIDNotFound(t *testing.T) {
 
 func TestOmitDeletedAtRejectsSoftDelete(t *testing.T) {
 	raw := []byte(strings.Replace(string(testdata(t, "library.obda.yaml")), "strategy: native", "strategy: native\n      omit: [deletedAt]", 1))
-	p, db := openProvider(t, raw)
+	p, db := openProvider(t, raw, readerSchema())
 	mustInit(t, db, raw, readerSchema())
 	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, readerSchema()); err != nil {
 		t.Fatal(err)
@@ -386,7 +386,7 @@ func TestOmitDeletedAtRejectsSoftDelete(t *testing.T) {
 
 func TestOmitVersionRejectsExpectedVersion(t *testing.T) {
 	raw := []byte(strings.Replace(string(testdata(t, "library.obda.yaml")), "strategy: native", "strategy: native\n      omit: [version]", 1))
-	p, db := openProvider(t, raw)
+	p, db := openProvider(t, raw, readerSchema())
 	mustInit(t, db, raw, readerSchema())
 	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, readerSchema()); err != nil {
 		t.Fatal(err)
@@ -412,7 +412,7 @@ func pGetErr(t *testing.T, p *mysqlobda.Provider, tenant, id string) error {
 func activateReader(t *testing.T) (*mysqlobda.Provider, *sql.DB) {
 	t.Helper()
 	raw := testdata(t, "library.obda.yaml")
-	p, db := openProvider(t, raw)
+	p, db := openProvider(t, raw, readerSchema())
 	mustInit(t, db, raw, readerSchema())
 	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, readerSchema()); err != nil {
 		t.Fatal(err)

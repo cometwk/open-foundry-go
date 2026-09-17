@@ -176,6 +176,16 @@ func (l *CompiledLink) Binding() ObjectBinding {
 	}
 }
 
+// CompileAll merges mapping documents then Compile. A single document
+// is compiled as-is.
+func CompileAll(schema spi.OntologySchema, docs []*Document) (*Compiled, error) {
+	merged, err := MergeDocuments(docs)
+	if err != nil {
+		return nil, err
+	}
+	return Compile(schema, merged)
+}
+
 // Compile checks a mapping document against an ontology schema and
 // returns an immutable compiled form.
 func Compile(schema spi.OntologySchema, doc *Document) (*Compiled, error) {

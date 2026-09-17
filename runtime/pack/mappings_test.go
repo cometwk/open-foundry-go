@@ -316,6 +316,85 @@ links:
 	}
 }
 
+func TestLoadMappings_CrossFileInline(t *testing.T) {
+	odl := `extend schema @namespace(name: "test.pack", version: "0.1.0")
+
+type Widget @objectType {
+  id: ID! @primary
+  name: String
+  gadget: Gadget @link(type: "AssembledFrom", direction: OUTBOUND)
+}
+
+type Gadget @objectType {
+  id: ID! @primary
+  name: String
+}
+
+type AssembledFrom @linkType(from: "Widget", to: "Gadget", cardinality: MANY_TO_ONE) {
+  id: ID! @primary
+}
+`
+	models := `apiVersion: openfoundry.io/obda/v1
+kind: OBDAConfig
+metadata:
+  name: models
+  namespace: test.pack
+  version: 1
+schema:
+  namespace: test.pack
+  version: 1
+models:
+  Widget:
+    relation: {kind: table, name: widget}
+    access: readWrite
+    identity: {strategy: direct, columns: [id], insert: generated}
+    tenant: {strategy: column, column: tenant_id}
+    system: {strategy: native}
+    fields:
+      name: {column: name}
+  Gadget:
+    relation: {kind: table, name: gadget}
+    access: readWrite
+    identity: {strategy: direct, columns: [id], insert: generated}
+    tenant: {strategy: column, column: tenant_id}
+    system: {strategy: native}
+    fields:
+      name: {column: name}
+`
+	links := `apiVersion: openfoundry.io/obda/v1
+kind: OBDAConfig
+metadata:
+  name: links
+  namespace: test.pack
+  version: 1
+schema:
+  namespace: test.pack
+  version: 1
+links:
+  AssembledFrom:
+    relation: {kind: inline}
+    access: readWrite
+    from: {object: Widget}
+    to: {object: Gadget, columns: [gadget_id]}
+`
+	dir := writePack(t, map[string]string{
+		"pack.yaml":             schemaPackYAML("obda:\n  - obda/models.obda.yaml\n  - obda/links.obda.yaml\n"),
+		"schema/models.odl":     odl,
+		"obda/models.obda.yaml": models,
+		"obda/links.obda.yaml":  links,
+	})
+	got, err := pack.LoadMappings(dir, loadOnto(t, dir))
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if !got[1].Doc.Links["AssembledFrom"].Inline() {
+		t.Fatalf("got %#v", got[1].Doc)
+	}
+}
+
 func TestLoadMappings_DuplicateRelationTable(t *testing.T) {
 	dir := writePack(t, map[string]string{
 		"pack.yaml":         schemaPackYAML("obda:\n  - obda/a.obda.yaml\n  - obda/b.obda.yaml\n"),

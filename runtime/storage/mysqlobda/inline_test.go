@@ -71,8 +71,8 @@ func TestInlineDeleteLink(t *testing.T) {
 }
 
 func TestInlineRequiredObjectAPIs(t *testing.T) {
-	p, db := openProvider(t, testdata(t, "library_inline.obda.yaml"))
 	schema := inlineRequiredSchema()
+	p, db := openProvider(t, testdata(t, "library_inline.obda.yaml"), schema)
 	mustInit(t, db, testdata(t, "library_inline.obda.yaml"), schema)
 	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, schema); err != nil {
 		t.Fatal(err)
@@ -219,8 +219,8 @@ func TestInlineTraverseOneHop(t *testing.T) {
 func activateInline(t *testing.T) (*mysqlobda.Provider, *sql.DB, string, string) {
 	t.Helper()
 	raw := testdata(t, "library_inline.obda.yaml")
-	p, db := openProvider(t, raw)
 	schema := inlineSchema()
+	p, db := openProvider(t, raw, schema)
 	mustInit(t, db, raw, schema)
 	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, schema); err != nil {
 		t.Fatal(err)

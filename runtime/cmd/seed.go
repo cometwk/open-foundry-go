@@ -19,10 +19,12 @@ func seed() error {
 	}
 	defer b.Close()
 
-	if err := b.ApplySchema(); err != nil {
-		slog.Error("apply schema failed", "error", err)
+	_, err = b.OpenEngine()
+	if err != nil {
+		slog.Error("open engine failed", "error", err)
 		return err
 	}
+
 	result, err := b.ApplySeeds()
 	if err != nil {
 		slog.Error("seed failed", "error", err)

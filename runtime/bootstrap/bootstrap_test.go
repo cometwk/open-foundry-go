@@ -89,9 +89,9 @@ func TestOpen_MemoryRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
-	if err := b.ApplySchema(); err != nil {
-		t.Fatal(err)
-	}
+	// if err := b.ApplySchema(); err != nil {
+	// 	t.Fatal(err)
+	// }
 
 	ctx := spi.RequestContext{TenantID: "t1"}
 	got, err := b.SPI.GetSchema(ctx, nil)
@@ -137,9 +137,9 @@ func TestOpen_MemorySupplyChainRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
-	if err := b.ApplySchema(); err != nil {
-		t.Fatal(err)
-	}
+	// if err := b.ApplySchema(); err != nil {
+	// 	t.Fatal(err)
+	// }
 
 	ctx := spi.RequestContext{TenantID: "t1"}
 	schema, err := b.SPI.GetSchema(ctx, nil)

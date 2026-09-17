@@ -70,8 +70,16 @@ func TestPrintPackDDL_TwoMappings(t *testing.T) {
 		"obda/widget.obda.yaml": modelMapping("Widget", "widget"),
 		"obda/gadget.obda.yaml": modelMapping("Gadget", "gadget"),
 	})
-	if _, err := bootstrap.PrintPackDDL(dir, "mysql"); err == nil || !strings.Contains(err.Error(), "mappings=2") {
-		t.Fatalf("err=%v want mappings=2", err)
+	stmts, err := bootstrap.PrintPackDDL(dir, "mysql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(stmts, "\n")
+	if !strings.Contains(joined, "CREATE TABLE IF NOT EXISTS `widget`") {
+		t.Fatalf("missing widget:\n%s", joined)
+	}
+	if !strings.Contains(joined, "CREATE TABLE IF NOT EXISTS `gadget`") {
+		t.Fatalf("missing gadget:\n%s", joined)
 	}
 }
 

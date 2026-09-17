@@ -707,7 +707,7 @@ func assertEdgeIDs(t *testing.T, tr spi.TraversalResult, want ...string) {
 func activateLibrary(t *testing.T, card spi.Cardinality) (*mysqlobda.Provider, *sql.DB, string, string) {
 	t.Helper()
 	raw := testdata(t, "library_links.obda.yaml")
-	p, db := openProvider(t, raw)
+	p, db := openProvider(t, raw, librarySchema(card))
 	schema := librarySchema(card)
 	mustInit(t, db, raw, schema)
 	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, schema); err != nil {

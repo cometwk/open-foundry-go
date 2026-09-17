@@ -16,7 +16,7 @@ import (
 )
 
 func TestApplySchemaEmptyDatabaseFails(t *testing.T) {
-	p, db := openProvider(t, testdata(t, "library.obda.yaml"))
+	p, db := openProvider(t, testdata(t, "library.obda.yaml"), readerSchema())
 	_, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, readerSchema())
 	if !errors.Is(err, spi.ErrInvalidMapping) {
 		t.Fatalf("err=%v want ErrInvalidMapping", err)
@@ -29,7 +29,7 @@ func TestApplySchemaEmptyDatabaseFails(t *testing.T) {
 }
 
 func TestApplySchemaGeneratedDDLNotExecutedFails(t *testing.T) {
-	p, _ := openProvider(t, testdata(t, "library.obda.yaml"))
+	p, _ := openProvider(t, testdata(t, "library.obda.yaml"), readerSchema())
 	compiled := compileMapping(t, testdata(t, "library.obda.yaml"), readerSchema())
 	stmts, err := mysqldialect.MappedTableStatements(compiled)
 	if err != nil || len(stmts) == 0 {
@@ -42,7 +42,7 @@ func TestApplySchemaGeneratedDDLNotExecutedFails(t *testing.T) {
 }
 
 func TestApplySchemaAfterHelperSucceeds(t *testing.T) {
-	p, db := openProvider(t, testdata(t, "library.obda.yaml"))
+	p, db := openProvider(t, testdata(t, "library.obda.yaml"), readerSchema())
 	mustInit(t, db, testdata(t, "library.obda.yaml"), readerSchema())
 	res, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, readerSchema())
 	if err != nil {
@@ -67,7 +67,7 @@ func TestApplySchemaAfterHelperSucceeds(t *testing.T) {
 
 func TestApplySchemaFulltextVerify(t *testing.T) {
 	raw := testdata(t, "library_search.obda.yaml")
-	p, db := openProvider(t, raw)
+	p, db := openProvider(t, raw, bookSchema())
 	mustInit(t, db, raw, bookSchema())
 	// Init + ApplySchema should succeed — FULLTEXT index exists and is verified.
 	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, bookSchema()); err != nil {
@@ -84,7 +84,7 @@ func TestApplySchemaFulltextVerify(t *testing.T) {
 }
 
 func TestApplySchemaInlineHostFK(t *testing.T) {
-	p, db := openProvider(t, testdata(t, "library_inline.obda.yaml"))
+	p, db := openProvider(t, testdata(t, "library_inline.obda.yaml"), inlineSchema())
 	mustInit(t, db, testdata(t, "library_inline.obda.yaml"), inlineSchema())
 	res, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, inlineSchema())
 	if err != nil {
@@ -109,7 +109,7 @@ func TestApplySchemaInlineHostFK(t *testing.T) {
 }
 
 func TestApplySchemaMissingUniqueFails(t *testing.T) {
-	p, db := openProvider(t, testdata(t, "library_links.obda.yaml"))
+	p, db := openProvider(t, testdata(t, "library_links.obda.yaml"), librarySchema(spi.CardinalityManyToOne))
 	mustExec(t, db, `CREATE TABLE reader (id VARCHAR(255) PRIMARY KEY, tenant_id VARCHAR(255), name TEXT, version BIGINT, created_at VARCHAR(64), updated_at VARCHAR(64), deleted_at VARCHAR(64))`)
 	mustExec(t, db, `CREATE TABLE book (id VARCHAR(255) PRIMARY KEY, tenant_id VARCHAR(255), title TEXT, version BIGINT, created_at VARCHAR(64), updated_at VARCHAR(64), deleted_at VARCHAR(64))`)
 	mustExec(t, db, `CREATE TABLE borrows (id VARCHAR(255) PRIMARY KEY, tenant_id VARCHAR(255), from_id VARCHAR(255), to_id VARCHAR(255), version BIGINT, created_at VARCHAR(64), updated_at VARCHAR(64), deleted_at VARCHAR(64))`)
@@ -126,7 +126,7 @@ func TestApplySchemaMissingUniqueFails(t *testing.T) {
 }
 
 func TestApplySchemaMissingColumnIsDrift(t *testing.T) {
-	p, db := openProvider(t, testdata(t, "library.obda.yaml"))
+	p, db := openProvider(t, testdata(t, "library.obda.yaml"), readerSchema())
 	mustExec(t, db, `CREATE TABLE reader (id VARCHAR(255) PRIMARY KEY, tenant_id VARCHAR(255))`)
 	_, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, readerSchema())
 	if !errors.Is(err, spi.ErrSourceSchemaDrift) {
@@ -135,7 +135,7 @@ func TestApplySchemaMissingColumnIsDrift(t *testing.T) {
 }
 
 func TestCreateBeforeActivate(t *testing.T) {
-	p, _ := openProvider(t, testdata(t, "library.obda.yaml"))
+	p, _ := openProvider(t, testdata(t, "library.obda.yaml"), readerSchema())
 	_, err := p.CreateObject(spi.RequestContext{TenantID: "t1"}, "Reader", nil)
 	if !errors.Is(err, spi.ErrMappingNotActive) {
 		t.Fatalf("err=%v", err)
@@ -147,7 +147,7 @@ func TestCreateBeforeActivate(t *testing.T) {
 }
 
 func TestApplySchemaRequiresTenant(t *testing.T) {
-	p, db := openProvider(t, testdata(t, "library.obda.yaml"))
+	p, db := openProvider(t, testdata(t, "library.obda.yaml"), readerSchema())
 	mustInit(t, db, testdata(t, "library.obda.yaml"), readerSchema())
 	_, err := p.ApplySchema(spi.RequestContext{}, readerSchema())
 	if !errors.Is(err, spi.ErrTenantRequired) {
@@ -156,7 +156,7 @@ func TestApplySchemaRequiresTenant(t *testing.T) {
 }
 
 func TestHealthCheckOmitsPath(t *testing.T) {
-	p, _ := openProvider(t, testdata(t, "library.obda.yaml"))
+	p, _ := openProvider(t, testdata(t, "library.obda.yaml"), readerSchema())
 	st, err := p.HealthCheck()
 	if err != nil {
 		t.Fatal(err)
@@ -170,7 +170,7 @@ func TestHealthCheckOmitsPath(t *testing.T) {
 }
 
 func TestHealthCheckDriftFailClosed(t *testing.T) {
-	p, db := openProvider(t, testdata(t, "library.obda.yaml"))
+	p, db := openProvider(t, testdata(t, "library.obda.yaml"), readerSchema())
 	mustInit(t, db, testdata(t, "library.obda.yaml"), readerSchema())
 	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, readerSchema()); err != nil {
 		t.Fatal(err)
@@ -319,10 +319,10 @@ func assertNoOfTables(t *testing.T, db *sql.DB) {
 	}
 }
 
-func openProvider(t *testing.T, mapping []byte) (*mysqlobda.Provider, *sql.DB) {
+func openProvider(t *testing.T, mapping []byte, schema spi.OntologySchema) (*mysqlobda.Provider, *sql.DB) {
 	t.Helper()
 	db := testdb.Open(t)
-	p, err := mysqlobda.Open(db, mapping, mysqlobda.Options{})
+	p, err := mysqlobda.Open(db, compileMapping(t, mapping, schema), mysqlobda.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

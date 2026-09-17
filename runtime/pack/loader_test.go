@@ -8,6 +8,26 @@ import (
 	"github.com/openfoundry/runtime/pack"
 )
 
+func TestLoad_LibraryPack(t *testing.T) {
+	dir, err := pack.LibraryPackDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := pack.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Manifest == nil || p.Ontology == nil || p.Compiled == nil {
+		t.Fatalf("incomplete pack: %+v", p)
+	}
+	if len(p.Mappings) != 1 {
+		t.Fatalf("mappings=%d want 1", len(p.Mappings))
+	}
+	if p.Compiled.Models["Book"] == nil || p.Compiled.Links["RegisteredAt"] == nil {
+		t.Fatalf("compiled missing Book/RegisteredAt")
+	}
+}
+
 func TestLoadSupplyChain(t *testing.T) {
 	dir, err := pack.SupplyChainDir()
 	if err != nil {

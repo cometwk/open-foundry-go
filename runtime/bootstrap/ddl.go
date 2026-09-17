@@ -3,8 +3,6 @@ package bootstrap
 import (
 	"database/sql"
 	"fmt"
-
-	"github.com/openfoundry/runtime/obda"
 )
 
 // PrintMappedDDL loads the configured pack and returns dialect DDL.
@@ -38,25 +36,21 @@ func PackDDL(dir, dialect string, force bool) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	_, mappings, schema, err := LoadPack(dir)
+	p, err := LoadPack(dir)
 	if err != nil {
 		return nil, err
 	}
-	if err := requireOneMapping(mappings); err != nil {
+	if err := requireCompiled(p); err != nil {
 		return nil, err
 	}
-	compiled, err := obda.Compile(schema, mappings[0].Doc)
-	if err != nil {
-		return nil, err
-	}
-	stmts, err := MappedStatements(compiled, name)
+	stmts, err := MappedStatements(p.Compiled, name)
 	if err != nil {
 		return nil, err
 	}
 	if !force {
 		return stmts, nil
 	}
-	drops, err := DropStatements(compiled, name)
+	drops, err := DropStatements(p.Compiled, name)
 	if err != nil {
 		return nil, err
 	}

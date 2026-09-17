@@ -8,9 +8,10 @@ import (
 	"github.com/openfoundry/runtime/ir"
 	"github.com/openfoundry/runtime/obda"
 	"github.com/openfoundry/runtime/projection"
+	"github.com/openfoundry/runtime/spi"
 )
 
-// Mapping is one pack.yaml obda: entry after parse, validate, and ODL compile.
+// Mapping is one pack.yaml obda: entry after parse, validate, and pack-level compile.
 type Mapping struct {
 	Path string
 	Raw  []byte
@@ -18,25 +19,33 @@ type Mapping struct {
 }
 
 // LoadMappings reads pack.yaml's obda: list (paths as declared, no glob),
-// parses each *.obda.yaml, validates, compiles against the pack ontology,
-// and rejects cross-file model / link / relation-table collisions.
-// An omitted obda: key returns (nil, nil). An explicit empty list is an error.
+// parses each *.obda.yaml, validates, rejects cross-file model / link /
+// relation-table collisions, then compiles the merged document against
+// the pack ontology. An omitted obda: key returns (nil, nil). An explicit
+// empty list is an error.
 func LoadMappings(packDir string, onto *ir.Ontology) ([]Mapping, error) {
 	m, err := ReadManifest(packDir)
 	if err != nil {
 		return nil, err
 	}
-	if m.OBDA == nil {
-		return nil, nil
-	}
-	if len(m.OBDA) == 0 {
-		return nil, fmt.Errorf("pack: %s has empty obda list", packDir)
-	}
 	if onto == nil {
 		return nil, fmt.Errorf("pack: ontology required")
 	}
+	mappings, _, err := loadMappings(packDir, m, onto, projection.ProjectStorage(onto))
+	return mappings, err
+}
 
-	schema := projection.ProjectStorage(onto)
+func loadMappings(packDir string, m *Manifest, onto *ir.Ontology, schema spi.OntologySchema) ([]Mapping, *obda.Compiled, error) {
+	if m.OBDA == nil {
+		return nil, nil, nil
+	}
+	if len(m.OBDA) == 0 {
+		return nil, nil, fmt.Errorf("pack: %s has empty obda list", packDir)
+	}
+	if onto == nil {
+		return nil, nil, fmt.Errorf("pack: ontology required")
+	}
+
 	out := make([]Mapping, 0, len(m.OBDA))
 	seenModels := map[string]string{}
 	seenLinks := map[string]string{}
@@ -46,24 +55,29 @@ func LoadMappings(packDir string, onto *ir.Ontology) ([]Mapping, error) {
 		path := filepath.Join(packDir, rel)
 		raw, err := os.ReadFile(path)
 		if err != nil {
-			return nil, fmt.Errorf("pack: read mapping %s: %w", rel, err)
+			return nil, nil, fmt.Errorf("pack: read mapping %s: %w", rel, err)
 		}
 		doc, err := obda.Parse(raw)
 		if err != nil {
-			return nil, fmt.Errorf("pack: parse mapping %s: %w", rel, err)
+			return nil, nil, fmt.Errorf("pack: parse mapping %s: %w", rel, err)
 		}
 		if err := obda.Validate(doc); err != nil {
-			return nil, fmt.Errorf("pack: validate mapping %s: %w", rel, err)
-		}
-		if _, err := obda.Compile(schema, doc); err != nil {
-			return nil, fmt.Errorf("pack: compile mapping %s: %w", rel, err)
+			return nil, nil, fmt.Errorf("pack: validate mapping %s: %w", rel, err)
 		}
 		if err := registerMapping(rel, doc, seenModels, seenLinks, seenTables); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		out = append(out, Mapping{Path: rel, Raw: raw, Doc: doc})
 	}
-	return out, nil
+	docs := make([]*obda.Document, len(out))
+	for i, mapping := range out {
+		docs[i] = mapping.Doc
+	}
+	compiled, err := obda.CompileAll(schema, docs)
+	if err != nil {
+		return nil, nil, fmt.Errorf("pack: compile mappings: %w", err)
+	}
+	return out, compiled, nil
 }
 
 func registerMapping(rel string, doc *obda.Document, models, links, tables map[string]string) error {

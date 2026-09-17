@@ -172,7 +172,7 @@ func TestSearchFilterAndPagination(t *testing.T) {
 func activateSearch(t *testing.T) *mysqlobda.Provider {
 	t.Helper()
 	raw := testdata(t, "library_fts.obda.yaml")
-	p, db := openProvider(t, raw)
+	p, db := openProvider(t, raw, bookSchema())
 	mustInit(t, db, raw, bookSchema())
 	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, bookSchema()); err != nil {
 		t.Fatal(err)

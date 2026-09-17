@@ -338,7 +338,7 @@ func TestAggregateValidationAndFilter(t *testing.T) {
 func activateAgg(t *testing.T) *mysqlobda.Provider {
 	t.Helper()
 	raw := testdata(t, "library.obda.yaml")
-	p, db := openProvider(t, raw)
+	p, db := openProvider(t, raw, readerSchema())
 	mustInit(t, db, raw, readerSchema())
 	if _, err := p.ApplySchema(spi.RequestContext{TenantID: "t1"}, readerSchema()); err != nil {
 		t.Fatal(err)

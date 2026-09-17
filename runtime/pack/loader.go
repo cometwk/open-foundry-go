@@ -8,7 +8,10 @@ import (
 	"strings"
 
 	"github.com/openfoundry/runtime/ir"
+	"github.com/openfoundry/runtime/obda"
 	"github.com/openfoundry/runtime/odl"
+	"github.com/openfoundry/runtime/projection"
+	"github.com/openfoundry/runtime/spi"
 	"gopkg.in/yaml.v3"
 )
 
@@ -38,6 +41,41 @@ func ReadManifest(packDir string) (*Manifest, error) {
 	return &m, nil
 }
 
+// Pack is a domain pack loaded from one pack.yaml read.
+type Pack struct {
+	Dir      string
+	Manifest *Manifest
+	Ontology *ir.Ontology
+	Schema   spi.OntologySchema
+	Mappings []Mapping
+	Compiled *obda.Compiled
+}
+
+// Load reads pack.yaml once and loads ontology, storage schema, and OBDA.
+func Load(packDir string) (*Pack, error) {
+	m, err := ReadManifest(packDir)
+	if err != nil {
+		return nil, err
+	}
+	onto, err := loadOntology(packDir, m)
+	if err != nil {
+		return nil, err
+	}
+	schema := projection.ProjectStorage(onto)
+	mappings, compiled, err := loadMappings(packDir, m, onto, schema)
+	if err != nil {
+		return nil, err
+	}
+	return &Pack{
+		Dir:      packDir,
+		Manifest: m,
+		Ontology: onto,
+		Schema:   schema,
+		Mappings: mappings,
+		Compiled: compiled,
+	}, nil
+}
+
 // LoadDir loads a domain pack directory by reading pack.yaml schema list,
 // concatenating ODL with duplicate namespace stripping, then parse+lower+validate.
 // It does not load dependency packs (e.g. core) or action YAML.
@@ -46,6 +84,10 @@ func LoadDir(packDir string) (*ir.Ontology, error) {
 	if err != nil {
 		return nil, err
 	}
+	return loadOntology(packDir, m)
+}
+
+func loadOntology(packDir string, m *Manifest) (*ir.Ontology, error) {
 	if len(m.Schema) == 0 {
 		return nil, fmt.Errorf("pack: %s has empty schema list", packDir)
 	}

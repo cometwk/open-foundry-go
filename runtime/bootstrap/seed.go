@@ -70,6 +70,10 @@ func LoadPackSeeds(packDir string) ([]SeedManifest, error) {
 	if err != nil {
 		return nil, err
 	}
+	return loadPackSeeds(packDir, m)
+}
+
+func loadPackSeeds(packDir string, m *pack.Manifest) ([]SeedManifest, error) {
 	if len(m.Seed) == 0 {
 		return nil, nil
 	}
@@ -246,22 +250,6 @@ func ApplySeeds(eng *engine.Engine, seeds []SeedManifest, ctx spi.RequestContext
 		)
 	}
 	return result, nil
-}
-
-// ApplySeeds writes loaded pack seeds through a new Engine over b.SPI.
-func (b *Bootstrap) ApplySeeds() (SeedResult, error) {
-	if b == nil || b.SPI == nil || b.Ontology == nil {
-		return SeedResult{}, fmt.Errorf("bootstrap: not open")
-	}
-	eng, err := engine.New(b.SPI, b.Ontology)
-	if err != nil {
-		return SeedResult{}, err
-	}
-	tenant := ""
-	if b.Conf != nil {
-		tenant = b.Conf.SeedTenant
-	}
-	return ApplySeeds(eng, b.Seeds, SeedContext(tenant))
 }
 
 func findExistingSeedObject(eng *engine.Engine, ctx spi.RequestContext, obj SeedObject) (string, bool) {

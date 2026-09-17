@@ -32,7 +32,7 @@ func Parse(data []byte) (*Document, error) {
 		return nil, err
 	}
 	var doc Document
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	if err := root.Decode(&doc); err != nil {
 		return nil, fmt.Errorf("%w: yaml: %v", spi.ErrInvalidMapping, err)
 	}
 	return &doc, nil
