@@ -11,50 +11,36 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
+	"github.com/labstack/echo/v5"
+	"github.com/labstack/echo/v5/middleware"
 )
 
-func NewChiRouter() *chi.Mux {
-	r := chi.NewRouter()
-	r.Use(middleware.Logger)
+func NewEcho() *echo.Echo {
+	e := echo.New()
+	e.Use(middleware.RequestLogger())
 
-	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("welcome"))
+	e.GET("/", func(c *echo.Context) error {
+		return c.String(http.StatusOK, "welcome")
 	})
 
-	return r
+	return e
 }
 
 func ServeHTTP(ctx context.Context, srv *http.Server) error {
-	r, ok := srv.Handler.(*chi.Mux)
+	e, ok := srv.Handler.(*echo.Echo)
 	if !ok {
-		return fmt.Errorf("http server handler is not a chi.Mux")
+		return fmt.Errorf("http server handler is not an echo.Echo")
 	}
 
 	if srv.Addr == "" {
 		srv.Addr = ":4000"
 	}
 
-	// srv := &http.Server{
-	// 	Addr:    addr,
-	// 	Handler: r,
-	// }
-
-	// --------------------------------------------------
-	// 核心：使用 chi.Walk 遍历并打印所有路由
-	// --------------------------------------------------
-	walkFunc := func(method string, route string, handler http.Handler, middlewares ...func(http.Handler) http.Handler) error {
-		slog.Info(fmt.Sprintf("[%s] %s", method, route))
-		return nil
+	slog.Info("=== Echo Registered Routes ===")
+	for _, r := range e.Router().Routes() {
+		slog.Info(fmt.Sprintf("[%s] %s", r.Method, r.Path))
 	}
 
-	slog.Info("=== Chi Registered Routes ===")
-	if err := chi.Walk(r, walkFunc); err != nil {
-		return fmt.Errorf("failed to walk routes: %w", err)
-	}
-
-	// 启动 HTTP Server
 	go func() {
 		slog.Info("HTTP server listening on", "addr", srv.Addr)
 
@@ -65,7 +51,6 @@ func ServeHTTP(ctx context.Context, srv *http.Server) error {
 		}
 	}()
 
-	// 等待 SIGINT / SIGTERM
 	sigCtx, stop := signal.NotifyContext(
 		ctx,
 		os.Interrupt,
@@ -77,7 +62,6 @@ func ServeHTTP(ctx context.Context, srv *http.Server) error {
 
 	slog.Info("shutting down HTTP server...")
 
-	// 最多等待 10 秒，让正在处理的请求完成
 	shutdownCtx, cancel := context.WithTimeout(
 		ctx,
 		10*time.Second,

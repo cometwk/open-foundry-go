@@ -9,16 +9,16 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/labstack/echo/v5"
 
 	"github.com/openfoundry/runtime/spi"
 	"github.com/openfoundry/runtime/storage/memory"
 )
 
 func testHandler(s *Server) http.Handler {
-	r := chi.NewRouter()
-	s.Handler(r)
-	return r
+	e := echo.New()
+	s.Handler(e.Group(""))
+	return e
 }
 
 func TestHTTP_GraphQLAndRESTProduct(t *testing.T) {

@@ -6,10 +6,12 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/labstack/echo/v5"
 	"github.com/openfoundry/runtime/api"
 	"github.com/openfoundry/runtime/bootstrap"
 	"github.com/openfoundry/runtime/engine"
 	"github.com/openfoundry/runtime/internal/serve"
+	"github.com/openfoundry/runtime/mcp"
 	"github.com/openfoundry/runtime/obda"
 )
 
@@ -23,10 +25,19 @@ func run(ctx context.Context, addr string) error {
 		addr = ":4000"
 	}
 
-	r := serve.NewChiRouter()
-	srv.Handler(r)
+	e := serve.NewEcho()
 
-	httpSrv := &http.Server{Addr: addr, Handler: r}
+	// 安装 ODL API 路由
+	srv.Handler(e.Group(""))
+
+	// 安装 MCP 路由
+	mcp, err := mcp.NewMCP(ctx)
+	if err != nil {
+		return err
+	}
+	e.POST("/mcp", echo.WrapHandler(mcp.Handler()))
+
+	httpSrv := &http.Server{Addr: addr, Handler: e}
 	return serve.ServeHTTP(ctx, httpSrv)
 }
 

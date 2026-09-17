@@ -4,4 +4,6 @@ use (
 	./cel-evaluator
 	./runtime
 	./extmp
+	./lib
+	./agent
 )

@@ -52,9 +52,9 @@ func TestRun_ServesGraphQL(t *testing.T) {
 	}
 	t.Cleanup(closeDB)
 
-	r := serve.NewChiRouter()
-	srv.Handler(r)
-	ts := httptest.NewServer(r)
+	e := serve.NewEcho()
+	srv.Handler(e.Group(""))
+	ts := httptest.NewServer(e)
 	t.Cleanup(ts.Close)
 
 	payload, _ := json.Marshal(map[string]any{

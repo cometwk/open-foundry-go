@@ -8,10 +8,8 @@ import (
 	"time"
 
 	"github.com/fatih/color"
-	// "github.com/openfoundry/libenv"
+	"github.com/openfoundry/lib/env"
 )
-
-var TRACE_HTTP_REQUEST_BODY = true
 
 // http.log 格式
 type HttpLogEntry struct {
@@ -103,13 +101,11 @@ func (p FmtMainPrinter) printHttpLog(raw []byte) string {
 
 	var builder strings.Builder
 	builder.WriteString(strings.Join(list, " "))
-	if TRACE_HTTP_REQUEST_BODY {
+	if env.IsDebug() {
 		if len(e.RequestBody) > 512 {
-			builder.WriteString(" ")
-			builder.WriteString(color.YellowString(truncateString(e.RequestBody, 128)))
+			builder.WriteString(" " + truncateString(e.RequestBody, 128))
 		} else {
-			builder.WriteString(" ")
-			builder.WriteString(color.YellowString(e.RequestBody))
+			builder.WriteString(" " + e.RequestBody)
 		}
 	}
 	builder.WriteString("\n")

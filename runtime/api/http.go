@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/graph-gophers/graphql-go/relay"
+	"github.com/labstack/echo/v5"
 
 	projgql "github.com/openfoundry/runtime/projection/graphql"
 	"github.com/openfoundry/runtime/query"
@@ -16,18 +16,12 @@ import (
 
 const tenantHeader = "X-OpenFoundry-Tenant"
 
-// Handler add routes to the chi.Mux
-func (s *Server) Handler(r *chi.Mux) {
-	// mux := http.NewServeMux()
-	// mux.Handle("POST /graphql", s.withTenant(gql))
-	// mux.Handle("GET /api/v1/{type}/{id}/follow", s.withTenant(http.HandlerFunc(s.serveRESTFollow)))
-	// mux.Handle("GET /api/v1/{type}/{id}", s.withTenant(http.HandlerFunc(s.serveRESTGet)))
-	// // return mux
-
+// Handler add routes to the echo.Group
+func (s *Server) Handler(r *echo.Group) {
 	gql := &relay.Handler{Schema: s.schema}
-	r.Post("/graphql", s.withTenant(gql))
-	r.Get("/api/v1/{type}/{id}/follow", s.withTenant(http.HandlerFunc(s.serveRESTFollow)))
-	r.Get("/api/v1/{type}/{id}", s.withTenant(http.HandlerFunc(s.serveRESTGet)))
+	r.POST("/graphql", echo.WrapHandler(s.withTenant(gql)))
+	r.GET("/api/v1/:type/:id/follow", echo.WrapHandler(s.withTenant(http.HandlerFunc(s.serveRESTFollow))))
+	r.GET("/api/v1/:type/:id", echo.WrapHandler(s.withTenant(http.HandlerFunc(s.serveRESTGet))))
 }
 
 func (s *Server) withTenant(next http.Handler) http.HandlerFunc {

@@ -40,6 +40,7 @@ require (
 	github.com/google/cel-go v0.27.0 // indirect
 	github.com/joho/godotenv v1.5.1
 	github.com/kelseyhightower/envconfig v1.4.0
+	github.com/labstack/echo/v5 v5.3.1
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/qustavo/sqlhooks/v2 v2.1.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
