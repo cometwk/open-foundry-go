@@ -7,8 +7,6 @@ import (
 	"github.com/kelseyhightower/envconfig"
 	"github.com/openfoundry/lib/env"
 	"github.com/openfoundry/runtime/internal/sqlopen"
-	"github.com/openfoundry/runtime/ir"
-	"github.com/openfoundry/runtime/pack"
 	"github.com/openfoundry/runtime/spi"
 	"github.com/openfoundry/runtime/storage/memory"
 	"github.com/openfoundry/runtime/storage/mysqlobda"
@@ -55,58 +53,6 @@ func LoadConfig(configPath string) (*Conf, error) {
 
 ///
 
-// Bootstrap is dialect-neutral assembly input. mysql binds mysqlobda over a
-// *sql.DB; memory binds the in-process provider with DB left nil.
-type Bootstrap struct {
-	Conf     *Conf
-	DB       *sql.DB
-	Ontology *ir.Ontology
-	Mappings []pack.Mapping
-	TenantID string
-	SPI      spi.StorageProvider
-	Schema   spi.OntologySchema
-	Seeds    []SeedManifest
-}
-
-func Open(c *Conf) (*Bootstrap, error) {
-	if c == nil {
-		return nil, fmt.Errorf("bootstrap: conf required")
-	}
-	dir := packDir(c)
-	onto, mappings, schema, err := LoadPack(dir)
-	if err != nil {
-		return nil, err
-	}
-	seeds, err := LoadPackSeeds(dir)
-	if err != nil {
-		return nil, err
-	}
-	if err := requireOneMapping(mappings); err != nil {
-		return nil, err
-	}
-	raw, err := mappingBytes(mappings)
-	if err != nil {
-		return nil, err
-	}
-	db, p, err := openBackend(c, raw)
-	if err != nil {
-		return nil, err
-	}
-	if c.DBDebug {
-		sqlopen.LogSQL = true
-	}
-	return &Bootstrap{
-		Conf:     c,
-		DB:       db,
-		Ontology: onto,
-		Mappings: mappings,
-		TenantID: c.TenantID,
-		SPI:      p,
-		Schema:   schema,
-		Seeds:    seeds,
-	}, nil
-}
-
 // openBackend resolves DB_DRIVER to a provider. mysql opens a *sql.DB via
 // DB_URL; memory constructs the in-process provider with no database.
 func openBackend(c *Conf, raw []byte) (*sql.DB, spi.StorageProvider, error) {
@@ -124,6 +70,9 @@ func openBackend(c *Conf, raw []byte) (*sql.DB, spi.StorageProvider, error) {
 			_ = db.Close()
 			return nil, nil, err
 		}
+		if c.DBDebug {
+			sqlopen.LogSQL = true
+		}
 		return db, p, nil
 	case BackendMemory:
 		return nil, memory.New(), nil
@@ -139,12 +88,4 @@ func (b *Bootstrap) Close() error {
 		return nil
 	}
 	return b.DB.Close()
-}
-
-func (b *Bootstrap) ApplySchema() error {
-	p, schema := b.SPI, b.Schema
-	if _, err := p.ApplySchema(spi.RequestContext{TenantID: b.Conf.TenantID}, schema); err != nil {
-		return err
-	}
-	return nil
 }

@@ -45,7 +45,7 @@ func openAPI() (*api.Server, func(), error) {
 	if conf == nil {
 		return nil, nil, fmt.Errorf("config required")
 	}
-	b, err := bootstrap.Open(conf)
+	b, err := bootstrap.New(conf)
 	if err != nil {
 		slog.Error("open failed", "error", err)
 		return nil, nil, err

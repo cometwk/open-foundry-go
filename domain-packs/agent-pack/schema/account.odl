@@ -1,0 +1,13 @@
+extend schema @namespace(name: "example.agent", version: "0.1.0")
+
+type Account @objectType {
+  id: ID! @primary
+  email: String! @unique @indexed
+  passwordHash: String @sensitive
+  name: String @indexed
+  emailVerified: Boolean!
+  image: String
+  isAnonymous: Boolean!
+
+  chats: [Chat!]! @link(type: "OwnedBy", direction: INBOUND)
+}

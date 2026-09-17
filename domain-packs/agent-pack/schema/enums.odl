@@ -1,0 +1,12 @@
+extend schema @namespace(name: "example.agent", version: "0.1.0")
+
+enum Visibility {
+  PRIVATE
+  PUBLIC
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}

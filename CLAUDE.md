@@ -19,3 +19,17 @@ go test ./storage/mysqlobda/... ./obda/dialect/mysql/... -v 2>&1 | tail -250
 
 - `docs/solutions/` — 已归档的问题解决方案（bug 修复、最佳实践、模式），按类别分目录、带 YAML frontmatter（module、tags、problem_type），实现或调试相关领域时可查阅。
 - `CONCEPTS.md` — 项目共享领域词汇表（实体、命名流程、状态概念），熟悉代码库或讨论领域概念时参考。
+
+## domain-packs
+
+当要求自动编写 domain-packs 时，只需要编写
+
+- obda/
+- schema/
+- seeds/
+
+不需要编写
+
+- actions/
+- permissions/
+

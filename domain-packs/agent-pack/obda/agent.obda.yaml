@@ -1,0 +1,117 @@
+# Agent Domain Pack — OBDA mapping
+#
+# ObjectTypes and LinkTypes in example.agent. Cardinality is defined in ODL.
+# Property-less non-MANY_TO_MANY links map as host-table FKs (kind: inline).
+# Vote has isUpvoted, so it maps as a junction table.
+
+apiVersion: openfoundry.io/obda/v1
+kind: OBDAConfig
+metadata:
+  name: agent
+  namespace: example.agent
+  version: 1
+schema:
+  namespace: example.agent
+  version: 1
+models:
+  Account:
+    relation:
+      kind: table
+      name: user
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+    fields:
+      email:
+        column: email
+      passwordHash:
+        column: password
+      name:
+        column: name
+      emailVerified:
+        column: email_verified
+      image:
+        column: image
+      isAnonymous:
+        column: is_anonymous
+  Chat:
+    relation:
+      kind: table
+      name: chat
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+    fields:
+      title:
+        column: title
+      visibility:
+        column: visibility
+  Message:
+    relation:
+      kind: table
+      name: message
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+    fields:
+      role:
+        column: role
+      parts:
+        column: parts
+      attachments:
+        column: attachments
+links:
+  OwnedBy:
+    relation: {kind: inline}
+    access: readWrite
+    from: {object: Chat}
+    to: {object: Account, columns: [user_id]}
+  InChat:
+    relation: {kind: inline}
+    access: readWrite
+    from: {object: Message}
+    to: {object: Chat, columns: [chat_id]}
+  Vote:
+    relation:
+      kind: table
+      name: vote
+    access: readWrite
+    identity:
+      strategy: direct
+      columns: [id]
+      insert: generated
+    from:
+      object: Chat
+      columns: [chat_id]
+    to:
+      object: Message
+      columns: [message_id]
+    tenant:
+      strategy: column
+      column: tenant_id
+    system:
+      strategy: native
+    fields:
+      isUpvoted:
+        column: is_upvoted

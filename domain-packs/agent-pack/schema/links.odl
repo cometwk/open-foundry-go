@@ -1,0 +1,15 @@
+extend schema @namespace(name: "example.agent", version: "0.1.0")
+
+type OwnedBy @linkType(from: "Chat", to: "Account", cardinality: MANY_TO_ONE) {
+  id: ID! @primary
+}
+
+type InChat @linkType(from: "Message", to: "Chat", cardinality: MANY_TO_ONE) {
+  id: ID! @primary
+}
+
+# Vote is the vote table: one row per (chat, message) with is_upvoted.
+type Vote @linkType(from: "Chat", to: "Message", cardinality: MANY_TO_MANY) {
+  id: ID! @primary
+  isUpvoted: Boolean!
+}

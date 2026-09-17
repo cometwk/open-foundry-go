@@ -97,17 +97,17 @@ const (
 
 // OntologySchema is the storage-oriented schema projection.
 type OntologySchema struct {
-	Version     int                   `json:"version"`
+	Version     int                    `json:"version"`
 	ObjectTypes []ObjectTypeDefinition `json:"objectTypes"`
 	LinkTypes   []LinkTypeDefinition   `json:"linkTypes"`
 }
 
 // ObjectTypeDefinition describes a persisted object type.
 type ObjectTypeDefinition struct {
-	Name         string            `json:"name"`
-	Properties   []PropertyDefinition `json:"properties"`
-	Indexes      []IndexDefinition `json:"indexes,omitempty"`
-	Navigations  []LinkNavigation  `json:"navigations,omitempty"`
+	Name        string               `json:"name"`
+	Properties  []PropertyDefinition `json:"properties"`
+	Indexes     []IndexDefinition    `json:"indexes,omitempty"`
+	Navigations []LinkNavigation     `json:"navigations,omitempty"`
 }
 
 // LinkNavigation is a host-object @link field. Storage projection keeps it
@@ -121,11 +121,11 @@ type LinkNavigation struct {
 
 // LinkTypeDefinition describes a persisted link type.
 type LinkTypeDefinition struct {
-	Name       string               `json:"name"`
-	FromType   string               `json:"fromType"`
-	ToType     string               `json:"toType"`
-	Cardinality Cardinality         `json:"cardinality"`
-	Properties []PropertyDefinition `json:"properties,omitempty"`
+	Name        string               `json:"name"`
+	FromType    string               `json:"fromType"`
+	ToType      string               `json:"toType"`
+	Cardinality Cardinality          `json:"cardinality"`
+	Properties  []PropertyDefinition `json:"properties,omitempty"`
 }
 
 // PropertyDefinition is a stored property.
@@ -146,11 +146,11 @@ type IndexDefinition struct {
 
 // MigrationResult is returned from ApplySchema.
 type MigrationResult struct {
-	Success     bool      `json:"success"`
-	FromVersion int       `json:"fromVersion"`
-	ToVersion   int       `json:"toVersion"`
-	AppliedAt   DateTime  `json:"appliedAt"`
-	Details     string    `json:"details,omitempty"`
+	Success     bool     `json:"success"`
+	FromVersion int      `json:"fromVersion"`
+	ToVersion   int      `json:"toVersion"`
+	AppliedAt   DateTime `json:"appliedAt"`
+	Details     string   `json:"details,omitempty"`
 }
 
 // HealthStatus is returned from HealthCheck.
@@ -165,22 +165,22 @@ type HealthStatus struct {
 type ReplicationCapability string
 
 const (
-	ReplicationNone                   ReplicationCapability = "NONE"
-	ReplicationStreaming              ReplicationCapability = "STREAMING_REPLICATION"
-	ReplicationPointInTimeRecovery    ReplicationCapability = "POINT_IN_TIME_RECOVERY"
-	ReplicationBoth                   ReplicationCapability = "BOTH"
+	ReplicationNone                ReplicationCapability = "NONE"
+	ReplicationStreaming           ReplicationCapability = "STREAMING_REPLICATION"
+	ReplicationPointInTimeRecovery ReplicationCapability = "POINT_IN_TIME_RECOVERY"
+	ReplicationBoth                ReplicationCapability = "BOTH"
 )
 
 // StorageCapabilities describes provider features.
 type StorageCapabilities struct {
-	SupportsTransactions     bool                  `json:"supportsTransactions"`
-	SupportsTemporalQueries  bool                  `json:"supportsTemporalQueries"`
-	SupportsFullTextSearch   bool                  `json:"supportsFullTextSearch"`
-	SupportsGeoQueries       bool                  `json:"supportsGeoQueries"`
-	SupportsGraphTraversal   bool                  `json:"supportsGraphTraversal"`
-	SupportsBulkMutations    bool                  `json:"supportsBulkMutations"`
-	MaxTraversalDepth        int                   `json:"maxTraversalDepth"`
-	ReplicationSupport       ReplicationCapability `json:"replicationSupport"`
+	SupportsTransactions    bool                  `json:"supportsTransactions"`
+	SupportsTemporalQueries bool                  `json:"supportsTemporalQueries"`
+	SupportsFullTextSearch  bool                  `json:"supportsFullTextSearch"`
+	SupportsGeoQueries      bool                  `json:"supportsGeoQueries"`
+	SupportsGraphTraversal  bool                  `json:"supportsGraphTraversal"`
+	SupportsBulkMutations   bool                  `json:"supportsBulkMutations"`
+	MaxTraversalDepth       int                   `json:"maxTraversalDepth"`
+	ReplicationSupport      ReplicationCapability `json:"replicationSupport"`
 }
 
 // FilterExpression is a field or logical predicate.

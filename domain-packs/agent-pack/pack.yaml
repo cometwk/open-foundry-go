@@ -1,0 +1,34 @@
+# Agent Domain Pack — 3 types / 3 relations.
+#
+# pack.yaml loads the full ontology (one ODL definition).
+# seeds/simple.yaml is the unit-test fixture.
+# seeds/demo.yaml is the fuller graph for human testing.
+name: agent
+version: 0.1.0
+namespace: example.agent
+description: "Chat agent case — Account/Chat/Message with Vote links"
+
+dependencies:
+  openfoundry.core: ">=1.0.0"
+
+provides:
+  objectTypes: 3
+  linkTypes: 3
+  actionTypes: 0
+  functions: 0
+  connectors: 0
+  widgets: 0
+  qualityRules: 0
+
+schema:
+  - schema/enums.odl
+  - schema/account.odl
+  - schema/chat.odl
+  - schema/message.odl
+  - schema/links.odl
+
+obda:
+  - obda/agent.obda.yaml
+
+seed:
+  - seeds/simple.yaml

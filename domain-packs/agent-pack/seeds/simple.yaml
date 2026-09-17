@@ -1,0 +1,77 @@
+# Simplified seed: Account / Chat / Message and OwnedBy / InChat / Vote.
+objects:
+  - type: Account
+    ref: user_alice
+    fields:
+      email: alice@example.com
+      name: Alice
+      emailVerified: true
+      isAnonymous: false
+
+  - type: Account
+    ref: user_bob
+    fields:
+      email: bob@example.com
+      name: Bob
+      emailVerified: false
+      isAnonymous: false
+
+  - type: Chat
+    ref: chat_weather
+    fields:
+      title: Weather
+      visibility: PRIVATE
+
+  - type: Chat
+    ref: chat_hello
+    fields:
+      title: Hello
+      visibility: PUBLIC
+
+  - type: Message
+    ref: msg_weather_user
+    fields:
+      role: USER
+      parts: '[{"type":"text","text":"What is the weather in London?"}]'
+      attachments: "[]"
+
+  - type: Message
+    ref: msg_weather_assistant
+    fields:
+      role: ASSISTANT
+      parts: '[{"type":"text","text":"18 C, partly cloudy."}]'
+      attachments: "[]"
+
+  - type: Message
+    ref: msg_hello_user
+    fields:
+      role: USER
+      parts: '[{"type":"text","text":"Hello"}]'
+      attachments: "[]"
+
+links:
+  - type: OwnedBy
+    from: chat_weather
+    to: user_alice
+
+  - type: OwnedBy
+    from: chat_hello
+    to: user_bob
+
+  - type: InChat
+    from: msg_weather_user
+    to: chat_weather
+
+  - type: InChat
+    from: msg_weather_assistant
+    to: chat_weather
+
+  - type: InChat
+    from: msg_hello_user
+    to: chat_hello
+
+  - type: Vote
+    from: chat_weather
+    to: msg_weather_assistant
+    fields:
+      isUpvoted: true

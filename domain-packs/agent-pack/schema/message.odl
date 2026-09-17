@@ -1,0 +1,11 @@
+extend schema @namespace(name: "example.agent", version: "0.1.0")
+
+type Message @objectType {
+  id: ID! @primary
+  role: MessageRole!
+  parts: String!
+  attachments: String!
+
+  chat: Chat @link(type: "InChat", direction: OUTBOUND)
+  votedIn: [Chat!]! @link(type: "Vote", direction: INBOUND)
+}
