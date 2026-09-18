@@ -56,6 +56,7 @@ var cmd = &cli.Command{
 					Name:    "output",
 					Usage:   "将 DDL 写到指定文件；省略则打印到 stdout",
 					Aliases: []string{"o"},
+					Value:   "-", // 默认打印到 stdout
 				},
 				&cli.BoolFlag{
 					Name:    "execute",

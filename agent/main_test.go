@@ -28,3 +28,7 @@ func TestMain(t *testing.T) {
 
 	fmt.Println(result.Text)
 }
+
+func TestMain2(t *testing.T) {
+
+}

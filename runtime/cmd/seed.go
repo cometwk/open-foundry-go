@@ -12,14 +12,14 @@ func seed() error {
 	if conf == nil {
 		return fmt.Errorf("config required")
 	}
-	b, err := bootstrap.Open(conf)
+	b, err := bootstrap.New(conf)
 	if err != nil {
 		slog.Error("open failed", "error", err)
 		return err
 	}
 	defer b.Close()
 
-	_, err = b.OpenEngine()
+	_, err = b.Open()
 	if err != nil {
 		slog.Error("open engine failed", "error", err)
 		return err

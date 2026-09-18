@@ -48,7 +48,7 @@ func openAPI() (*api.Server, func(), error) {
 		slog.Error("open failed", "error", err)
 		return nil, nil, err
 	}
-	e, err := b.OpenEngine()
+	e, err := b.Open()
 	if err != nil {
 		_ = b.Close()
 		slog.Error("open engine failed", "error", err)

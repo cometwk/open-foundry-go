@@ -52,8 +52,6 @@ func LoadConfig(configPath string) (*Conf, error) {
 	return &cfg, nil
 }
 
-///
-
 // openBackend resolves DB_DRIVER to a provider. mysql opens a *sql.DB via
 // DB_URL; memory constructs the in-process provider with no database.
 func (c *Conf) openBackend(compiled *obda.Compiled) (*sql.DB, spi.StorageProvider, error) {

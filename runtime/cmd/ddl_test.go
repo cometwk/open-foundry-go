@@ -136,7 +136,7 @@ models:
   Widget:
     relation:
       kind: table
-      name: widget
+      name: prefix_widget
     access: readWrite
     identity:
       strategy: direct
@@ -179,7 +179,7 @@ models:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(body), "CREATE TABLE IF NOT EXISTS `widget`") {
+	if !strings.Contains(string(body), "CREATE TABLE IF NOT EXISTS `prefix_widget`") {
 		t.Fatalf("got %s", body)
 	}
 
@@ -190,7 +190,7 @@ models:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(body), "DROP TABLE IF EXISTS `widget`;") {
+	if !strings.Contains(string(body), "DROP TABLE IF EXISTS `prefix_widget`;") {
 		t.Fatalf("force missing drop: %s", body)
 	}
 }

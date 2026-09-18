@@ -42,6 +42,10 @@ func TestRun_ServesGraphQL(t *testing.T) {
 	}
 	t.Cleanup(func() { conf = prev })
 
+	if err := ddl(conf.DBDriver, "", true, true); err != nil {
+		t.Fatal(err)
+	}
+
 	if err := seed(); err != nil {
 		t.Fatal(err)
 	}

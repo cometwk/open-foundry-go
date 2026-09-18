@@ -84,14 +84,11 @@ func memoryConf(base string) *bootstrap.Conf {
 func TestOpen_MemoryRoundTrip(t *testing.T) {
 	base := t.TempDir()
 	writePackInto(t, base, "fixture")
-	b, err := bootstrap.Open(memoryConf(base))
+	b, err := bootstrap.New(memoryConf(base))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
-	// if err := b.ApplySchema(); err != nil {
-	// 	t.Fatal(err)
-	// }
 
 	ctx := spi.RequestContext{TenantID: "t1"}
 	got, err := b.SPI.GetSchema(ctx, nil)
@@ -132,14 +129,11 @@ func TestOpen_MemorySupplyChainRoundTrip(t *testing.T) {
 		TenantID:    "t1",
 		DBDriver:    bootstrap.BackendMemory,
 	}
-	b, err := bootstrap.Open(c)
+	b, err := bootstrap.New(c)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
-	// if err := b.ApplySchema(); err != nil {
-	// 	t.Fatal(err)
-	// }
 
 	ctx := spi.RequestContext{TenantID: "t1"}
 	schema, err := b.SPI.GetSchema(ctx, nil)

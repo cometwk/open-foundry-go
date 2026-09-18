@@ -67,7 +67,7 @@ func TestPrintPackDDL_TwoMappings(t *testing.T) {
 	dir := writePack(t, map[string]string{
 		"pack.yaml":             "name: fixture\nnamespace: test.pack\nschema:\n  - schema/models.odl\nobda:\n  - obda/widget.obda.yaml\n  - obda/gadget.obda.yaml\n",
 		"schema/models.odl":     widgetODL,
-		"obda/widget.obda.yaml": modelMapping("Widget", "widget"),
+		"obda/widget.obda.yaml": modelMapping("Widget", "prefix_widget"),
 		"obda/gadget.obda.yaml": modelMapping("Gadget", "gadget"),
 	})
 	stmts, err := bootstrap.PrintPackDDL(dir, "mysql")
@@ -75,12 +75,16 @@ func TestPrintPackDDL_TwoMappings(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := strings.Join(stmts, "\n")
-	if !strings.Contains(joined, "CREATE TABLE IF NOT EXISTS `widget`") {
+	if !strings.Contains(joined, "CREATE TABLE IF NOT EXISTS `prefix_widget`") {
 		t.Fatalf("missing widget:\n%s", joined)
 	}
 	if !strings.Contains(joined, "CREATE TABLE IF NOT EXISTS `gadget`") {
 		t.Fatalf("missing gadget:\n%s", joined)
 	}
+	// fmt.Println("--------------------------------")
+	// fmt.Println(modelMapping("Widget", "prefix_widget"))
+	// fmt.Println("--------------------------------")
+	// fmt.Println(stmts)
 }
 
 func TestPrintPackDDL_ZeroMappings(t *testing.T) {

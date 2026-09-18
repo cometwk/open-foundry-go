@@ -121,7 +121,7 @@ func open(t *testing.T, opts openOptions) *sql.DB {
 	var db *sql.DB
 	switch {
 	case opts.driver != "":
-		db, err = sqlopen.Open(opts.driver, dsn)
+		db, err = sql.Open(opts.driver, dsn) // 自定义hooks!!!
 	case opts.logSQL:
 		db, err = sqlopen.Open("mysql", dsn)
 	default:

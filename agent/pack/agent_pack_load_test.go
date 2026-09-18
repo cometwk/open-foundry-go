@@ -15,7 +15,7 @@ func TestLoadAgentPack(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	dir := filepath.Join(root, "domain-packs", "agent")
+	dir := filepath.Join(root, "domain-packs", "agent-pack")
 	onto, err := pack.LoadDir(dir)
 	if err != nil {
 		t.Fatalf("LoadDir: %v", err)

@@ -16,9 +16,11 @@ func ddl(dialect, output string, execute, force bool) error {
 		slog.Error("print ddl failed", "error", err)
 		return err
 	}
-	if err := writeDDL(stmts, output); err != nil {
-		slog.Error("write ddl failed", "error", err, "output", output)
-		return err
+	if output != "" {
+		if err := writeDDL(stmts, output); err != nil {
+			slog.Error("write ddl failed", "error", err, "output", output)
+			return err
+		}
 	}
 	if !execute {
 		return nil
@@ -39,7 +41,7 @@ func writeDDL(stmts []string, output string) error {
 		}
 		rendered = append(rendered, s)
 	}
-	if output == "" {
+	if output == "-" {
 		for _, s := range rendered {
 			fmt.Println(s)
 		}
