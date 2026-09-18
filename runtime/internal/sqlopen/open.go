@@ -3,7 +3,7 @@ package sqlopen
 import (
 	"context"
 	"database/sql"
-	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -23,8 +23,9 @@ func (h *Hooks) Before(ctx context.Context, query string, args ...interface{}) (
 func (h *Hooks) After(ctx context.Context, query string, args ...interface{}) (context.Context, error) {
 	begin := ctx.Value("begin").(time.Time)
 	if LogSQL {
-		fmt.Printf("%s\n%q\n", query, args)
-		fmt.Printf(". took: %s\n", time.Since(begin))
+		slog.InfoContext(ctx, query, "args", args, "took", time.Since(begin).Milliseconds())
+		// slog.InfoContext(ctx, fmt.Sprintf("%s\n%q\n", query, args), "took", time.Since(begin))
+		// slog.InfoContext(ctx, fmt.Sprintf(". took: %s\n", time.Since(begin)))
 	}
 	return ctx, nil
 }

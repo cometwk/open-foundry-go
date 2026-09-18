@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/openfoundry/lib/xlog"
 	"github.com/openfoundry/runtime/bootstrap"
 	"github.com/urfave/cli/v3"
 )
@@ -118,5 +119,6 @@ var cmd = &cli.Command{
 }
 
 func main() {
+	xlog.InitDebug()
 	cmd.Run(context.Background(), os.Args)
 }
