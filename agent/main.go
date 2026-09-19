@@ -6,10 +6,13 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"time"
 
 	aisdk "github.com/grafana/ai-sdk"
 	"github.com/grafana/ai-sdk/provider"
+	"github.com/labstack/echo/v5"
+	"github.com/openfoundry/lib/env"
+	"github.com/openfoundry/lib/serve"
+	"github.com/openfoundry/lib/xlog"
 )
 
 type weatherInput struct {
@@ -93,22 +96,44 @@ func newChatHandler(agent aisdk.Agent) http.Handler {
 	})
 }
 
-func main() {
+func attachAgent(e *echo.Echo) error {
 	model := NewModel()
 	agent, err := newAgent(model)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
+	e.POST("/api/chat", echo.WrapHandler(newChatHandler(agent)))
+	return nil
+}
 
-	mux := http.NewServeMux()
-	mux.Handle("POST /api/chat", newChatHandler(agent))
+func main() {
+	// model := NewModel()
+	// agent, err := newAgent(model)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
 
-	server := http.Server{
-		Addr:              ":8080",
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	// mux := http.NewServeMux()
+	// mux.Handle("POST /api/chat", newChatHandler(agent))
 
-	log.Println("listening on http://localhost:8080")
-	log.Fatal(server.ListenAndServe())
+	// server := http.Server{
+	// 	Addr:              ":4000",
+	// 	Handler:           mux,
+	// 	ReadHeaderTimeout: 5 * time.Second,
+	// }
+
+	// log.Println("listening on http://localhost:4000")
+	// log.Fatal(server.ListenAndServe())
+
+	///
+
+	xlog.InitDebug()
+
+	e := serve.NewEcho()
+
+	attachOpenFoundry(e)
+	attachAgent(e)
+
+	httpSrv := &http.Server{Addr: ":" + env.String("PORT", "4000"), Handler: e}
+	serve.ServeHTTP(context.Background(), httpSrv)
 }
