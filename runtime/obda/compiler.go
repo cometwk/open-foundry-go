@@ -69,6 +69,7 @@ type CompiledLink struct {
 	HostNavField     string
 	FKColumn         string
 	FKNullable       bool
+	ScalarField      string
 }
 
 // Writable reports whether mutations are allowed.
@@ -124,6 +125,49 @@ func (m *CompiledModel) Binding() ObjectBinding {
 		SearchIndex:      m.SearchIndex,
 		SearchableFields: append([]string(nil), m.SearchableFields...),
 	}
+}
+
+// LookupLogical resolves a payload/filter logical name to a physical column.
+// Business fields win; inline FK scalar projections are consulted next.
+func (m *CompiledModel) LookupLogical(logical string) (CompiledField, bool) {
+	if m == nil || logical == "" {
+		return CompiledField{}, false
+	}
+	if cf, ok := m.FieldByLogical[logical]; ok {
+		return cf, true
+	}
+	for _, f := range m.InlineFKs {
+		if f.Logical != "" && f.Logical == logical {
+			return f, true
+		}
+	}
+	return CompiledField{}, false
+}
+
+// IsProjection reports whether logical is a read-only inline FK scalar alias.
+func (m *CompiledModel) IsProjection(logical string) bool {
+	if m == nil || logical == "" {
+		return false
+	}
+	for _, f := range m.InlineFKs {
+		if f.Logical != "" && f.Logical == logical {
+			return true
+		}
+	}
+	return false
+}
+
+// RejectProjectionWrites fails if payload contains a read-only inline FK scalar.
+func (m *CompiledModel) RejectProjectionWrites(payload map[string]any) error {
+	if m == nil || payload == nil {
+		return nil
+	}
+	for name := range payload {
+		if m.IsProjection(name) {
+			return fmt.Errorf("%w: inline scalar %q is read-only", spi.ErrInvalidMapping, name)
+		}
+	}
+	return nil
 }
 
 // Binding returns the planner view of this link relation.
@@ -227,7 +271,17 @@ func Compile(schema spi.OntologySchema, doc *Document) (*Compiled, error) {
 		out.Links[name] = cl
 		if cl.Inline {
 			host := out.Models[cl.HostModel]
-			host.InlineFKs = append(host.InlineFKs, CompiledField{Logical: cl.HostNavField, Column: cl.FKColumn})
+			if cl.ScalarField != "" {
+				if existing, ok := host.LookupLogical(cl.ScalarField); ok && existing.Column != cl.FKColumn {
+					return nil, fmt.Errorf("%w: link %q scalar %q collides with field", spi.ErrInvalidMapping, name, cl.ScalarField)
+				}
+				for _, prev := range host.InlineFKs {
+					if prev.Logical != "" && prev.Logical == cl.ScalarField {
+						return nil, fmt.Errorf("%w: link %q scalar %q collides with another inline projection", spi.ErrInvalidMapping, name, cl.ScalarField)
+					}
+				}
+			}
+			host.InlineFKs = append(host.InlineFKs, CompiledField{Logical: cl.ScalarField, Column: cl.FKColumn})
 		}
 	}
 	for _, m := range out.Models {

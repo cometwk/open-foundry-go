@@ -45,15 +45,17 @@ type SearchSpec struct {
 
 // Link maps one LinkType onto a physical relation.
 type Link struct {
-	Relation Relation         `yaml:"relation"`
-	Access   string           `yaml:"access"`
-	Identity Identity         `yaml:"identity"`
-	From     Endpoint         `yaml:"from"`
-	To       Endpoint         `yaml:"to"`
-	Host     string           `yaml:"host"`
-	Tenant   Tenant           `yaml:"tenant"`
-	System   System           `yaml:"system"`
-	Fields   map[string]Field `yaml:"fields"`
+	Relation      Relation         `yaml:"relation"`
+	Access        string           `yaml:"access"`
+	Identity      Identity         `yaml:"identity"`
+	From          Endpoint         `yaml:"from"`
+	To            Endpoint         `yaml:"to"`
+	Host          string           `yaml:"host"`
+	Tenant        Tenant           `yaml:"tenant"`
+	System        System           `yaml:"system"`
+	Fields        map[string]Field `yaml:"fields"`
+	ScalarField   string           `yaml:"scalarField"`
+	ProjectScalar *bool            `yaml:"projectScalar"`
 }
 
 // Inline reports whether this link mapping is structurally inline
