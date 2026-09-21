@@ -40,7 +40,7 @@ func (p *Provider) QueryObjects(ctx spi.RequestContext, typ string, filter spi.F
 	}
 	if options != nil {
 		for _, o := range options.OrderBy {
-			f, ok := m.FieldByLogical[o.Field]
+			f, ok := m.LookupLogical(o.Field)
 			if !ok {
 				return spi.ObjectPage{}, fmt.Errorf("%w: unknown order field %q", spi.ErrInvalidMapping, o.Field)
 			}
@@ -196,7 +196,7 @@ func filterColumn(m *obda.CompiledModel, logical string) (string, bool) {
 	if logical == spi.FieldID && len(m.IdentityColumns) > 0 {
 		return m.IdentityColumns[0], true
 	}
-	cf, ok := m.FieldByLogical[logical]
+	cf, ok := m.LookupLogical(logical)
 	if !ok {
 		return "", false
 	}
