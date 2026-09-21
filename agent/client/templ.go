@@ -24,10 +24,21 @@ type execer interface {
 	Exec(ctx context.Context, rc spi.RequestContext, query string, vars map[string]any) *graphql.Response
 }
 
+// objectMutator is the write half of StorageProvider / Engine used by object and link mutations.
+type objectMutator interface {
+	CreateObject(ctx spi.RequestContext, typ string, properties map[string]any) (spi.OntologyObject, error)
+	UpdateObject(ctx spi.RequestContext, typ, id string, properties map[string]any, expectedVersion *int) (spi.OntologyObject, error)
+	DeleteObject(ctx spi.RequestContext, typ, id, mode string) error
+	CreateLink(ctx spi.RequestContext, typ, fromID, toID string, properties map[string]any) (spi.OntologyLink, error)
+	UpdateLink(ctx spi.RequestContext, typ, linkID string, properties map[string]any, expectedVersion *int) (spi.OntologyLink, error)
+	DeleteLink(ctx spi.RequestContext, typ, linkID string) error
+}
+
 // Client wraps an in-process api.Server.Exec transport with a bound RequestContext.
 type Client struct {
 	exec execer
 	rc   spi.RequestContext
+	p    objectMutator
 }
 
 type ClientOption func(*Client)
@@ -47,10 +58,18 @@ func WithActor(actorID string) ClientOption {
 	return func(c *Client) { c.rc.ActorID = actorID }
 }
 
+// WithStorageProvider sets the mutation backend (Create/Update/DeleteObject).
+// CreateClient defaults to srv.Engine(); pass a raw spi.StorageProvider to bypass the Engine.
+func WithStorageProvider(p objectMutator) ClientOption {
+	return func(c *Client) { c.p = p }
+}
+
 // CreateClient binds srv and default gold/test request context (templ.ts createClient).
+// Mutations go through srv.Engine() unless WithStorageProvider overrides.
 func CreateClient(srv *api.Server, opts ...ClientOption) *Client {
 	c := &Client{
 		exec: srv,
+		p:    srv.Engine(),
 		rc:   spi.RequestContext{TenantID: DefaultTenant, ActorID: DefaultActor},
 	}
 	for _, opt := range opts {
@@ -66,6 +85,7 @@ func GqlExec[T any](ctx context.Context, c *Client, query string, vars map[strin
 	if len(res.Errors) > 0 {
 		return nil, errors.New(res.Errors[0].Message)
 	}
+	fmt.Printf("GqlExec: %+v\n", string(res.Data))
 	return decodeField[T](res.Data, field)
 }
 
@@ -402,4 +422,142 @@ func (r *GraphQLResource[TNode, TFilter, TOrderBy]) Search(
 		return nil, err
 	}
 	return GqlExec[SearchResult[TNode]](ctx, r.client, query, vars, r.names.Search)
+}
+
+// Create writes a new object via StorageProvider/Engine.CreateObject and returns the typed node.
+func (r *GraphQLResource[TNode, TFilter, TOrderBy]) Create(ctx context.Context, params TNode) (*TNode, error) {
+	if err := r.requireMutator(); err != nil {
+		return nil, err
+	}
+	props, err := toObjectProps(params)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := r.client.p.CreateObject(r.client.rc, r.typeName, props)
+	if err != nil {
+		return nil, err
+	}
+	return decodeObject[TNode](obj)
+}
+
+// Update patches an object via StorageProvider/Engine.UpdateObject.
+// A nil expectedVersion means accept any version.
+func (r *GraphQLResource[TNode, TFilter, TOrderBy]) Update(
+	ctx context.Context,
+	id string,
+	params TNode,
+	expectedVersion *int,
+) (*TNode, error) {
+	if err := r.requireMutator(); err != nil {
+		return nil, err
+	}
+	props, err := toObjectProps(params)
+	if err != nil {
+		return nil, err
+	}
+	delete(props, "id")
+	obj, err := r.client.p.UpdateObject(r.client.rc, r.typeName, id, props, expectedVersion)
+	if err != nil {
+		return nil, err
+	}
+	return decodeObject[TNode](obj)
+}
+
+// Delete removes an object via StorageProvider/Engine.DeleteObject (mode e.g. "hard" / "soft").
+func (r *GraphQLResource[TNode, TFilter, TOrderBy]) Delete(ctx context.Context, id, mode string) error {
+	if err := r.requireMutator(); err != nil {
+		return err
+	}
+	return r.client.p.DeleteObject(r.client.rc, r.typeName, id, mode)
+}
+
+func (r *GraphQLResource[TNode, TFilter, TOrderBy]) requireMutator() error {
+	if r.client == nil {
+		return errors.New("client storage provider is not configured")
+	}
+	return r.client.requireMutator()
+}
+
+// toObjectProps flattens a node into SPI property map, dropping nested relations.
+func toObjectProps(v any) (map[string]any, error) {
+	m, err := toVars(v)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]any, len(m))
+	for k, val := range m {
+		switch val.(type) {
+		case map[string]any, []any:
+			continue
+		default:
+			out[k] = val
+		}
+	}
+	// Drop empty id so generated-identity creates don't fail rejectSuppliedIdentity.
+	if id, ok := out["id"].(string); ok && id == "" {
+		delete(out, "id")
+	}
+	return out, nil
+}
+
+// decodeObject maps SPI OntologyObject (_id + properties) into a GraphQL-shaped TNode (id).
+func decodeObject[T any](obj spi.OntologyObject) (*T, error) {
+	m := make(map[string]any, len(obj))
+	for k, v := range obj {
+		switch {
+		case k == spi.FieldID:
+			m["id"] = v
+		case spi.IsSystemField(k):
+			continue
+		default:
+			m[k] = v
+		}
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return nil, err
+	}
+	var out T
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CreateLink creates a typed link via StorageProvider/Engine.CreateLink.
+// typ is the link type name (e.g. "OwnedBy", "InChat", "Vote").
+func (c *Client) CreateLink(ctx context.Context, typ, fromID, toID string, properties map[string]any) (spi.OntologyLink, error) {
+	if err := c.requireMutator(); err != nil {
+		return nil, err
+	}
+	return c.p.CreateLink(c.rc, typ, fromID, toID, properties)
+}
+
+// UpdateLink patches link properties via StorageProvider/Engine.UpdateLink.
+// A nil expectedVersion means accept any version.
+func (c *Client) UpdateLink(
+	ctx context.Context,
+	typ, linkID string,
+	properties map[string]any,
+	expectedVersion *int,
+) (spi.OntologyLink, error) {
+	if err := c.requireMutator(); err != nil {
+		return nil, err
+	}
+	return c.p.UpdateLink(c.rc, typ, linkID, properties, expectedVersion)
+}
+
+// DeleteLink removes a link via StorageProvider/Engine.DeleteLink.
+func (c *Client) DeleteLink(ctx context.Context, typ, linkID string) error {
+	if err := c.requireMutator(); err != nil {
+		return err
+	}
+	return c.p.DeleteLink(c.rc, typ, linkID)
+}
+
+func (c *Client) requireMutator() error {
+	if c == nil || c.p == nil {
+		return errors.New("client storage provider is not configured")
+	}
+	return nil
 }

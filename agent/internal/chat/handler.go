@@ -80,21 +80,15 @@ func NewChatHandler(agent aisdk.Agent, engine *engine.Engine) http.Handler {
 			}
 		}
 
-		// chat, err := api.GetChatById(r.Context(), engine, body.ID)
-		// if err != nil {
-		// 	http.Error(w, "invalid chat", http.StatusBadRequest)
-		// 	return
-		// }
-		// if chat == nil {
-		// 	chat, err = engine.CreateObject(spi.RequestContext{TenantID: "gold", ActorID: "test"}, "chat", map[string]any{
-		// 		"id":       body.ID,
-		// 		"messages": body.Messages,
-		// 	})
-		// 	http.Error(w, "invalid chat", http.StatusBadRequest)
-		// 	return
-		// } else {
-
-		// }
+		chat, err := apis.Chat.GetById(r.Context(), body.ID, " id title messages { id role parts }")
+		if err != nil {
+			http.Error(w, "invalid chat", http.StatusBadRequest)
+			return
+		}
+		if chat == nil {
+			http.Error(w, "invalid chat", http.StatusBadRequest)
+			return
+		}
 
 		stream, err := aisdk.CreateAgentUIStream(
 			r.Context(),

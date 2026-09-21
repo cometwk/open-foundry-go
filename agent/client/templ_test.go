@@ -192,7 +192,7 @@ func TestGraphQLResource_AggregateRequiresName(t *testing.T) {
 
 func TestNewAPIs(t *testing.T) {
 	c, _ := newStubClient(&graphql.Response{Data: json.RawMessage(`{"chat":null}`)})
-	apis := NewAPI(c)
+	apis := NewAPIs(c)
 	if apis.Account == nil || apis.Chat == nil || apis.Message == nil {
 		t.Fatal("nil resource")
 	}

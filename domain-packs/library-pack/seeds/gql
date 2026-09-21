@@ -1,6 +1,16 @@
 #!/bin/sh
-# POST /graphql the way runtime/e2e/graphql_rest_test.go gql() does:
-# one anonymous query, ids inlined, body is only {"query": "..."}.
+# POST /graphql
+#   gql [file]                         # query, plus optional commented variables
+#   gql [file] '{"id":"..."}'          # CLI variables (override file)
+#   gql [file] vars.json
+#
+# Variables in the .gql file are a trailing GraphQL comment so the file
+# stays valid GraphQL:
+#   # {
+#   #   "id": "..."
+#   # }
+#
+# body is {"query": "..."} or {"query": "...", "variables": {...}}.
 set -e
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 BASE=${BASE:-http://localhost:4000}
@@ -25,9 +35,128 @@ if [ ! -f "$QFILE" ]; then
 fi
 QUERY=$(cat "$QFILE")
 
+if [ -n "${2-}" ]; then
+	case "$2" in
+	'{'*) VARS_JSON=$2 ;;
+	*)
+		if [ -f "$2" ]; then
+			VARS_JSON=$(cat "$2")
+		elif [ -f "$DIR/$2" ]; then
+			VARS_JSON=$(cat "$DIR/$2")
+		else
+			echo "missing vars $2" >&2
+			exit 1
+		fi
+		;;
+	esac
+fi
+
 ENCODE_QUERY='
 import json, sys
-print(json.dumps({"query": sys.stdin.read()}, ensure_ascii=False))
+
+src = sys.stdin.read()
+cli = sys.argv[1] if len(sys.argv) > 1 else ""
+
+def query_end(src):
+    i = 0
+    n = len(src)
+    depth = 0
+    in_str = False
+    escape = False
+    started = False
+    while i < n:
+        c = src[i]
+        if in_str:
+            if escape:
+                escape = False
+            elif c == "\\":
+                escape = True
+            elif c == "\"":
+                in_str = False
+            i += 1
+            continue
+        if c == "#":
+            while i < n and src[i] != "\n":
+                i += 1
+            continue
+        if c == "\"":
+            in_str = True
+            i += 1
+            continue
+        if c == "{":
+            depth += 1
+            started = True
+        elif c == "}" and started:
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return n
+
+def strip_hash(line):
+    s = line.lstrip()
+    if not s.startswith("#"):
+        return None
+    body = s[1:]
+    if body.startswith(" "):
+        body = body[1:]
+    return body
+
+def trailing_comment_vars(rest):
+    bodies = []
+    saw_comment = False
+    for line in rest.splitlines():
+        if line.strip() == "":
+            if saw_comment:
+                bodies.append("")
+            continue
+        body = strip_hash(line)
+        if body is None:
+            raise SystemExit("trailing content after query must be GraphQL comments (# { ... })")
+        saw_comment = True
+        bodies.append(body)
+    text = "\n".join(bodies).strip()
+    if not text:
+        return None
+    try:
+        obj = json.loads(text)
+    except json.JSONDecodeError:
+        i = text.find("{")
+        j = text.rfind("}")
+        if i < 0 or j <= i:
+            return None
+        try:
+            obj = json.loads(text[i:j + 1])
+        except json.JSONDecodeError as e:
+            raise SystemExit("variables JSON in comments: %s" % e)
+    if not isinstance(obj, dict):
+        raise SystemExit("variables must be a JSON object")
+    return obj
+
+def split_query_vars(src):
+    end = query_end(src)
+    query = src[:end].strip()
+    return query, trailing_comment_vars(src[end:])
+
+query, file_vars = split_query_vars(src)
+variables = file_vars
+if cli:
+    try:
+        cli_vars = json.loads(cli)
+    except json.JSONDecodeError as e:
+        raise SystemExit("variables JSON: %s" % e)
+    if not isinstance(cli_vars, dict):
+        raise SystemExit("variables must be a JSON object")
+    variables = cli_vars
+
+body = {"query": query}
+if variables is not None:
+    body["variables"] = variables
+
+print("query:\n%s\n" % query, file=sys.stderr)
+if variables is not None:
+    print("variables:\n%s\n" % json.dumps(variables, ensure_ascii=False, indent=4), file=sys.stderr)
+print(json.dumps(body, ensure_ascii=False))
 '
 PRETTY_JSON='
 import json, sys
@@ -35,11 +164,13 @@ json.dump(json.load(sys.stdin), sys.stdout, ensure_ascii=False, indent=4)
 print()
 '
 
-printf 'POST %s/graphql\nX-OpenFoundry-Tenant: %s\n\nquery:\n%s\n\n' "$BASE" "$TENANT" "$QUERY" >&2
+printf 'POST %s/graphql\nX-OpenFoundry-Tenant: %s\n\n' "$BASE" "$TENANT" >&2
 
-BODY=$(printf '%s' "$QUERY" | python3 -c "$ENCODE_QUERY")
-
-# printf '%s\n' "$BODY"
+if [ -n "${VARS_JSON+x}" ]; then
+	BODY=$(printf '%s' "$QUERY" | python3 -c "$ENCODE_QUERY" "$VARS_JSON")
+else
+	BODY=$(printf '%s' "$QUERY" | python3 -c "$ENCODE_QUERY")
+fi
 
 printf 'response:\n' >&2
 curl -sS -X POST "$BASE/graphql" \

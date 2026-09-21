@@ -5,6 +5,7 @@ type Message @objectType {
   role: MessageRole!
   parts: String!
   attachments: String!
+  chatId: ID!
 
   chat: Chat @link(type: "InChat", direction: OUTBOUND)
   votedIn: [Chat!]! @link(type: "Vote", direction: INBOUND)

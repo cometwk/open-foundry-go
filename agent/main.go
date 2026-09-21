@@ -46,7 +46,7 @@ func main() {
 
 	e := serve.NewEcho()
 
-	// attachOpenFoundry(e)
+	chat.AttachOpenFoundry(e)
 	attachAgent(e)
 
 	httpSrv := &http.Server{Addr: ":" + env.String("PORT", "4000"), Handler: e}

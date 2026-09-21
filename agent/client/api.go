@@ -175,14 +175,16 @@ const messageWithRelationsFields = messageFields + `
 
 // APIs holds the three domain GraphQLResource instances (api.ts accountApi/chatApi/messageApi).
 type APIs struct {
+	Client  *Client
 	Account *GraphQLResource[Account, AccountFilter, AccountOrderBy]
 	Chat    *GraphQLResource[Chat, ChatFilter, ChatOrderBy]
 	Message *GraphQLResource[Message, MessageFilter, MessageOrderBy]
 }
 
 // NewAPIs wires Account / Chat / Message resources on c (templ.ts createClient + GraphQLResource).
-func NewAPI(c *Client) *APIs {
+func NewAPIs(c *Client) *APIs {
 	return &APIs{
+		Client: c,
 		Account: NewGraphQLResource[Account, AccountFilter, AccountOrderBy](c, ResourceNames{
 			Single:    "account",
 			List:      "accounts",

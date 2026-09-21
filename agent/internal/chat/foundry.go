@@ -5,11 +5,14 @@ import (
 	"log/slog"
 
 	"github.com/labstack/echo/v5"
+	"github.com/openfoundry/agent/client"
 	"github.com/openfoundry/runtime/api"
 	"github.com/openfoundry/runtime/bootstrap"
 )
 
-func attachOpenFoundry(echo *echo.Echo) error {
+var apis *client.APIs
+
+func AttachOpenFoundry(echo *echo.Echo) error {
 	srv, closeDB, err := CreateFoundryServer()
 	if err != nil {
 		return err
@@ -24,6 +27,7 @@ func attachOpenFoundry(echo *echo.Echo) error {
 
 	// 安装 ODL API 路由
 	srv.Handler(echo.Group(""))
+	apis = client.NewAPIs(client.CreateClient(srv))
 
 	// // 安装 MCP 路由
 	// mcp, err := mcp.NewMCP(ctx)
