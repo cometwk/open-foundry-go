@@ -64,6 +64,9 @@ func NewWithCompiled(storage spi.StorageProvider, ontology *ir.Ontology, compile
 // concerns (enum membership, uniqueness probes, @constraint evaluation,
 // immutable-on-patch) stay deferred to Phase 3.
 func (e *Engine) CreateObject(ctx spi.RequestContext, typ string, properties map[string]any) (spi.OntologyObject, error) {
+	if err := e.compiledModel(typ).RejectProjectionWrites(properties); err != nil {
+		return nil, err
+	}
 	if err := e.validateObjectPayload(typ, properties, false); err != nil {
 		return nil, err
 	}
@@ -115,6 +118,10 @@ func (e *Engine) compiledModel(typ string) *obda.CompiledModel {
 		return nil
 	}
 	return e.compiled.Models[typ]
+}
+
+func (e *Engine) isProjection(typ, logical string) bool {
+	return e.compiledModel(typ).IsProjection(logical)
 }
 
 func providedObjectID(m *obda.CompiledModel, properties map[string]any) (string, error) {
@@ -169,6 +176,9 @@ func (e *Engine) UpdateObject(ctx spi.RequestContext, typ, id string, patch map[
 		return nil, err
 	}
 	merged := mergePatch(existing, patch)
+	if err := e.compiledModel(typ).RejectProjectionWrites(patch); err != nil {
+		return nil, err
+	}
 	if err := e.validateObjectPayload(typ, merged, true); err != nil {
 		return nil, err
 	}
@@ -222,6 +232,9 @@ func (e *Engine) validateObjectPayload(typ string, properties map[string]any, is
 			// unknown-property rejection is a Phase 3 tightening.
 			continue
 		}
+		if e.isProjection(typ, name) {
+			continue
+		}
 		if field.Role == ir.RoleLinkNav {
 			if !e.inlineNavWritable(typ, field) {
 				return fmt.Errorf("openfoundry: field %q on type %q has role %s and is not writable via payload", name, typ, field.Role)
@@ -247,6 +260,9 @@ func (e *Engine) validateObjectPayload(typ string, properties map[string]any, is
 		for i := range objType.Fields {
 			f := &objType.Fields[i]
 			if spi.IsSystemField(f.Name) {
+				continue
+			}
+			if e.isProjection(typ, f.Name) {
 				continue
 			}
 			if f.Role == ir.RoleLinkNav {

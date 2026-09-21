@@ -257,8 +257,11 @@ func inlineSchema() spi.OntologySchema {
 		Version: 1,
 		ObjectTypes: []spi.ObjectTypeDefinition{
 			{
-				Name:       "Reader",
-				Properties: []spi.PropertyDefinition{{Name: "name", Type: "String"}},
+				Name: "Reader",
+				Properties: []spi.PropertyDefinition{
+					{Name: "name", Type: "String"},
+					{Name: "branchId", Type: "ID"},
+				},
 				Navigations: []spi.LinkNavigation{{
 					Field: "branch", LinkType: "RegisteredAt", Direction: "OUTBOUND",
 				}},

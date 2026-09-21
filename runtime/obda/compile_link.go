@@ -144,6 +144,10 @@ func compileInlineLink(name string, l Link, def spi.LinkTypeDefinition, objects 
 	if err != nil {
 		return nil, err
 	}
+	scalar, err := bindInlineScalar(name, l, hostDef, hostModel, nav)
+	if err != nil {
+		return nil, err
+	}
 	access := l.Access
 	if access == "" {
 		access = "readWrite"
@@ -175,6 +179,7 @@ func compileInlineLink(name string, l Link, def spi.LinkTypeDefinition, objects 
 		HostNavField:     nav.Field,
 		FKColumn:         fk,
 		FKNullable:       !nav.NonNull,
+		ScalarField:      scalar,
 	}
 	_ = peerName
 	return cl, nil
@@ -194,6 +199,55 @@ func inlineHostSide(name string, l Link, def spi.LinkTypeDefinition) (string, er
 	default:
 		return "", fmt.Errorf("%w: link %q cannot be inline", spi.ErrInvalidMapping, name)
 	}
+}
+
+func bindInlineScalar(linkName string, l Link, hostDef spi.ObjectTypeDefinition, host *CompiledModel, nav spi.LinkNavigation) (string, error) {
+	disabled := l.ProjectScalar != nil && !*l.ProjectScalar
+	if disabled && l.ScalarField != "" {
+		return "", fmt.Errorf("%w: link %q scalarField with projectScalar: false", spi.ErrInvalidMapping, linkName)
+	}
+	want := l.ScalarField
+	if want == "" {
+		want = nav.Field + "Id"
+	}
+	prop, ok := hostProperty(hostDef, want)
+	if disabled {
+		if ok {
+			if _, mapped := host.FieldByLogical[want]; !mapped {
+				return "", fmt.Errorf("%w: link %q scalar %q is not projected", spi.ErrInvalidMapping, linkName, want)
+			}
+		}
+		return "", nil
+	}
+	if l.ScalarField == "" && !ok {
+		return "", nil
+	}
+	if !ok {
+		return "", fmt.Errorf("%w: link %q scalar %q not in host schema", spi.ErrInvalidMapping, linkName, want)
+	}
+	if !isIDType(prop.Type) {
+		return "", fmt.Errorf("%w: link %q scalar %q must be ID", spi.ErrInvalidMapping, linkName, want)
+	}
+	if prop.Required != nav.NonNull {
+		return "", fmt.Errorf("%w: link %q scalar %q nullability must match navigation", spi.ErrInvalidMapping, linkName, want)
+	}
+	if _, mapped := host.FieldByLogical[want]; mapped {
+		return "", fmt.Errorf("%w: link %q scalar %q collides with field", spi.ErrInvalidMapping, linkName, want)
+	}
+	return want, nil
+}
+
+func hostProperty(host spi.ObjectTypeDefinition, name string) (spi.PropertyDefinition, bool) {
+	for _, p := range host.Properties {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return spi.PropertyDefinition{}, false
+}
+
+func isIDType(t string) bool {
+	return t == "ID"
 }
 
 func hostNavigation(linkName string, host spi.ObjectTypeDefinition, linkType, hostSide string) (spi.LinkNavigation, error) {

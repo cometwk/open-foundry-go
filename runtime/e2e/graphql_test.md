@@ -137,6 +137,21 @@ book_quantum（量子纠缠导论）无 Borrows 入边
 
 都走 Query IR 的 List / Search / Aggregate。
 
+### readers filter by branchId
+
+仅 MySQL。`branchId` 是 `RegisteredAt` 宿主列的只读投影，不进 `fields`。memory 不 assemble 该键，子测试 Skip。
+
+```graphql
+{
+  readers(filter: { branchId: { eq: $west } }) {
+    totalCount
+    edges { node { id name branchId } }
+  }
+}
+```
+
+西区馆有小红、小李。`reader(id: $xiaoHong) { branchId }` 等于西区馆 id。写入 `branchId` 由 Engine / mysqlobda 硬拒绝，不在本文件测。
+
 ### nested registered_at and borrows
 
 1. `reader { branch { name } borrowedBooks { title } }`

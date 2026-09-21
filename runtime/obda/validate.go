@@ -140,6 +140,9 @@ func validateInlineLink(name string, l Link) error {
 	if l.Host != "" && l.Host != "from" && l.Host != "to" {
 		return fmt.Errorf("%w: link %q host %q (from or to)", spi.ErrInvalidMapping, name, l.Host)
 	}
+	if l.ProjectScalar != nil && !*l.ProjectScalar && l.ScalarField != "" {
+		return fmt.Errorf("%w: link %q scalarField with projectScalar: false", spi.ErrInvalidMapping, name)
+	}
 	return nil
 }
 

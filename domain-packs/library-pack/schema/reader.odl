@@ -6,6 +6,7 @@ type Reader @objectType {
   membershipLevel: MembershipLevel!
   currentBorrowCount: Int!
   registeredDays: Int!
+  branchId: ID
 
   branch: Branch @link(type: "RegisteredAt", direction: OUTBOUND)
   borrowedBooks: [Book!]! @link(type: "Borrows", direction: OUTBOUND)

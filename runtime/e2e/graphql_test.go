@@ -174,6 +174,43 @@ func TestGoldPath_GraphQL(t *testing.T) {
 		}
 	})
 
+	t.Run("readers filter by branchId", func(t *testing.T) {
+		if env.Backend != backendMySQL {
+			t.Skip("inline FK scalar projection is MySQL-only (memory does not assemble branchId)")
+		}
+		res := gql(t, srv, "gold", `{
+			readers(filter: { branchId: { eq: "`+ids.west+`" } }) {
+				totalCount
+				edges { node { id name branchId } }
+			}
+		}`)
+		if len(res.Errors) > 0 {
+			t.Fatalf("errors = %v", res.Errors)
+		}
+		conn := res.Data["readers"].(map[string]any)
+		if conn["totalCount"].(float64) != 2 {
+			t.Fatalf("totalCount = %v, want 2 (小红, 小李)", conn["totalCount"])
+		}
+		names := map[string]bool{}
+		for _, edge := range conn["edges"].([]any) {
+			node := edge.(map[string]any)["node"].(map[string]any)
+			if node["branchId"] != ids.west {
+				t.Fatalf("branchId = %v, want %s", node["branchId"], ids.west)
+			}
+			names[node["name"].(string)] = true
+		}
+		if !names["小红"] || !names["小李"] {
+			t.Fatalf("names = %v, want 小红 and 小李", names)
+		}
+		got := gql(t, srv, "gold", `{ reader(id: "`+ids.xiaoHong+`") { branchId } }`)
+		if len(got.Errors) > 0 {
+			t.Fatalf("get errors = %v", got.Errors)
+		}
+		if got.Data["reader"].(map[string]any)["branchId"] != ids.west {
+			t.Fatalf("xiaoHong branchId = %v, want %s", got.Data["reader"], ids.west)
+		}
+	})
+
 	t.Run("cross tenant", func(t *testing.T) {
 		miss := gql(t, srv, "other", `{ book(id: "`+ids.sapiens+`") { title } }`)
 		if miss.Data["book"] != nil {

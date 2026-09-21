@@ -28,7 +28,7 @@ func (p *Provider) AggregateObjects(ctx spi.RequestContext, typ string, query sp
 	groupLogical := make([]string, 0, len(query.GroupBy))
 	groupByCol := map[string]string{}
 	for _, logical := range query.GroupBy {
-		f, ok := m.FieldByLogical[logical]
+		f, ok := m.LookupLogical(logical)
 		if !ok {
 			return spi.AggregateResult{}, fmt.Errorf("%w: unknown groupBy field %q", spi.ErrInvalidMapping, logical)
 		}
@@ -172,7 +172,7 @@ func aggregateFieldIdent(m *obda.CompiledModel, f spi.AggregateField) (*sqlast.I
 	if f.Field == "*" {
 		return &sqlast.Identifier{Name: "*"}, nil
 	}
-	cf, ok := m.FieldByLogical[f.Field]
+	cf, ok := m.LookupLogical(f.Field)
 	if !ok {
 		return nil, fmt.Errorf("%w: unknown aggregate field %q", spi.ErrInvalidMapping, f.Field)
 	}

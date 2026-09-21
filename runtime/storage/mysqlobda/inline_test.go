@@ -110,6 +110,9 @@ func TestInlineRequiredObjectAPIs(t *testing.T) {
 	if asIntVer(updated[spi.FieldVersion]) != before+1 {
 		t.Fatalf("version=%v", updated[spi.FieldVersion])
 	}
+	if updated["branchId"] != br2[spi.FieldID] {
+		t.Fatalf("branchId=%v want %v", updated["branchId"], br2[spi.FieldID])
+	}
 }
 
 func TestInlineHardDeletePeer(t *testing.T) {
@@ -237,9 +240,111 @@ func activateInline(t *testing.T) (*mysqlobda.Provider, *sql.DB, string, string)
 	return p, db, reader[spi.FieldID].(string), br[spi.FieldID].(string)
 }
 
+func TestInlineScalarProjectionReadFilter(t *testing.T) {
+	p, _, readerID, branchID := activateInline(t)
+	ctx := spi.RequestContext{TenantID: "t1"}
+	obj, err := p.GetObject(ctx, "Reader", readerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obj["branchId"] != nil {
+		t.Fatalf("empty fk branchId=%v", obj["branchId"])
+	}
+	if _, err := p.CreateLink(ctx, "RegisteredAt", readerID, branchID, nil); err != nil {
+		t.Fatal(err)
+	}
+	obj, err = p.GetObject(ctx, "Reader", readerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obj["branchId"] != branchID {
+		t.Fatalf("branchId=%v want %s", obj["branchId"], branchID)
+	}
+	page, err := p.QueryObjects(ctx, "Reader", spi.FilterExpression{Field: "branchId", Operator: "eq", Value: branchID}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0][spi.FieldID] != readerID {
+		t.Fatalf("filter items=%d", len(page.Items))
+	}
+	ordered, err := p.QueryObjects(ctx, "Reader", spi.FilterExpression{}, &spi.QueryOptions{
+		OrderBy: []spi.OrderBy{{Field: "branchId", Direction: "asc"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ordered.Items) != 1 {
+		t.Fatalf("order items=%d", len(ordered.Items))
+	}
+	agg, err := p.AggregateObjects(ctx, "Reader", spi.AggregateQuery{
+		GroupBy: []string{"branchId"},
+		Fields:  []spi.AggregateField{{Fn: "count", Field: "*"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.TotalGroups != 1 {
+		t.Fatalf("groups=%d", agg.TotalGroups)
+	}
+	_, err = p.QueryObjects(ctx, "Reader", spi.FilterExpression{Field: "branchId", Operator: "ne", Value: branchID}, nil)
+	if !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("ne err=%v", err)
+	}
+	_, err = p.QueryObjects(ctx, "Reader", spi.FilterExpression{Field: "noSuchField", Operator: "eq", Value: branchID}, nil)
+	if !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("unknown field err=%v", err)
+	}
+	miss, err := p.QueryObjects(ctx, "Reader", spi.FilterExpression{Field: "branchId", Operator: "eq", Value: "no-such-branch"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(miss.Items) != 0 {
+		t.Fatalf("miss items=%d", len(miss.Items))
+	}
+}
+
+func TestInlineScalarProjectionWriteRejected(t *testing.T) {
+	p, _, _, branchID := activateInline(t)
+	ctx := spi.RequestContext{TenantID: "t1"}
+	_, err := p.CreateObject(ctx, "Reader", map[string]any{"name": "Y", "branchId": branchID})
+	if !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("create err=%v", err)
+	}
+	reader, err := p.CreateObject(ctx, "Reader", map[string]any{"name": "Z", "branch": branchID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.UpdateObject(ctx, "Reader", reader[spi.FieldID].(string), map[string]any{"branchId": branchID}, nil)
+	if !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("update err=%v", err)
+	}
+	got, err := p.GetObject(ctx, "Reader", reader[spi.FieldID].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["branchId"] != branchID {
+		t.Fatalf("fk should stay %s, got %v", branchID, got["branchId"])
+	}
+	renamed, err := p.UpdateObject(ctx, "Reader", reader[spi.FieldID].(string), map[string]any{"name": "ZZ"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamed["name"] != "ZZ" {
+		t.Fatalf("name=%v", renamed["name"])
+	}
+	if renamed["branchId"] != branchID {
+		t.Fatalf("name patch must keep fk, got %v", renamed["branchId"])
+	}
+}
+
 func inlineRequiredSchema() spi.OntologySchema {
 	s := inlineSchema()
 	s.ObjectTypes[0].Navigations[0].NonNull = true
+	for i, p := range s.ObjectTypes[0].Properties {
+		if p.Name == "branchId" {
+			s.ObjectTypes[0].Properties[i].Required = true
+		}
+	}
 	return s
 }
 

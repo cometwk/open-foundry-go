@@ -71,6 +71,9 @@ func (p *Provider) createObjectTx(tx DBTX, act *activation, ctx spi.RequestConte
 		return nil, err
 	}
 	props := copyUserProps(properties)
+	if err := m.RejectProjectionWrites(props); err != nil {
+		return nil, err
+	}
 	if err := p.requireInlineOnCreate(act, typ, props); err != nil {
 		return nil, err
 	}
@@ -143,6 +146,9 @@ func (p *Provider) updateObjectTx(tx DBTX, act *activation, ctx spi.RequestConte
 		return nil, spi.ErrObjectNotFound
 	}
 	props := copyUserProps(properties)
+	if err := m.RejectProjectionWrites(props); err != nil {
+		return nil, err
+	}
 	now := nowRFC3339()
 	cols := make([]string, 0, len(m.Fields)+2)
 	vals := make([]any, 0, len(m.Fields)+2)
@@ -460,6 +466,17 @@ func (p *Provider) assemble(m *obda.CompiledModel, tenant string, biz map[string
 			return nil, err
 		}
 		obj[f.Logical] = v
+	}
+	for _, f := range m.InlineFKs {
+		if f.Logical == "" {
+			continue
+		}
+		raw := unwrap(biz[f.Column])
+		if raw == nil || fmt.Sprint(raw) == "" {
+			obj[f.Logical] = nil
+			continue
+		}
+		obj[f.Logical] = fmt.Sprint(raw)
 	}
 	return obj, nil
 }

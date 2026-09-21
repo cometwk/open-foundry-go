@@ -266,6 +266,61 @@ func TestEngine_CreateObject_InlineNavAccepted(t *testing.T) {
 	}
 }
 
+func TestEngine_CreateObject_ProjectionKeyRejected(t *testing.T) {
+	ont := objectOntology(t)
+	ont.Objects[0].Fields = append(ont.Objects[0].Fields,
+		ir.Field{Name: "owner", Type: ir.TypeRef{Name: "Part"}, Role: ir.RoleLinkNav,
+			Link: &ir.LinkRef{Type: "OwnedBy", Direction: ir.DirectionOutbound}},
+		ir.Field{Name: "ownerId", Type: ir.TypeRef{Name: "ID"}, Role: ir.RoleProperty},
+	)
+	ont.Links = append(ont.Links, ir.LinkType{Name: "OwnedBy", From: "Supplier", To: "Part"})
+	compiled := &obda.Compiled{
+		Models: map[string]*obda.CompiledModel{
+			"Supplier": {InlineFKs: []obda.CompiledField{{Logical: "ownerId", Column: "owner_id"}}},
+		},
+		Links: map[string]*obda.CompiledLink{
+			"OwnedBy": {Name: "OwnedBy", Inline: true, HostModel: "Supplier", HostNavField: "owner", FKColumn: "owner_id", FKNullable: true, ScalarField: "ownerId"},
+		},
+	}
+	e, err := NewWithCompiled(memory.New(), ont, compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.CreateObject(tenantCtx("tnt"), "Supplier", map[string]any{
+		"name":    "Acme",
+		"ownerId": "part-1",
+	})
+	if !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("projection key must reject, got %v", err)
+	}
+	_, err = e.CreateObject(tenantCtx("tnt"), "Supplier", map[string]any{
+		"name":    "Acme",
+		"owner":   "part-1",
+		"ownerId": "part-1",
+	})
+	if !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("both keys must reject, got %v", err)
+	}
+	obj, err := e.CreateObject(tenantCtx("tnt"), "Supplier", map[string]any{
+		"name":  "Acme",
+		"owner": "part-1",
+	})
+	if err != nil {
+		t.Fatalf("nav-only create: %v", err)
+	}
+	_, err = e.UpdateObject(tenantCtx("tnt"), "Supplier", obj[spi.FieldID].(string), map[string]any{"ownerId": "x"}, nil)
+	if !errors.Is(err, spi.ErrInvalidMapping) {
+		t.Fatalf("update projection must reject, got %v", err)
+	}
+	patched, err := e.UpdateObject(tenantCtx("tnt"), "Supplier", obj[spi.FieldID].(string), map[string]any{"name": "New"}, nil)
+	if err != nil {
+		t.Fatalf("name patch after projection echo: %v", err)
+	}
+	if patched["name"] != "New" {
+		t.Fatalf("name=%v", patched["name"])
+	}
+}
+
 func TestEngine_CreateObject_KindTableNavStillRejected(t *testing.T) {
 	ont := objectOntology(t)
 	compiled := &obda.Compiled{
