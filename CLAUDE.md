@@ -6,6 +6,7 @@
 
 ## 测试规范
 
+- gold-path = domain-packs/library-pack/library-pack.md
 - 单元测试需要案例时，采用 `domain-packs/library-pack/library-pack.md` 里的简化版。
 - 本地配置统一走 `.env` 加载模式：`set -a; [ -f .env ] && . .env; set +a`
 - MySQL 测试用真实数据库（`TEST_DB_URL`），**不要自行启动 MySQL Docker**。在 `runtime/` 下运行：

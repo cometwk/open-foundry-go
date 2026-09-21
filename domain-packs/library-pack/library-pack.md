@@ -74,6 +74,7 @@ graph TD
 - `membershipLevel`: `'gold' | 'silver' | 'basic'`（会员等级，决定是否可借限制类目）
 - `currentBorrowCount`: number
 - `registeredDays`: number（注册天数）
+- `branchId`: ID（可空；`RegisteredAt` inline FK 的只读投影，等于所注册分馆 id）
 - methods: `checkBorrowEligibility(branchMaxBorrow)` — 需要先从 Branch 拿到上限
 
 **Book**（书籍）— 两版均有

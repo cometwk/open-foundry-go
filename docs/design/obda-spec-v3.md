@@ -477,6 +477,16 @@ links:
 - identity 列 MUST 是 payload `fields` 中的某一 `column`，除非 `insert: generated`。
 - 禁止把逻辑字段映射到 tenant 列（`Compile` 拒绝）。
 - 逻辑字段名对应 ODL property；ODL Primary 被 projection 丢掉，因此可写 direct identity 必须用 `insert: generated` 或 payload 中的非 Primary 字段。
+- **inline FK 列不得出现在 host `fields`。** 禁止用 `fields` 把同一列再映射一遍来「开放 filter」——那会撞 `checkFKCollision`，并与 `applyInlineFKs` 双写。读/filter 走只读标量投影（见下、§15.7）。
+- **inline FK 只读标量投影。** host ODL 上类型为 `ID` 的标量，约定名为 `{HostNavField}Id`（导航字段 `branch` → `branchId`，不是 LinkType 名）时，Compile 把它绑到该 inline 的 FK 列。投影进入 `InlineFKs`，**不进入** `model.fields` 写映射，不新增物理列。YAML：
+  - `scalarField`：覆盖逻辑名（属性必须存在且类型为 `ID`）。
+  - `projectScalar`：`*bool`。省略 / `null` = 开启；显式 `false` 关闭。
+  - 同时写 `scalarField` 与 `projectScalar: false` → `ErrInvalidMapping`。
+  - 开启投影但 ODL 无该属性、且未写 `scalarField` → 无投影，纯导航仍合法。
+  - `projectScalar: false` 且 ODL 仍有该属性、又未映射到**另一列** → `ErrInvalidMapping`。
+  - 投影名的 `Required` / 可空必须与导航 `NonNull` 一致。
+  - `search.fields` 含投影名 → `ErrInvalidMapping`（投影不是 FULLTEXT 列）。
+- **写入投影键非法。** Create `properties` / Update **patch** 出现投影键 → `ErrInvalidMapping`（硬拒绝）。已物化对象上的投影键不得经 mergePatch 回灌成「写入」。改关系只走导航名或 CreateLink / DeleteLink。
 
 ### 4.5 Relation 种类
 
@@ -1559,6 +1569,18 @@ links:
 ```
 
 这是必须支持的，因为 Link 当作带自己属性和自己 ID 的一等实体。
+
+inline FK 的宿主列只用于导航写（`HostNavField`，如 `branch`）。若 host ODL 声明约定标量 `{nav}Id`（library 简化版 `Reader.branchId: ID` 对应 `RegisteredAt`），Compile 把它投影到同一列，供 GetObject / `QueryObjects` filter / OrderBy / Aggregate `groupBy` 使用。禁止把 `branch_id` 写进 `Reader.fields`。写入 `branchId` 必须失败；创建带分馆只写 `branch`（或随后 `CreateLink`）。
+
+```yaml
+# library.obda.yaml — 省略 scalarField / projectScalar 即按约定开启
+links:
+  RegisteredAt:
+    relation: {kind: inline}
+    access: readWrite
+    from: {object: Reader}
+    to: {object: Branch, columns: [branch_id]}
+```
 
 ### 15.8 Many-to-Many
 

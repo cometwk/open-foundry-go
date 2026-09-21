@@ -47,6 +47,11 @@ A link with no junction table: the foreign key lives as a plain column on one en
 
 > inline 链接 —— 没有 junction 表的链接：外键是某一端点自身表（宿主表）上的普通列。它没有属性、没有独立的数据行 —— 身份由宿主行主键派生，因此同一宿主行对每个链接类型与方向至多支撑一条这样的链接。
 
+### Inline FK scalar projection
+A read/filter-only ODL scalar (convention `{nav}Id`, e.g. `branchId`) bound to an existing host-table inline FK column. It is not a `model.fields` write mapping and must not collide with identity, tenant, business fields, or system columns. Writes of the projection key fail-fast; the relationship is still mutated through the navigation name.
+
+> inline FK 标量投影 —— 只读/可过滤的 ODL 标量（约定 `{nav}Id`，如 `branchId`），绑定到宿主表上已有的 inline FK 列。它不是 `model.fields` 写映射，也不得与 identity、tenant、业务字段或系统列冲突。写入该投影键必须硬拒绝；改关系仍走导航名。
+
 ### Or-of-eq filter
 The narrow batch-by-ids filter channel: an `Or` predicate accepted only over `eq` leaves (typically on the identity field). The eq-only restriction is a correctness lock, not a style choice — bound arguments follow placeholder appearance order in the rendered SQL, which only stays trivially correct when children are flat equality leaves.
 
