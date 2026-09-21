@@ -1,0 +1,44 @@
+# ==============================================================================
+# 第一步：配置提供商 / 渠道 (Providers & Credentials)
+# 集中管理厂商的 Endpoint、API Key、请求头和限速规则
+# ==============================================================================
+providers:
+  # ---------------- 阿里云百炼 / DashScope ----------------
+  - id: aliyun
+    name: "Aliyun DashScope"
+    provider_type: openai_compatible  # 兼容 OpenAI 格式协议
+    api_base: https://llm-mx4s0w2f2aowaq5u.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+    api_key: "${ALIYUN_API_KEY}"
+    rpm: 1000
+    tpm: 100000
+
+  # ---------------- Anthropic 官方 ----------------
+  - id: provider-anthropic
+    name: "Anthropic Main"
+    provider_type: anthropic
+    api_base: https://api.anthropic.com/v1
+    api_key: "${ANTHROPIC_API_KEY:sk-default-key}"
+
+  # ---------------- 本地私有化部署 (vLLM) ----------------
+  - id: provider-local-vllm
+    name: "Internal vLLM Cluster"
+    provider_type: openai_compatible
+    api_base: http://vllm-cluster.internal:8000/v1
+    api_key: "not-needed"
+
+
+# ==============================================================================
+# 第二步：选择与映射模型 (Models & Routing Setup)
+# 将物理模型绑定到指定的 Provider，并暴露统一的“逻辑模型别名”给业务侧
+# ==============================================================================
+models:
+  # ---------------- 逻辑分组：default (主力模型) ----------------
+  default:
+    provider_id: aliyun
+    model_name: deepseek-v4.1-flash
+
+  # ---------------- 逻辑分组：flash (极速/开源/低成本模型) ----------------
+  flash:
+    provider_id: aliyun
+    model_name: deepseek-v4.1-flash
+

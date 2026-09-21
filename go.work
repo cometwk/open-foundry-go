@@ -1,9 +1,9 @@
 go 1.26.4
 
 use (
+	./agent
 	./cel-evaluator
-	./runtime
 	./extmp
 	./lib
-	./agent
+	./runtime
 )

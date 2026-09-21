@@ -1,4 +1,4 @@
-package main
+package chat
 
 import (
 	"fmt"
@@ -10,7 +10,7 @@ import (
 )
 
 func attachOpenFoundry(echo *echo.Echo) error {
-	srv, closeDB, err := openAPI()
+	srv, closeDB, err := CreateFoundryServer()
 	if err != nil {
 		return err
 	}
@@ -37,7 +37,7 @@ func attachOpenFoundry(echo *echo.Echo) error {
 	return err
 }
 
-func openAPI() (*api.Server, func(), error) {
+func CreateFoundryServer() (*api.Server, func(), error) {
 	conf, err := bootstrap.LoadConfig("")
 	if err != nil {
 		return nil, nil, err
