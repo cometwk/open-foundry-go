@@ -2,6 +2,7 @@ package client_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -30,13 +31,82 @@ func realAction(t *testing.T) *client.Action {
 func TestConvert(t *testing.T) {
 	t.Run("convert: db -> ui", func(t *testing.T) {
 		db := sampleMessage("123")
+		ui := client.ConvertToUIMessage(db)
+		require.Equal(t, "123", ui.ID)
+		require.Equal(t, aisdk.RoleUser, ui.Role)
+		require.Len(t, ui.Parts, 1)
+		tp, ok := ui.Parts[0].(aisdk.TextPart)
+		require.True(t, ok, "expected TextPart, got %T", ui.Parts[0])
+		require.Equal(t, "18 C, partly cloudy.", tp.Text)
 		testutil.PrintPretty(db)
-		testutil.PrintPretty(client.ConvertToUIMessage(db))
+		testutil.PrintPretty(ui)
 	})
 	t.Run("convert: ui -> db", func(t *testing.T) {
 		ui := sampleUIMessage("abc", "ui-message sample")
+		db := client.ConvertToDBMessage(ui)
+		require.Equal(t, "abc", db.ID)
+		require.Equal(t, aisdk.RoleUser, db.Role)
+		require.JSONEq(t, `[{"type":"text","text":"ui-message sample"}]`, db.Parts)
+	})
+	t.Run("convert: round-trip", func(t *testing.T) {
+		ui := sampleUIMessage("round", "hello")
+		back := client.ConvertToUIMessage(client.ConvertToDBMessage(ui))
+		require.Equal(t, ui.ID, back.ID)
+		require.Equal(t, ui.Role, back.Role)
+		require.Equal(t, "hello", client.GetTextFromMessage(back))
+	})
+
+	t.Run("static: json -> db", func(t *testing.T) {
+		j := `{
+  "id": "123",
+  "role": "user",
+  "parts": "[{\"type\":\"text\",\"text\":\"18 C, partly cloudy.\"}]",
+  "attachments": "",
+  "chatId": ""
+}`
+		var v client.Message
+		err := json.Unmarshal([]byte(j), &v)
+		require.NoError(t, err)
+		testutil.PrintPretty(v)
+	})
+
+	t.Run("static: json -> ui", func(t *testing.T) {
+		j := `{
+  "id": "123",
+  "role": "user",
+  "parts": "[{\"type\":\"text\",\"text\":\"18 C, partly cloudy.\"}]",
+  "attachments": "",
+  "chatId": ""
+}`
+		var v client.Message
+		err := json.Unmarshal([]byte(j), &v)
+		require.NoError(t, err)
+
+		ui := client.ConvertToUIMessage(v)
 		testutil.PrintPretty(ui)
-		testutil.PrintPretty(client.ConvertToDBMessage(ui))
+
+	})
+
+	t.Run("static: db -> json", func(t *testing.T) {
+		ui := aisdk.UIMessage{
+			ID:   "123",
+			Role: aisdk.RoleUser,
+			Parts: []aisdk.Part{
+				aisdk.TextPart{Text: "demo text"},
+			},
+		}
+		_, err := json.Marshal(ui)
+		require.NoError(t, err, "Parts 要求采用值模式")
+
+		ui = aisdk.UIMessage{
+			ID:   "123",
+			Role: aisdk.RoleUser,
+			Parts: []aisdk.Part{
+				&aisdk.TextPart{Text: "demo text"},
+			},
+		}
+		_, err = json.Marshal(ui)
+		require.Error(t, err)
 	})
 }
 func Test1(t *testing.T) {
@@ -76,7 +146,7 @@ func Test1(t *testing.T) {
 			ID:         "chat-" + suffix,
 			Title:      "Weather",
 			Visibility: client.VisibilityPrivate,
-			UserId:     "1",
+			// UserId:     "1",
 		}
 		err := action.SaveChat(ctx, chat)
 		require.NoError(t, err)
@@ -113,7 +183,7 @@ func sampleUIMessage(id, text string) aisdk.UIMessage {
 		ID:   id,
 		Role: aisdk.RoleUser,
 		Parts: []aisdk.Part{
-			&aisdk.TextPart{Text: text},
+			aisdk.TextPart{Text: text},
 		},
 	}
 }
@@ -122,6 +192,6 @@ func sampleMessage(id string) client.Message {
 	return client.Message{
 		ID:    id,
 		Role:  aisdk.RoleUser,
-		Parts: []byte(`[{"type":"text","text":"18 C, partly cloudy."}]`),
+		Parts: `[{"type":"text","text":"18 C, partly cloudy."}]`,
 	}
 }

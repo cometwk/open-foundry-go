@@ -1,8 +1,6 @@
 package client
 
 import (
-	"encoding/json"
-
 	"github.com/grafana/ai-sdk/provider"
 )
 
@@ -45,14 +43,13 @@ type Chat struct {
 }
 
 type Message struct {
-	ID   string      `json:"id"`
-	Role MessageRole `json:"role"`
-	// Parts       string      `json:"parts"`
-	Parts       json.RawMessage `json:"parts"`
-	Attachments string          `json:"attachments"`
-	ChatId      string          `json:"chatId"`
-	Chat        *Chat           `json:"chat,omitempty"`
-	VotedIn     []Chat          `json:"votedIn,omitempty"`
+	ID          string      `json:"id"`
+	Role        MessageRole `json:"role"`
+	Parts       string      `json:"parts"`
+	Attachments string      `json:"attachments"`
+	ChatId      string      `json:"chatId"`
+	Chat        *Chat       `json:"chat,omitempty"`
+	VotedIn     []Chat      `json:"votedIn,omitempty"`
 }
 
 type MessageRoleFilter struct {

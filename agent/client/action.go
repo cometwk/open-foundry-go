@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	aisdk "github.com/grafana/ai-sdk"
@@ -81,6 +80,8 @@ func (a *Action) SaveChat(ctx context.Context, chat *Chat) error {
 		return err
 	}
 	props[spi.FieldEngineObjectID] = chat.ID
+	delete(props, "userId")
+	delete(props, "id")
 	obj, err := p.CreateObject(rc, "Chat", props)
 	if err != nil {
 		return err
@@ -105,14 +106,11 @@ func (a *Action) SaveChatMessage(ctx context.Context, chatId string, message ais
 	p := a.Client.p
 	rc := a.Client.rc
 
-	parts, err := json.Marshal(message.Parts)
-	if err != nil {
-		return err
-	}
-	_, err = p.CreateObject(rc, "Message", map[string]any{
-		spi.FieldEngineObjectID: message.ID,
-		"role":                  message.Role,
-		"parts":                 string(parts),
+	db := ConvertToDBMessage(message)
+	_, err := p.CreateObject(rc, "Message", map[string]any{
+		spi.FieldEngineObjectID: db.ID,
+		"role":                  db.Role,
+		"parts":                 db.Parts,
 	})
 	if err != nil {
 		return err
