@@ -30,10 +30,10 @@ graph TD
 
 **Chat**（会话）
 - `title`
-- `visibility`: `'PRIVATE' | 'PUBLIC'`
+- `visibility`: `'private' | 'public'`
 
 **Message**（消息）
-- `role`: `'USER' | 'ASSISTANT' | 'SYSTEM'`
+- `role`: `'user' | 'assistant' | 'system'`
 - `parts`, `attachments`
 
 ### 关系（3）
@@ -60,8 +60,8 @@ user_bob：bob@example.com，Bob，未验证，非匿名
 ### 会话（归属）
 
 ```text
-chat_weather：Weather，PRIVATE，OwnedBy → user_alice
-chat_hello：Hello，PUBLIC，OwnedBy → user_bob
+chat_weather：Weather，private，OwnedBy → user_alice
+chat_hello：Hello，public，OwnedBy → user_bob
 ```
 
 ### 消息（所属会话）

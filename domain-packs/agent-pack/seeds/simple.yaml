@@ -20,32 +20,32 @@ objects:
     ref: chat_weather
     fields:
       title: Weather
-      visibility: PRIVATE
+      visibility: private
 
   - type: Chat
     ref: chat_hello
     fields:
       title: Hello
-      visibility: PUBLIC
+      visibility: public
 
   - type: Message
     ref: msg_weather_user
     fields:
-      role: USER
+      role: user
       parts: '[{"type":"text","text":"What is the weather in London?"}]'
       attachments: "[]"
 
   - type: Message
     ref: msg_weather_assistant
     fields:
-      role: ASSISTANT
+      role: assistant
       parts: '[{"type":"text","text":"18 C, partly cloudy."}]'
       attachments: "[]"
 
   - type: Message
     ref: msg_hello_user
     fields:
-      role: USER
+      role: user
       parts: '[{"type":"text","text":"Hello"}]'
       attachments: "[]"
 

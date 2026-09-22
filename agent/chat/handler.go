@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"log/slog"
 	"net/http"
+	"time"
 
 	aisdk "github.com/grafana/ai-sdk"
 	"github.com/grafana/ai-sdk/provider"
-
-	// "github.com/openfoundry/agent/internal/api"
-	"github.com/openfoundry/runtime/engine"
+	"github.com/labstack/echo/v5"
+	"github.com/openfoundry/agent/client"
 )
 
 type weatherInput struct {
@@ -52,10 +53,11 @@ func NewAgent(model provider.LanguageModel) (*aisdk.ToolLoopAgent, error) {
 	), nil
 }
 
-func NewChatHandler(agent aisdk.Agent, engine *engine.Engine) http.Handler {
+func NewChatHandler(agent aisdk.Agent, action *client.Action) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			ID       string            `json:"id"`
+			Message  aisdk.UIMessage   `json:"message"`
 			Messages []aisdk.UIMessage `json:"messages"`
 		}
 		decoder := json.NewDecoder(r.Body)
@@ -71,6 +73,10 @@ func NewChatHandler(agent aisdk.Agent, engine *engine.Engine) http.Handler {
 			http.Error(w, "invalid messages", http.StatusBadRequest)
 			return
 		}
+
+		ctx := r.Context()
+
+		// check message role is valid
 		for _, message := range body.Messages {
 			switch message.Role {
 			case aisdk.RoleSystem, aisdk.RoleUser, aisdk.RoleAssistant:
@@ -80,21 +86,64 @@ func NewChatHandler(agent aisdk.Agent, engine *engine.Engine) http.Handler {
 			}
 		}
 
-		chat, err := apis.Chat.GetById(r.Context(), body.ID, " id title messages { id role parts }")
+		// check chat
+		// chat, err := action.Chat.GetById(r.Context(), body.ID, " id title messages { id role parts }")
+		chat, err := action.Chat.GetById(r.Context(), body.ID, "id title")
 		if err != nil {
 			http.Error(w, "invalid chat", http.StatusBadRequest)
 			return
 		}
-		if chat == nil {
-			http.Error(w, "invalid chat", http.StatusBadRequest)
-			return
+
+		var inputMessages []aisdk.UIMessage
+		if chat != nil {
+			// if (chat.userId !== session.user.id) {
+			// 	return new ChatbotError("forbidden:chat").toResponse();
+			// }
+
+			// load history messages
+			inputMessages, err = action.GetdMessagesByChatId(ctx, chat.ID)
+			if err != nil {
+				http.Error(w, "invalid chat", http.StatusBadRequest)
+				return
+			}
+		} else {
+			// no history, create new chat
+			err := action.SaveChat(r.Context(), &client.Chat{
+				ID:    body.ID,
+				Title: "new chat-" + time.Now().Format("0102 15:04:05"),
+			})
+			if err != nil {
+				http.Error(w, "invalid chat", http.StatusBadRequest)
+				return
+			}
+		}
+
+		// append new message
+		inputMessages = append(inputMessages, body.Message)
+		if body.Message.Role == aisdk.RoleUser {
+			// 保存用户输入的消息
+			err := action.SaveChatMessage(ctx, body.ID, body.Message)
+			if err != nil {
+				slog.Error("save chat message failed", "error", err)
+				http.Error(w, "save chat message failed", http.StatusInternalServerError)
+				return
+			}
 		}
 
 		stream, err := aisdk.CreateAgentUIStream(
-			r.Context(),
+			ctx,
 			agent,
-			body.Messages,
+			inputMessages,
 			aisdk.WithUIMessageStreamReasoning(false),
+			aisdk.OnUIMessageStreamFinish(func(args aisdk.UIMessageStreamOnFinishState) {
+				// 保存助手回复的消息
+				err := action.SaveChatMessages(r.Context(), body.ID, args.Messages)
+				if err != nil {
+					slog.Error("save chat messages failed", "error", err)
+					http.Error(w, "save chat messages failed", http.StatusInternalServerError)
+					return
+				}
+			}),
 		)
 		if err != nil {
 			http.Error(w, "invalid messages", http.StatusBadRequest)
@@ -104,4 +153,13 @@ func NewChatHandler(agent aisdk.Agent, engine *engine.Engine) http.Handler {
 			log.Printf("streaming agent response: %v", err)
 		}
 	})
+}
+
+func AttachChatHandler(e *echo.Echo, action *client.Action) error {
+	agent, err := NewAgent(action.Model)
+	if err != nil {
+		return err
+	}
+	e.POST("/api/chat", echo.WrapHandler(NewChatHandler(agent, action)))
+	return nil
 }

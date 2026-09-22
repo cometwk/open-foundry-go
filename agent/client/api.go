@@ -1,20 +1,26 @@
 package client
 
+import (
+	"encoding/json"
+
+	"github.com/grafana/ai-sdk/provider"
+)
+
 // Entity types, field fragments, and API resources mirror agent/client/api.ts.
 
-type MessageRole string
+type MessageRole = provider.Role
 
 const (
-	MessageRoleUser      MessageRole = "USER"
-	MessageRoleAssistant MessageRole = "ASSISTANT"
-	MessageRoleSystem    MessageRole = "SYSTEM"
+	MessageRoleUser      MessageRole = "user"
+	MessageRoleAssistant MessageRole = "assistant"
+	MessageRoleSystem    MessageRole = "system"
 )
 
 type Visibility string
 
 const (
-	VisibilityPrivate Visibility = "PRIVATE"
-	VisibilityPublic  Visibility = "PUBLIC"
+	VisibilityPrivate Visibility = "private"
+	VisibilityPublic  Visibility = "public"
 )
 
 type Account struct {
@@ -32,18 +38,21 @@ type Chat struct {
 	ID            string     `json:"id"`
 	Title         string     `json:"title"`
 	Visibility    Visibility `json:"visibility"`
-	Owner         *Account   `json:"owner,omitempty"`
+	UserId        string     `json:"userId"`
+	User          *Account   `json:"user,omitempty"`
 	Messages      []Message  `json:"messages,omitempty"`
 	VotedMessages []Message  `json:"votedMessages,omitempty"`
 }
 
 type Message struct {
-	ID          string      `json:"id"`
-	Role        MessageRole `json:"role"`
-	Parts       string      `json:"parts"`
-	Attachments string      `json:"attachments"`
-	Chat        *Chat       `json:"chat,omitempty"`
-	VotedIn     []Chat      `json:"votedIn,omitempty"`
+	ID   string      `json:"id"`
+	Role MessageRole `json:"role"`
+	// Parts       string      `json:"parts"`
+	Parts       json.RawMessage `json:"parts"`
+	Attachments string          `json:"attachments"`
+	ChatId      string          `json:"chatId"`
+	Chat        *Chat           `json:"chat,omitempty"`
+	VotedIn     []Chat          `json:"votedIn,omitempty"`
 }
 
 type MessageRoleFilter struct {
@@ -96,6 +105,7 @@ type ChatOrderBy struct {
 
 type MessageFilter struct {
 	ID          *IDFilter          `json:"id,omitempty"`
+	ChatId      *IDFilter          `json:"chatId,omitempty"`
 	Role        *MessageRoleFilter `json:"role,omitempty"`
 	Parts       *StringFilter      `json:"parts,omitempty"`
 	Attachments *StringFilter      `json:"attachments,omitempty"`
@@ -110,6 +120,9 @@ type MessageOrderBy struct {
 	Parts       *SortDirection `json:"parts,omitempty"`
 	Attachments *SortDirection `json:"attachments,omitempty"`
 }
+
+type MessageConnectionQueryParams = ConnectionQueryParams[MessageFilter, MessageOrderBy]
+type ChatConnectionQueryParams = ConnectionQueryParams[ChatFilter, ChatOrderBy]
 
 const accountFields = `
   id
@@ -182,7 +195,7 @@ type APIs struct {
 }
 
 // NewAPIs wires Account / Chat / Message resources on c (templ.ts createClient + GraphQLResource).
-func NewAPIs(c *Client) *APIs {
+func NewAPI(c *Client) *APIs {
 	return &APIs{
 		Client: c,
 		Account: NewGraphQLResource[Account, AccountFilter, AccountOrderBy](c, ResourceNames{

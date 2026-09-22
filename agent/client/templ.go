@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	graphql "github.com/graph-gophers/graphql-go"
+	"github.com/openfoundry/lib/xlog"
 	"github.com/openfoundry/runtime/api"
 	"github.com/openfoundry/runtime/spi"
 )
@@ -85,7 +87,7 @@ func GqlExec[T any](ctx context.Context, c *Client, query string, vars map[strin
 	if len(res.Errors) > 0 {
 		return nil, errors.New(res.Errors[0].Message)
 	}
-	fmt.Printf("GqlExec: %+v\n", string(res.Data))
+	slog.InfoContext(ctx, string(res.Data), xlog.MOD, "GqlExec")
 	return decodeField[T](res.Data, field)
 }
 
@@ -425,7 +427,7 @@ func (r *GraphQLResource[TNode, TFilter, TOrderBy]) Search(
 }
 
 // Create writes a new object via StorageProvider/Engine.CreateObject and returns the typed node.
-func (r *GraphQLResource[TNode, TFilter, TOrderBy]) Create(ctx context.Context, params TNode) (*TNode, error) {
+func (r *GraphQLResource[TNode, TFilter, TOrderBy]) Create(ctx context.Context, params *TNode) (*TNode, error) {
 	if err := r.requireMutator(); err != nil {
 		return nil, err
 	}

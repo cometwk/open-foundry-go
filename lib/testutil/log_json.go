@@ -6,9 +6,13 @@ import (
 )
 
 func PrintPretty(v any) {
+	fmt.Println(Pretty(v))
+}
+
+func Pretty(v any) string {
 	json, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(string(json))
+	return string(json)
 }

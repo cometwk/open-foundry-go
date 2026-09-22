@@ -4,8 +4,9 @@ type Chat @objectType {
   id: ID! @primary
   title: String! @indexed @searchable(weight: 2.0)
   visibility: Visibility!
+  userId: ID
 
-  owner: Account @link(type: "OwnedBy", direction: OUTBOUND)
+  user: Account @link(type: "OwnedBy", direction: OUTBOUND)
   messages: [Message!]! @link(type: "InChat", direction: INBOUND)
   votedMessages: [Message!]! @link(type: "Vote", direction: OUTBOUND)
 }

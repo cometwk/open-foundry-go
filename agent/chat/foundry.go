@@ -5,29 +5,13 @@ import (
 	"log/slog"
 
 	"github.com/labstack/echo/v5"
-	"github.com/openfoundry/agent/client"
 	"github.com/openfoundry/runtime/api"
 	"github.com/openfoundry/runtime/bootstrap"
 )
 
-var apis *client.APIs
-
-func AttachOpenFoundry(echo *echo.Echo) error {
-	srv, closeDB, err := CreateFoundryServer()
-	if err != nil {
-		return err
-	}
-	// defer closeDB()
-	// if addr == "" {
-	// 	addr = ":4000"
-	// }
-	_ = closeDB
-
-	// e := serve.NewEcho()
-
+func AttachOpenFoundry(echo *echo.Echo, srv *api.Server) error {
 	// 安装 ODL API 路由
 	srv.Handler(echo.Group(""))
-	apis = client.NewAPIs(client.CreateClient(srv))
 
 	// // 安装 MCP 路由
 	// mcp, err := mcp.NewMCP(ctx)
@@ -38,31 +22,39 @@ func AttachOpenFoundry(echo *echo.Echo) error {
 
 	// httpSrv := &http.Server{Addr: addr, Handler: e}
 	// return serve.ServeHTTP(ctx, httpSrv)
-	return err
+	return nil
 }
 
-func CreateFoundryServer() (*api.Server, func(), error) {
+type FoundryServer struct {
+	Srv     *api.Server
+	CloseDB func()
+}
+
+func CreateFoundryServer() (*FoundryServer, error) {
 	conf, err := bootstrap.LoadConfig("")
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if conf == nil {
-		return nil, nil, fmt.Errorf("config required")
+		return nil, fmt.Errorf("config required")
 	}
 	b, err := bootstrap.New(conf)
 	if err != nil {
 		slog.Error("open failed", "error", err)
-		return nil, nil, err
+		return nil, err
 	}
 	e, err := b.Open()
 	if err != nil {
 		_ = b.Close()
 		slog.Error("open engine failed", "error", err)
-		return nil, nil, err
+		return nil, err
 	}
 	srv, err := api.New(e)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return srv, func() { _ = b.Close() }, nil
+	return &FoundryServer{
+		Srv:     srv,
+		CloseDB: func() { _ = b.Close() },
+	}, nil
 }
