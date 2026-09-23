@@ -24,7 +24,7 @@ func realServer(t *testing.T) *chat.FoundryServer {
 func realAction(t *testing.T) *client.Action {
 	t.Helper()
 	s := realServer(t)
-	action := client.NewAction(s.Srv)
+	action := client.NewAction(s.Srv, s.SPI)
 
 	return action
 }
@@ -155,7 +155,7 @@ func Test1(t *testing.T) {
 
 	t.Run("SaveChatMessage", func(t *testing.T) {
 		message := sampleUIMessage("msg-"+suffix, "What is the weather in London?")
-		err := action.SaveChatMessage(ctx, "1", message)
+		err := action.SaveChatMessage(ctx, chatId, message)
 		require.NoError(t, err)
 		t.Logf("message: %+v", testutil.Pretty(message))
 	})

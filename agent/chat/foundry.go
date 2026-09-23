@@ -7,6 +7,7 @@ import (
 	"github.com/labstack/echo/v5"
 	"github.com/openfoundry/runtime/api"
 	"github.com/openfoundry/runtime/bootstrap"
+	"github.com/openfoundry/runtime/spi"
 )
 
 func AttachOpenFoundry(echo *echo.Echo, srv *api.Server) error {
@@ -26,6 +27,7 @@ func AttachOpenFoundry(echo *echo.Echo, srv *api.Server) error {
 }
 
 type FoundryServer struct {
+	SPI     spi.StorageProvider
 	Srv     *api.Server
 	CloseDB func()
 }
@@ -54,6 +56,7 @@ func CreateFoundryServer() (*FoundryServer, error) {
 		return nil, err
 	}
 	return &FoundryServer{
+		SPI:     b.SPI,
 		Srv:     srv,
 		CloseDB: func() { _ = b.Close() },
 	}, nil

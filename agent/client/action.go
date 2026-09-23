@@ -20,8 +20,8 @@ type Action struct {
 	Message    *GraphQLResource[Message, MessageFilter, MessageOrderBy]
 }
 
-func NewAction(srv *api.Server) *Action {
-	c := CreateClient(srv)
+func NewAction(srv *api.Server, p spi.StorageProvider) *Action {
+	c := CreateClient(srv, p)
 	a := NewAPI(c)
 	return &Action{
 		FlashModel: llm.NewFlashModel(),

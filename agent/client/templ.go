@@ -68,11 +68,12 @@ func WithStorageProvider(p objectMutator) ClientOption {
 
 // CreateClient binds srv and default gold/test request context (templ.ts createClient).
 // Mutations go through srv.Engine() unless WithStorageProvider overrides.
-func CreateClient(srv *api.Server, opts ...ClientOption) *Client {
+func CreateClient(srv *api.Server, p spi.StorageProvider, opts ...ClientOption) *Client {
 	c := &Client{
 		exec: srv,
-		p:    srv.Engine(),
-		rc:   spi.RequestContext{TenantID: DefaultTenant, ActorID: DefaultActor},
+		// p:    srv.Engine(),
+		p:  p,
+		rc: spi.RequestContext{TenantID: DefaultTenant, ActorID: DefaultActor},
 	}
 	for _, opt := range opts {
 		opt(c)

@@ -25,7 +25,7 @@ func main() {
 	}
 	defer s.CloseDB()
 
-	action := client.NewAction(s.Srv)
+	action := client.NewAction(s.Srv, s.SPI)
 
 	chat.AttachOpenFoundry(e, s.Srv)
 	chat.AttachChatHandler(e, action)
