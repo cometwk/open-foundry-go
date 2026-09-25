@@ -166,14 +166,16 @@ func Test1(t *testing.T) {
 			sampleUIMessage("msg-b-"+suffix, "18 C, partly cloudy."),
 		}
 		messages[1].Role = aisdk.RoleAssistant
-		err := action.SaveChatMessages(ctx, "1", messages)
+		err := action.SaveChatMessages(ctx, chatId, messages)
 		require.NoError(t, err)
 		t.Logf("messages: %+v", testutil.Pretty(messages))
 	})
 
 	t.Run("GenerateTitleFromUserMessage", func(t *testing.T) {
 		message := sampleUIMessage("msg-title", "help me write an essay about space")
-		title := action.GenerateTitleFromUserMessage(ctx, message)
+		title, err := action.GenerateTitleFromUserMessage(ctx, message)
+		require.NoError(t, err)
+		require.NotEmpty(t, title)
 		t.Logf("title: %s", title)
 	})
 }

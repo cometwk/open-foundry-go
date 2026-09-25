@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"database/sql"
 	"fmt"
 	"log/slog"
 
@@ -30,6 +31,7 @@ type FoundryServer struct {
 	SPI     spi.StorageProvider
 	Srv     *api.Server
 	CloseDB func()
+	DB      *sql.DB
 }
 
 func CreateFoundryServer() (*FoundryServer, error) {
@@ -55,9 +57,17 @@ func CreateFoundryServer() (*FoundryServer, error) {
 	if err != nil {
 		return nil, err
 	}
+	{
+		// exec sql : select 1
+		_, err := b.DB.Exec("select 1")
+		if err != nil {
+			return nil, err
+		}
+	}
 	return &FoundryServer{
 		SPI:     b.SPI,
 		Srv:     srv,
 		CloseDB: func() { _ = b.Close() },
+		DB:      b.DB,
 	}, nil
 }

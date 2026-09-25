@@ -15,6 +15,7 @@ import (
 
 func main() {
 	xlog.InitDebug()
+	slog.Info("hello world", xlog.MOD, "main")
 	e := serve.NewEcho()
 
 	// 创建 Foundry Server
@@ -27,8 +28,16 @@ func main() {
 
 	action := client.NewAction(s.Srv, s.SPI)
 
-	chat.AttachOpenFoundry(e, s.Srv)
-	chat.AttachChatHandler(e, action)
+	err = chat.AttachOpenFoundry(e, s.Srv)
+	if err != nil {
+		slog.Error("attach open foundry", "error", err)
+		os.Exit(1)
+	}
+	err = chat.AttachChatHandler(e, action)
+	if err != nil {
+		slog.Error("attach chat handler", "error", err)
+		os.Exit(1)
+	}
 
 	httpSrv := &http.Server{Addr: ":" + env.String("PORT", "4000"), Handler: e}
 	serve.ServeHTTP(context.Background(), httpSrv)

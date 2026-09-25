@@ -25,7 +25,7 @@ func NewAction(srv *api.Server, p spi.StorageProvider) *Action {
 	a := NewAPI(c)
 	return &Action{
 		FlashModel: llm.NewFlashModel(),
-		Model:      llm.NewModel(),
+		Model:      llm.NewDefaultModel(),
 		Client:     c,
 		Account:    a.Account,
 		Chat:       a.Chat,
@@ -123,7 +123,7 @@ func (a *Action) SaveChatMessage(ctx context.Context, chatId string, message ais
 	return nil
 }
 
-func (a *Action) GenerateTitleFromUserMessage(ctx context.Context, message aisdk.UIMessage) string {
+func (a *Action) GenerateTitleFromUserMessage(ctx context.Context, message aisdk.UIMessage) (string, error) {
 	result, err := aisdk.GenerateText(ctx, a.FlashModel,
 		aisdk.WithSystem(titlePrompt),
 		aisdk.WithModelMessages(provider.Message{
@@ -137,7 +137,7 @@ func (a *Action) GenerateTitleFromUserMessage(ctx context.Context, message aisdk
 		}),
 	)
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return result.Text
+	return result.Text, nil
 }

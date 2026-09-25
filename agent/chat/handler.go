@@ -13,6 +13,7 @@ import (
 	"github.com/grafana/ai-sdk/provider"
 	"github.com/labstack/echo/v5"
 	"github.com/openfoundry/agent/client"
+	"github.com/openfoundry/lib/testutil"
 )
 
 type weatherInput struct {
@@ -69,21 +70,28 @@ func NewChatHandler(agent aisdk.Agent, action *client.Action) http.Handler {
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
-		if len(body.Messages) == 0 {
-			http.Error(w, "invalid messages", http.StatusBadRequest)
-			return
-		}
+		// if len(body.Messages) == 0 {
+		// 	http.Error(w, "invalid messages", http.StatusBadRequest)
+		// 	return
+		// }
 
 		ctx := r.Context()
 
 		// check message role is valid
-		for _, message := range body.Messages {
-			switch message.Role {
-			case aisdk.RoleSystem, aisdk.RoleUser, aisdk.RoleAssistant:
-			default:
-				http.Error(w, "invalid messages", http.StatusBadRequest)
-				return
-			}
+		// for _, message := range body.Messages {
+		// 	switch message.Role {
+		// 	case aisdk.RoleSystem, aisdk.RoleUser, aisdk.RoleAssistant:
+		// 	default:
+		// 		http.Error(w, "invalid messages", http.StatusBadRequest)
+		// 		return
+		// 	}
+		// }
+
+		switch body.Message.Role {
+		case aisdk.RoleSystem, aisdk.RoleUser, aisdk.RoleAssistant:
+		default:
+			http.Error(w, "invalid messages", http.StatusBadRequest)
+			return
 		}
 
 		// check chat
@@ -136,8 +144,10 @@ func NewChatHandler(agent aisdk.Agent, action *client.Action) http.Handler {
 			inputMessages,
 			aisdk.WithUIMessageStreamReasoning(false),
 			aisdk.OnUIMessageStreamFinish(func(args aisdk.UIMessageStreamOnFinishState) {
+				slog.InfoContext(r.Context(), "resp=\n"+testutil.Pretty(args.ResponseMessage), "ai", "resp")
+				slog.InfoContext(r.Context(), "array=\n"+testutil.Pretty(args.Messages), "ai", "resp")
 				// 保存助手回复的消息
-				err := action.SaveChatMessages(r.Context(), body.ID, args.Messages)
+				err := action.SaveChatMessage(r.Context(), body.ID, args.ResponseMessage)
 				if err != nil {
 					slog.Error("save chat messages failed", "error", err)
 					http.Error(w, "save chat messages failed", http.StatusInternalServerError)
@@ -162,4 +172,47 @@ func AttachChatHandler(e *echo.Echo, action *client.Action) error {
 	}
 	e.POST("/api/chat", echo.WrapHandler(NewChatHandler(agent, action)))
 	return nil
+}
+
+func NewChatHandler0(agent aisdk.Agent, action *client.Action) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []aisdk.UIMessage `json:"messages"`
+		}
+		decoder := json.NewDecoder(r.Body)
+		if err := decoder.Decode(&body); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if err := decoder.Decode(&struct{}{}); err != io.EOF {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if len(body.Messages) == 0 {
+			http.Error(w, "invalid messages", http.StatusBadRequest)
+			return
+		}
+		for _, message := range body.Messages {
+			switch message.Role {
+			case aisdk.RoleSystem, aisdk.RoleUser, aisdk.RoleAssistant:
+			default:
+				http.Error(w, "invalid messages", http.StatusBadRequest)
+				return
+			}
+		}
+
+		stream, err := aisdk.CreateAgentUIStream(
+			r.Context(),
+			agent,
+			body.Messages,
+			aisdk.WithUIMessageStreamReasoning(false),
+		)
+		if err != nil {
+			http.Error(w, "invalid messages", http.StatusBadRequest)
+			return
+		}
+		if err := aisdk.PipeAgentUIStreamToResponse(w, stream); err != nil {
+			log.Printf("streaming agent response: %v", err)
+		}
+	})
 }

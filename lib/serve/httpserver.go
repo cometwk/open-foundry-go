@@ -13,11 +13,21 @@ import (
 
 	"github.com/labstack/echo/v5"
 	"github.com/labstack/echo/v5/middleware"
+	"github.com/openfoundry/lib/env"
+	"github.com/openfoundry/lib/util"
 )
 
 func NewEcho() *echo.Echo {
 	e := echo.New()
-	e.Use(middleware.RequestLogger())
+
+	// 基础中间件
+	e.Use(middleware.Recover())
+	e.Use(middleware.RequestIDWithConfig(middleware.RequestIDConfig{
+		Generator: func() string {
+			return util.NextId("W") // W0000 = WEB跟踪号, 0000 = 业务流水号
+		},
+	}))
+	e.Use(middleware.BodyLimit(10 * 1024 * 1024)) // 限制请求报文大小
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		// 允许任意来源跨域访问
 		AllowOrigins: []string{"*"},
@@ -29,7 +39,15 @@ func NewEcho() *echo.Echo {
 		},
 	}))
 
+	// HTTP 日志
+	// e.Use(middleware.RequestLogger())
+	e.Use(httpLogMiddleware())
+	if env.IsDev() {
+		e.Use(dumpMiddleware) // 开发日志
+	}
+
 	e.GET("/", func(c *echo.Context) error {
+		slog.InfoContext(c.Request().Context(), "welcome")
 		return c.String(http.StatusOK, "welcome")
 	})
 

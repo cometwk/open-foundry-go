@@ -20,11 +20,11 @@ providers:
     api_key: "${ANTHROPIC_API_KEY:sk-default-key}"
 
   # ---------------- 本地私有化部署 (vLLM) ----------------
-  - id: provider-local-vllm
+  - id: local
     name: "Internal vLLM Cluster"
     provider_type: openai_compatible
-    api_base: http://vllm-cluster.internal:8000/v1
-    api_key: "not-needed"
+    api_base: http://121.4.44.127:6080/compatible-mode/v1
+    api_key: "${LOCAL_API_KEY}"
 
 
 # ==============================================================================
@@ -34,11 +34,11 @@ providers:
 models:
   # ---------------- 逻辑分组：default (主力模型) ----------------
   default:
-    provider_id: aliyun
+    provider_id: local
     model_name: deepseek-v4.1-flash
 
   # ---------------- 逻辑分组：flash (极速/开源/低成本模型) ----------------
   flash:
-    provider_id: aliyun
+    provider_id: local
     model_name: deepseek-v4.1-flash
 
