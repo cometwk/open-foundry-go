@@ -41,4 +41,8 @@ models:
   flash:
     provider_id: local
     model_name: deepseek-v4.1-flash
+  # ---------------- 逻辑分组：object (结构化输出模型) ----------------
+  object:
+    provider_id: local
+    model_name: qwen3.8-flash
 

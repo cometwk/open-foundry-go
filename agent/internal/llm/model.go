@@ -42,8 +42,20 @@ func NewDefaultModel() provider.LanguageModel {
 	return mustLanguageModel("default")
 }
 
+// New 按别名构建模型 (model.yaml 中的 default/flash/object)，空别名等同 "default"
+func New(alias string) (provider.LanguageModel, error) {
+	if alias == "" {
+		alias = "default"
+	}
+	return newLanguageModel(alias)
+}
+
 func NewFlashModel() provider.LanguageModel {
 	return mustLanguageModel("flash")
+}
+
+func NewObjectModel() provider.LanguageModel {
+	return mustLanguageModel("object")
 }
 
 func mustLanguageModel(alias string) provider.LanguageModel {
@@ -74,6 +86,7 @@ func newLanguageModel(alias string) (provider.LanguageModel, error) {
 			mc.ModelName,
 			openaiCompatible.WithAPIKey(expandEnv(pc.APIKey)),
 			openaiCompatible.WithBaseURL(pc.APIBase),
+			openaiCompatible.WithStructuredOutputs(true),
 		), nil
 	default:
 		return nil, fmt.Errorf("model.yaml: unsupported provider_type %q", pc.ProviderType)
