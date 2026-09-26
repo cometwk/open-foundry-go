@@ -52,7 +52,7 @@ type BudgetConfig struct {
 // DefaultBudget 默认预算
 var DefaultBudget = BudgetConfig{
 	MaxTotalTokens: 1_000_000, // 1M tokens per session
-	MaxBudgetUsd:   float64Ptr(5.0),
+	MaxBudgetUsd:   new(5.0),
 	MaxTurns:       100,
 }
 
@@ -171,6 +171,3 @@ func FormatBudgetStatus(tracker *BudgetTracker, turnCount int) string {
 	return fmt.Sprintf("Tokens: %s | Cost: $%.3f | Turns: %d | Time: %ds",
 		toLocaleString(total), cost, turnCount, duration)
 }
-
-// float64Ptr 辅助取指针
-func float64Ptr(f float64) *float64 { return &f }

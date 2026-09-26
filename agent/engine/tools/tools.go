@@ -6,17 +6,10 @@
  *
  * 暂缺工具 (TS 源文件未提供): glob / grep (search-tools.ts)、
  * web_fetch (web-tool.ts)、web_search (web-search-tool.ts)。
- *
- * 本文件另含 engine ↔ tools 的依赖倒置接线 (原 wire.go):
- * TS 中 engine/agent.ts 直接 import 本模块 (模块循环在 TS 中允许)，
- * Go 不允许包循环，通过 engine.ToolsAssembler 钩子注入 (InstallAssembleTools)。
  */
 package tools
 
 import (
-	"context"
-	"sync"
-
 	aisdk "github.com/grafana/ai-sdk"
 	"github.com/openfoundry/agent/engine"
 )
@@ -99,40 +92,4 @@ func AssembleTools(ctx ToolContext) (aisdk.ToolSet, error) {
 		}
 	}
 	return tools, nil
-}
-
-// AssembleToolsForAgent 为 engine.HandleMessage 组装工具集:
-// 内部构建 ToolContext (含 AppState 的 getState/setState 与技能加载)，
-// 对标 agent.ts 中 toolCtx 的组装逻辑。
-func AssembleToolsForAgent(ctx context.Context, cwd string, mode engine.PermissionMode, extra map[string]any) (aisdk.ToolSet, error) {
-	// appState: TS 单线程无需锁，Go 中工具执行可能并发，加互斥保护
-	var stateMu sync.Mutex
-	appState := CreateInitialState(cwd)
-
-	skills := engine.LoadAllSkills(cwd)
-	tctx := ToolContext{
-		Cwd:            cwd,
-		Ctx:            ctx, // TS 的 AbortController 未对外暴露，直接用请求 ctx
-		AllowWrite:     mode != engine.PermissionModePlan,
-		AllowBash:      mode != engine.PermissionModePlan,
-		PermissionMode: mode,
-		GetState: func() AppState {
-			stateMu.Lock()
-			defer stateMu.Unlock()
-			return appState
-		},
-		SetState: func(fn func(AppState) AppState) {
-			stateMu.Lock()
-			defer stateMu.Unlock()
-			appState = fn(appState)
-		},
-		Extra:  ToolExtra(extra),
-		Skills: skills,
-	}
-	return AssembleTools(tctx)
-}
-
-// InstallAssembleTools 把组装函数注入 engine.ToolsAssembler (程序启动时调用一次)
-func InstallAssembleTools() {
-	engine.ToolsAssembler = AssembleToolsForAgent
 }

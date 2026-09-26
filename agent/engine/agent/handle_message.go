@@ -23,10 +23,9 @@
  *   token budget = OnFinish 回调 + usage tracking
  *
  * 注: TS 中 engine/agent.ts 与 ../tools 相互引用 (循环依赖，TS 模块系统允许)；
- * Go 不允许包循环，因此通过 ToolsAssembler 钩子做依赖倒置:
- * engine 声明钩子，tools 包提供实现并注入 (见 tools.InstallAssembleTools)。
+ * Go 不允许包循环，因此放在独立的 agent 子包，同时引用 engine 与 tools。
  */
-package engine
+package agent
 
 import (
 	"context"
@@ -36,6 +35,8 @@ import (
 
 	aisdk "github.com/grafana/ai-sdk"
 	"github.com/grafana/ai-sdk/provider"
+	"github.com/openfoundry/agent/engine"
+	"github.com/openfoundry/agent/engine/tools"
 	"github.com/openfoundry/agent/internal/llm"
 )
 
@@ -45,11 +46,11 @@ type AgentConfig struct {
 	// MaxSteps 最大步数，默认 25
 	MaxSteps int
 	// PermissionMode 权限模式，默认 default
-	PermissionMode PermissionMode
+	PermissionMode engine.PermissionMode
 	// Model 模型别名 (model.yaml)，默认 "default" (对标 MODELS.AGENT)
 	Model string
 	// Budget Token 预算配置，非零字段覆盖默认值 (对标 Partial<BudgetConfig>)
-	Budget *BudgetConfig
+	Budget *engine.BudgetConfig
 	// ThinkingBudget Extended thinking 预算 (对标 CC thinkingConfig)
 	ThinkingBudget int
 	// Extra 扩展上下文
@@ -62,23 +63,11 @@ type HandleMessageResult struct {
 	// 调用方可 ToUIMessageStream() 转 UI 消息流后 Pipe 到 HTTP 响应
 	Stream *aisdk.StreamTextResult
 	// BudgetTracker 更新后的 budget tracker (由调用方跨请求持久化)
-	BudgetTracker *BudgetTracker
+	BudgetTracker *engine.BudgetTracker
 	// WasCompacted 消息是否被压缩过
 	WasCompacted bool
 	// BudgetStatus budget 状态 (调试用)
 	BudgetStatus string
-}
-
-// ToolsAssembler 组装本轮对话的工具集 — 对标 agent.ts 中 toolCtx 的构建 +
-// assembleTools(toolCtx)。由 tools 包注入 (tools.InstallAssembleTools)，
-// 避免 engine ↔ tools 循环依赖；未注入时返回空工具集。
-var ToolsAssembler func(ctx context.Context, cwd string, mode PermissionMode, extra map[string]any) (aisdk.ToolSet, error)
-
-func assembleTools(ctx context.Context, cwd string, mode PermissionMode, extra map[string]any) (aisdk.ToolSet, error) {
-	if ToolsAssembler == nil {
-		return aisdk.ToolSet{}, nil
-	}
-	return ToolsAssembler(ctx, cwd, mode, extra)
 }
 
 // lastUserMessageText 提取最后一条用户消息的文本 (记忆召回用，
@@ -110,16 +99,16 @@ func derefInt(p *int) int {
 //
 // budgetTracker 可选: 跨请求持久化的 tracker (由调用方管理)，
 // 未传时新建 (对应 TS 的 budgetTracker ?? createBudgetTracker())。
-func HandleMessage(ctx context.Context, messages []aisdk.UIMessage, config AgentConfig, budgetTracker ...*BudgetTracker) (*HandleMessageResult, error) {
+func HandleMessage(ctx context.Context, messages []aisdk.UIMessage, config AgentConfig, budgetTracker ...*engine.BudgetTracker) (*HandleMessageResult, error) {
 	maxSteps := config.MaxSteps
 	if maxSteps == 0 {
 		maxSteps = 25
 	}
 	permissionMode := config.PermissionMode
 	if permissionMode == "" {
-		permissionMode = PermissionModeDefault
+		permissionMode = engine.PermissionModeDefault
 	}
-	budget := DefaultBudget
+	budget := engine.DefaultBudget
 	if config.Budget != nil { // { ...DEFAULT_BUDGET, ...config.budget }
 		if config.Budget.MaxTotalTokens != 0 {
 			budget.MaxTotalTokens = config.Budget.MaxTotalTokens
@@ -131,29 +120,51 @@ func HandleMessage(ctx context.Context, messages []aisdk.UIMessage, config Agent
 			budget.MaxTurns = config.Budget.MaxTurns
 		}
 	}
-	tracker := CreateBudgetTracker()
+	tracker := engine.CreateBudgetTracker()
 	if len(budgetTracker) > 0 && budgetTracker[0] != nil {
 		tracker = budgetTracker[0]
 	}
 
-	// 轮次计数 (对标 appState.turnCount: 初始 0，OnFinish 后 +1)。
-	// TS 单线程无需锁，Go 中 OnFinish 回调与读取可能并发，加互斥保护
+	// appState (对标 AppState)；TS 单线程无需锁，
+	// Go 中 OnFinish 回调与工具执行可能并发，加互斥保护
 	var stateMu sync.Mutex
-	turnCount := 0
+	appState := tools.CreateInitialState(config.Cwd)
 	currentTurn := func() int {
 		stateMu.Lock()
 		defer stateMu.Unlock()
-		return turnCount
+		return appState.TurnCount
+	}
+
+	// Tool context (对标 ToolUseContext)
+	skills := engine.LoadAllSkills(config.Cwd)
+	tctx := tools.ToolContext{
+		Cwd:            config.Cwd,
+		Ctx:            ctx, // TS 的 AbortController 未对外暴露，直接用请求 ctx
+		AllowWrite:     permissionMode != engine.PermissionModePlan,
+		AllowBash:      permissionMode != engine.PermissionModePlan,
+		PermissionMode: permissionMode,
+		GetState: func() tools.AppState {
+			stateMu.Lock()
+			defer stateMu.Unlock()
+			return appState
+		},
+		SetState: func(fn func(tools.AppState) tools.AppState) {
+			stateMu.Lock()
+			defer stateMu.Unlock()
+			appState = fn(appState)
+		},
+		Extra:  tools.ToolExtra(config.Extra),
+		Skills: skills,
 	}
 
 	// ── Phase 0: Auto Compact (对标 autoCompact) ──
 	// Claude Code: 在 queryLoop 开始前检查消息长度，超过阈值则压缩
 	processedMessages := messages
 	wasCompacted := false
-	if NeedsCompaction(messages) {
+	if engine.NeedsCompaction(messages) {
 		log.Printf("[agent] Auto-compacting messages...")
 		var err error
-		processedMessages, err = CompactMessages(ctx, messages)
+		processedMessages, err = engine.CompactMessages(ctx, messages)
 		if err != nil {
 			return nil, err
 		}
@@ -162,14 +173,14 @@ func HandleMessage(ctx context.Context, messages []aisdk.UIMessage, config Agent
 
 	// ── Phase 1: System prompt (含记忆召回) ──
 	userMessage := lastUserMessageText(processedMessages)
-	promptParts := BuildSystemPrompt(ctx, config.Cwd, userMessage)
+	promptParts := engine.BuildSystemPrompt(ctx, config.Cwd, userMessage)
 	sysMsgs := make([]aisdk.SystemModelMessage, len(promptParts))
 	for i, p := range promptParts {
 		sysMsgs[i] = aisdk.SystemModelMessage{Content: p}
 	}
 
-	// ── Phase 2: Tools (经 ToolsAssembler 钩子组装，含 ToolContext/AppState 构建) ──
-	toolSet, err := assembleTools(ctx, config.Cwd, permissionMode, config.Extra)
+	// ── Phase 2: Tools ──
+	toolSet, err := tools.AssembleTools(tctx)
 	if err != nil {
 		return nil, err
 	}
@@ -181,8 +192,8 @@ func HandleMessage(ctx context.Context, messages []aisdk.UIMessage, config Agent
 	}
 
 	// ── Phase 4: Budget pre-check ──
-	preCheck := UpdateBudget(tracker, 0, 0, currentTurn(), budget)
-	if preCheck.Action == BudgetActionStop {
+	preCheck := engine.UpdateBudget(tracker, 0, 0, currentTurn(), budget)
+	if preCheck.Action == engine.BudgetActionStop {
 		// 预算已耗尽，返回通知消息而非调 LLM
 		stream := aisdk.StreamText(ctx, llm.NewFlashModel(),
 			aisdk.WithSystem("You are a helpful assistant."),
@@ -212,30 +223,30 @@ func HandleMessage(ctx context.Context, messages []aisdk.UIMessage, config Agent
 		aisdk.OnFinish(func(state aisdk.OnFinishState) {
 			// 对标 Claude Code: queryLoop 结束后更新 budget
 			u := state.TotalUsage
-			decision := UpdateBudget(tracker,
+			decision := engine.UpdateBudget(tracker,
 				int64(derefInt(u.InputTokens.Total)),
 				int64(derefInt(u.OutputTokens.Total)),
 				currentTurn()+1,
 				budget,
 			)
-			if decision.Action == BudgetActionStop {
+			if decision.Action == engine.BudgetActionStop {
 				log.Printf("[agent] Budget stop: %s", decision.Reason)
 			}
 			stateMu.Lock()
-			turnCount++
+			appState.TurnCount++
 			stateMu.Unlock()
 
 			// ── Post-query: 自动记忆提取 (对标 handleStopHooks → extractMemories) ──
 			// 在后台异步运行, 不阻塞响应
-			if EnvConfig.AgentMemory() {
+			if engine.EnvConfig.AgentMemory() {
 				go func(msgs []aisdk.UIMessage) {
 					// 请求 ctx 可能已随响应结束而取消，剥离取消信号保留值
 					bgCtx := context.WithoutCancel(ctx)
-					memories := ExtractMemories(bgCtx, msgs, config.Cwd)
+					memories := engine.ExtractMemories(bgCtx, msgs, config.Cwd)
 					if len(memories) == 0 {
 						return
 					}
-					if n := SaveExtractedMemories(memories, config.Cwd); n > 0 {
+					if n := engine.SaveExtractedMemories(memories, config.Cwd); n > 0 {
 						log.Printf("[agent] Extracted %d memories", n)
 					}
 				}(processedMessages)
@@ -247,9 +258,9 @@ func HandleMessage(ctx context.Context, messages []aisdk.UIMessage, config Agent
 		Stream:        stream,
 		BudgetTracker: tracker,
 		WasCompacted:  wasCompacted,
-		BudgetStatus:  FormatBudgetStatus(tracker, currentTurn()),
+		BudgetStatus:  engine.FormatBudgetStatus(tracker, currentTurn()),
 	}, nil
 }
 
 // 注: TS 末尾 re-export 的 BudgetTracker / createBudgetTracker / formatBudgetStatus
-// 在 Go 中由调用方直接使用本包 (engine)。
+// 在 Go 中由调用方直接 import engine 包使用。

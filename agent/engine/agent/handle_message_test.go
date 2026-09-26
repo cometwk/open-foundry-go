@@ -1,4 +1,4 @@
-package engine
+package agent
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	aisdk "github.com/grafana/ai-sdk"
+	"github.com/openfoundry/agent/engine"
 	"github.com/openfoundry/lib/env"
 	"github.com/openfoundry/lib/testutil"
 	"github.com/stretchr/testify/require"
@@ -17,7 +18,7 @@ import (
 // 不设置会让 llm 的 sync.Once 缓存加载错误，殃及后续集成测试)
 func forceEnv(t *testing.T) {
 	t.Helper()
-	root, err := filepath.Abs("../..") // agent/engine -> 仓库根
+	root, err := filepath.Abs("../../..") // agent/engine/agent -> 仓库根
 	require.NoError(t, err)
 	t.Setenv("BASE_DIR", root)
 	t.Setenv("AGENT_TOOLS", "")
@@ -67,7 +68,7 @@ func TestHandleMessageBudgetStop(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	tracker := CreateBudgetTracker()
+	tracker := engine.CreateBudgetTracker()
 	tracker.TotalInputTokens = 900_000 // 默认预算 1M 的 90%
 
 	messages := []aisdk.UIMessage{
@@ -117,5 +118,5 @@ func TestHandleMessage_Integration(t *testing.T) {
 	// result.BudgetStatus 是返回时的快照 (OnFinish 尚未执行，与 TS 语义一致)；
 	// 完成后用 tracker 重新格式化才能看到 Turns: 1
 	require.Contains(t, result.BudgetStatus, "Turns: 0")
-	require.Contains(t, FormatBudgetStatus(result.BudgetTracker, 1), "Turns: 1")
+	require.Contains(t, engine.FormatBudgetStatus(result.BudgetTracker, 1), "Turns: 1")
 }

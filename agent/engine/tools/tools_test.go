@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"context"
 	"testing"
 
 	aisdk "github.com/grafana/ai-sdk"
@@ -70,19 +69,6 @@ func TestAssembleToolsExtra(t *testing.T) {
 	require.ElementsMatch(t, []string{
 		"agent", "ask_user", "read_skill", "custom_tool",
 	}, keysOf(toolSet))
-}
-
-// TestWireInstallAssembleTools 验证依赖倒置接线: 注入后 engine 钩子可用
-func TestWireInstallAssembleTools(t *testing.T) {
-	forceToolsEnv(t)
-	InstallAssembleTools()
-	t.Cleanup(func() { engine.ToolsAssembler = nil })
-
-	require.NotNil(t, engine.ToolsAssembler)
-
-	toolSet, err := engine.ToolsAssembler(context.Background(), t.TempDir(), engine.PermissionModeDefault, nil)
-	require.NoError(t, err)
-	require.ElementsMatch(t, []string{"agent", "ask_user", "read_skill"}, keysOf(toolSet))
 }
 
 // forceToolsEnv 屏蔽宿主环境变量，恢复 EnvConfig 默认状态
