@@ -20,7 +20,7 @@ import (
 // 这样子 agent 获得相同工具集 (不含 agent 自身, 防止无限嵌套)
 func AssembleTools(ctx ToolContext) (aisdk.ToolSet, error) {
 	tools := aisdk.ToolSet{}
-	if engine.EnvConfig.AgentTools() {
+	if false && engine.EnvConfig.AgentTools() {
 		readOnlyTools := aisdk.ToolSet{}
 		fileRead, err := CreateFileReadTool(ctx)
 		if err != nil {
@@ -71,16 +71,21 @@ func AssembleTools(ctx ToolContext) (aisdk.ToolSet, error) {
 		}
 		tools["read_skill"] = skill
 	} else {
-		askUser, err := CreateAskUserTool()
-		if err != nil {
-			return nil, err
-		}
-		tools["ask_user"] = askUser
+		// askUser, err := CreateAskUserTool()
+		// if err != nil {
+		// 	return nil, err
+		// }
+		// tools["ask_user"] = askUser
 		skill, err := CreateSkillsTool(ctx)
 		if err != nil {
 			return nil, err
 		}
 		tools["read_skill"] = skill
+		weather, err := CreateWeatherTool(ctx)
+		if err != nil {
+			return nil, err
+		}
+		tools["get_weather"] = weather
 	}
 
 	// 扩展工具: extra["createTools"] 存放 func(ToolExtra) aisdk.ToolSet

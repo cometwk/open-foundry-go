@@ -7,10 +7,14 @@ require (
 	github.com/grafana/ai-sdk/providers/openai-compatible v0.0.0
 )
 
+require github.com/gorilla/securecookie v1.1.2 // indirect
+
 require (
+	github.com/alexedwards/scs/v2 v2.9.0
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.6.1 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
+	github.com/gorilla/sessions v1.4.0
 	github.com/graph-gophers/graphql-go v1.8.0 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect

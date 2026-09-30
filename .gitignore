@@ -1,3 +1,6 @@
+.agent
+
+
 # Dependencies
 node_modules/
 .pnpm-store/

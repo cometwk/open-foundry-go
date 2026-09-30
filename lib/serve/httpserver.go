@@ -20,6 +20,10 @@ import (
 func NewEcho() *echo.Echo {
 	e := echo.New()
 
+	// JSON 校验
+	e.Validator = NewCustomValidator()
+	e.Binder = &customBinder{}
+
 	// 基础中间件
 	e.Use(middleware.Recover())
 	e.Use(middleware.RequestIDWithConfig(middleware.RequestIDConfig{

@@ -7,6 +7,7 @@ require (
 	github.com/fatih/structs v1.1.0
 	github.com/go-playground/validator/v10 v10.30.4
 	github.com/go-sql-driver/mysql v1.10.1
+	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/joho/godotenv v1.5.1
 	github.com/json-iterator/go v1.1.12
