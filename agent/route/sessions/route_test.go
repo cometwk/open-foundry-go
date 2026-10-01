@@ -29,18 +29,19 @@ const (
 		]
 	}`
 
-	overwriteBody = `{
+	// 追加批次: 只含新增消息 (m1 已在首次保存时落盘)
+	appendBody = `{
 		"sessionId": "sess-1",
 		"messages": [
-			{
-				"id": "m1",
-				"role": "user",
-				"parts": [{"type": "text", "text": "帮我修复 payments-api 的 500 错误"}]
-			},
 			{
 				"id": "m2",
 				"role": "assistant",
 				"parts": [{"type": "text", "text": "已定位问题"}]
+			},
+			{
+				"id": "m3",
+				"role": "user",
+				"parts": [{"type": "text", "text": "第二条用户消息"}]
 			}
 		]
 	}`
@@ -48,7 +49,6 @@ const (
 
 func TestRoutes(t *testing.T) {
 	cwd := t.TempDir()
-	cwd = "/tmp/agent-test/"
 	t.Setenv("BASE_DIR", cwd)
 	// 关闭记忆召回，避免 SaveSession 打到 LLM；工具提示词保持默认开启。
 	t.Setenv("AGENT_MEMORY", "")
@@ -112,7 +112,6 @@ func TestRoutes(t *testing.T) {
 		assert.True(t, ok)
 		assert.Equal(t, sessionID, meta["id"])
 		assert.Equal(t, userText, meta["title"])
-		assert.Equal(t, float64(1), meta["messageCount"])
 		assert.Equal(t, cwd, meta["cwd"])
 
 		messages, ok := response["messages"].([]any)
@@ -139,19 +138,19 @@ func TestRoutes(t *testing.T) {
 		assert.Len(t, response, 1)
 		assert.Equal(t, sessionID, response[0]["id"])
 		assert.Equal(t, userText, response[0]["title"])
-		assert.Equal(t, float64(1), response[0]["messageCount"])
 	})
 
-	t.Run("post overwrite", func(t *testing.T) {
-		rec := testutil.Post(e, "/api/sessions", overwriteBody)
+	t.Run("post append", func(t *testing.T) {
+		rec := testutil.Post(e, "/api/sessions", appendBody)
 		assert.Equal(t, http.StatusOK, rec.Code)
 		body, err := rec.BodyJson()
 		assert.NoError(t, err)
 		assert.Equal(t, sessionID, body["sessionId"])
 
+		// 双文件布局: {id}.json + {id}.jsonl
 		entries, err := os.ReadDir(filepath.Join(cwd, ".agent", "sessions"))
 		assert.NoError(t, err)
-		assert.Len(t, entries, 1)
+		assert.Len(t, entries, 2)
 
 		rec = testutil.Get(e, "/api/sessions/"+sessionID, nil)
 		assert.Equal(t, http.StatusOK, rec.Code)
@@ -159,8 +158,34 @@ func TestRoutes(t *testing.T) {
 		assert.NoError(t, err)
 		meta, ok := got["metadata"].(map[string]any)
 		assert.True(t, ok)
-		assert.Equal(t, float64(2), meta["messageCount"])
-		assert.Equal(t, userText, meta["title"])
+		assert.Equal(t, userText, meta["title"]) // title 保持稳定
+		messages, ok := got["messages"].([]any)
+		assert.True(t, ok)
+		assert.Len(t, messages, 3) // 1 + 2 累加
+	})
+
+	t.Run("sqlite store", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("BASE_DIR", dir)
+		t.Setenv("AGENT_SESSION_STORE", "sqlite")
+		t.Cleanup(func() { t.Setenv("AGENT_SESSION_STORE", "") })
+
+		// 存取走 SQLiteStore (.agent/sessions.db)
+		rec := testutil.Post(e, "/api/sessions", saveBody)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		_, err := os.Stat(filepath.Join(dir, ".agent", "sessions.db"))
+		assert.NoError(t, err)
+
+		rec = testutil.Get(e, "/api/sessions/"+sessionID, nil)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		got, err := rec.BodyJson()
+		assert.NoError(t, err)
+		meta, ok := got["metadata"].(map[string]any)
+		assert.True(t, ok)
+		assert.Equal(t, sessionID, meta["id"])
+		messages, ok := got["messages"].([]any)
+		assert.True(t, ok)
+		assert.Len(t, messages, 1)
 	})
 
 	t.Run("list order", func(t *testing.T) {
@@ -205,7 +230,6 @@ func writeSession(t *testing.T, cwd, id, title, updatedAt string) {
 			"title": "` + title + `",
 			"createdAt": "` + updatedAt + `",
 			"updatedAt": "` + updatedAt + `",
-			"messageCount": 1,
 			"cwd": "` + cwd + `"
 		},
 		"messages": []

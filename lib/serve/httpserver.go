@@ -20,6 +20,9 @@ import (
 func NewEcho() *echo.Echo {
 	e := echo.New()
 
+	// 错误处理
+	e.HTTPErrorHandler = createhttpErrorHandler(e)
+
 	// JSON 校验
 	e.Validator = NewCustomValidator()
 	e.Binder = &customBinder{}
@@ -107,4 +110,51 @@ func ServeHTTP(ctx context.Context, srv *http.Server) error {
 	slog.Info("HTTP server stopped")
 
 	return nil
+}
+
+func createhttpErrorHandler(e *echo.Echo) echo.HTTPErrorHandler {
+	// web_directory := e.web_directory
+	// webfs := e.webFS
+
+	// HTTP 错误处理
+	httpErrorHandler := func(c *echo.Context, err error) {
+		// log := logrus.WithField("reqid", "abc").WithField("id", "123").WithField("app", "demo")
+
+		url := c.Request().URL.String()
+		method := c.Request().Method
+
+		// // 前端是使用客户端路由的 React 应用，为了支持用户从任意路径访问，例如 /some/place
+		// // (/some/place 是客户端路由)，需要响应 index.html 而不是 404
+		// if e, ok := err.(*echo.HTTPError); ok {
+		// 	if (e.Code == 404 || e.Code == 405) && method == http.MethodGet {
+		// 		accept := c.Request().Header["Accept"]
+		// 		if len(accept) > 0 && strings.Contains(accept[0], "text/html") {
+		// 			log.WithField("url", url).Infof("%s 未找到, 返回 index.html", url)
+		// 			if webfs != nil {
+		// 				content, err := fs.ReadFile(webfs, "web/index.html")
+		// 				if err != nil {
+		// 					logrus.Errorf("读 web/index.html 错: %v", err)
+		// 					c.NoContent(http.StatusInternalServerError)
+		// 					return
+		// 				}
+		// 				c.HTML(http.StatusOK, string(content))
+		// 			} else {
+		// 				c.Response().Status = http.StatusOK
+		// 				c.File(path.Join(web_directory, "index.html"))
+		// 			}
+		// 			return
+		// 		}
+		// 	}
+		// }
+
+		reqid := c.Response().Header().Get(echo.HeaderXRequestID)
+		// logger := log.FromCtx(c.Request().Context())
+		// logger.Info(fmt.Sprintf("HTTP服务错误: url: %s, %v", url, err), "reqid", reqid, "url", url, "method", method, "error", err)
+		slog.InfoContext(c.Request().Context(), fmt.Sprintf("HTTP服务错误: url: %s, %v", url, err), slog.String("reqid", reqid), slog.String("url", url), slog.String("method", method), slog.String("error", err.Error()))
+
+		// 默认错误处理
+		def := echo.DefaultHTTPErrorHandler(true)
+		def(c, err)
+	}
+	return httpErrorHandler
 }

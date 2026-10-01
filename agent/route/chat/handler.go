@@ -10,6 +10,7 @@ import (
 	"github.com/labstack/echo/v5"
 	"github.com/openfoundry/agent/engine"
 	"github.com/openfoundry/agent/engine/agent"
+	"github.com/openfoundry/agent/engine/session"
 	"github.com/openfoundry/agent/route"
 	"github.com/openfoundry/lib/testutil"
 	"github.com/openfoundry/lib/util"
@@ -54,44 +55,44 @@ func NewAgent(model provider.LanguageModel) (*aisdk.ToolLoopAgent, error) {
 }
 
 func Attach(e *echo.Echo) {
-	e.POST("/api/chat", chat)
+	h := &handler{
+		store: session.NewFromEnv(),
+	}
+	e.POST("/api/chat", h.chat)
 }
 
 var sessionBudgets = NewSafeMap[string, *engine.BudgetTracker]()
 
-func chat(c *echo.Context) error {
+type handler struct {
+	store session.Store
+}
+
+func (h *handler) chat(c *echo.Context) error {
 	type Input struct {
-		// Messages  []aisdk.UIMessage `json:"messages" validate:"required"`
-		// Messages  []aisdk.UIMessage `json:"messages"`
-		ID      string           `json:"id" validate:"required"`
-		Message *aisdk.UIMessage `json:"message"`
-		// SessionId string           `json:"sessionId"`
+		ID      string          `json:"id" validate:"required"`
+		Message aisdk.UIMessage `json:"message" validate:"required"`
 	}
 
 	input := &Input{}
 	if err := util.BindAndValidate(c, input); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
+	cwd := route.GetAgentCwd(c)
+
+	initMessages, err := h.store.LoadSession(cwd, input.ID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
 
 	var messages []aisdk.UIMessage
-	if input.Message != nil {
-		messages = append(messages, *input.Message)
+
+	if initMessages != nil {
+		messages = append(messages, initMessages.Messages...)
 	}
-	// if input.Messages != nil {
-	// 	messages = append(messages, input.Messages...)
-	// }
-	if len(messages) == 0 {
-		return echo.NewHTTPError(http.StatusBadRequest, "messages or message is required")
-	}
+	messages = append(messages, input.Message)
 
 	ctx := c.Request().Context()
 	id := input.ID
-	// if id == "" {
-	// 	id = "default"
-	// }
-
-	cwd := route.GetAgentCwd(c)
-	// sessions := engine.ListSessions(cwd)
 
 	// 获取或创建 budget tracker (对标 Claude Code 的 QueryEngine 跨轮状态)
 	tracker, ok := sessionBudgets.Get(id)
@@ -117,8 +118,10 @@ func chat(c *echo.Context) error {
 	}
 
 	uiStream := result.Stream.ToUIMessageStream(
-		// aisdk.WithUIMessageStreamOriginalMessages(input.Messages...),
-		aisdk.WithUIMessageStreamReasoning(false),
+		// OriginalMessages = 本轮新传入的消息；args.Messages = 本轮新增 + assistant 回复，
+		// 正好作为 SaveSession 增量追加的批次
+		aisdk.WithUIMessageStreamOriginalMessages(messages...),
+		aisdk.WithUIMessageStreamReasoning(true),
 		aisdk.WithUIMessageStreamSources(true),
 		aisdk.OnUIMessageStreamError(func(err error) string {
 			return "The model request failed."
@@ -127,9 +130,9 @@ func chat(c *echo.Context) error {
 			slog.InfoContext(ctx, "resp=\n"+testutil.Pretty(args.ResponseMessage), "ai", "resp")
 			slog.InfoContext(ctx, "array=\n"+testutil.Pretty(args.Messages), "ai", "resp")
 
-			// 保存助手回复的消息
+			// 增量追加本轮消息 (user 新消息 + assistant 回复)
 			slog.InfoContext(ctx, "save session", "id-debug", id, "cwd-debug", cwd)
-			_, err := engine.SaveSession(ctx, cwd, args.Messages, id)
+			_, err := h.store.SaveSession(ctx, cwd, id, args.Messages)
 			if err != nil {
 				slog.Error("save chat messages failed", "error", err)
 				http.Error(w, "save chat messages failed", http.StatusInternalServerError)

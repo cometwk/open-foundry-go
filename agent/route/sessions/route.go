@@ -5,7 +5,7 @@ import (
 
 	aisdk "github.com/grafana/ai-sdk"
 	"github.com/labstack/echo/v5"
-	"github.com/openfoundry/agent/engine"
+	"github.com/openfoundry/agent/engine/session"
 	"github.com/openfoundry/agent/route"
 	"github.com/openfoundry/lib/util"
 )
@@ -18,7 +18,10 @@ func Attach(e *echo.Echo) {
 
 func list(c *echo.Context) error {
 	cwd := route.GetAgentCwd(c)
-	sessions := engine.ListSessions(cwd)
+	sessions, err := session.NewFromEnv().ListSessions(cwd)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
 	return c.JSON(http.StatusOK, sessions)
 }
 
@@ -34,17 +37,20 @@ func get(c *echo.Context) error {
 	cwd := route.GetAgentCwd(c)
 	id := input.ID
 
-	session := engine.LoadSession(cwd, id)
-	if session == nil {
+	sess, err := session.NewFromEnv().LoadSession(cwd, id)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+	if sess == nil {
 		return c.String(http.StatusNotFound, "session not found")
 	}
 
-	return c.JSON(http.StatusOK, session)
+	return c.JSON(http.StatusOK, sess)
 }
 
 func post(c *echo.Context) error {
 	type Input struct {
-		SessionId string            `json:"sessionId"`
+		SessionId string            `json:"sessionId" validate:"required"`
 		Messages  []aisdk.UIMessage `json:"messages" validate:"required"`
 	}
 
@@ -59,16 +65,13 @@ func post(c *echo.Context) error {
 	}
 
 	cwd := route.GetAgentCwd(c)
-	id := input.SessionId
-	if id == "" {
-		id = util.UUIDv7()
-	}
-	session, err := engine.SaveSession(c.Request().Context(), cwd, input.Messages, id)
+	// 增量追加语义: 新建会话传初始消息，续传只传新增消息
+	saved, err := session.NewFromEnv().SaveSession(c.Request().Context(), cwd, input.SessionId, input.Messages)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 	return c.JSON(http.StatusOK, Output{
-		SessionId:    session.Metadata.ID,
-		SystemPrompt: session.SystemPrompt,
+		SessionId:    saved.Metadata.ID,
+		SystemPrompt: saved.SystemPrompt,
 	})
 }
