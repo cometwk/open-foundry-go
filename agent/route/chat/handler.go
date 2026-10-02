@@ -120,9 +120,9 @@ func (h *handler) chat(c *echo.Context) error {
 	uiStream := result.Stream.ToUIMessageStream(
 		// OriginalMessages = 本轮新传入的消息；args.Messages = 本轮新增 + assistant 回复，
 		// 正好作为 SaveSession 增量追加的批次
-		aisdk.WithUIMessageStreamOriginalMessages(messages...),
-		aisdk.WithUIMessageStreamReasoning(true),
-		aisdk.WithUIMessageStreamSources(true),
+		// aisdk.WithUIMessageStreamOriginalMessages(messages...),
+		// aisdk.WithUIMessageStreamReasoning(true),
+		// aisdk.WithUIMessageStreamSources(true),
 		aisdk.OnUIMessageStreamError(func(err error) string {
 			return "The model request failed."
 		}),
