@@ -1,4 +1,4 @@
-package chat
+package foundry
 
 import (
 	"database/sql"
@@ -34,7 +34,19 @@ type FoundryServer struct {
 	DB      *sql.DB
 }
 
+var globalFoundryServer *FoundryServer
+
+func GetFoundryServer() *FoundryServer {
+	if globalFoundryServer == nil {
+		panic("foundry server not created")
+	}
+	return globalFoundryServer
+}
+
 func CreateFoundryServer() (*FoundryServer, error) {
+	if globalFoundryServer != nil {
+		return globalFoundryServer, nil
+	}
 	conf, err := bootstrap.LoadConfig("")
 	if err != nil {
 		return nil, err
@@ -64,10 +76,11 @@ func CreateFoundryServer() (*FoundryServer, error) {
 			return nil, err
 		}
 	}
-	return &FoundryServer{
+	globalFoundryServer = &FoundryServer{
 		SPI:     b.SPI,
 		Srv:     srv,
 		CloseDB: func() { _ = b.Close() },
 		DB:      b.DB,
-	}, nil
+	}
+	return globalFoundryServer, nil
 }

@@ -35,7 +35,7 @@ func generateSDL() (string, error) {
 	}
 	return projgql.Generate(onto, spi.StorageCapabilities{
 		SupportsTransactions:   true,
-		SupportsFullTextSearch: true,
+		SupportsFullTextSearch: false, // 不输出 searchXxx()
 		SupportsGraphTraversal: true,
 		MaxTraversalDepth:      8,
 	}), nil

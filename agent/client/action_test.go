@@ -8,15 +8,15 @@ import (
 	"time"
 
 	aisdk "github.com/grafana/ai-sdk"
-	"github.com/openfoundry/agent/chat"
 	"github.com/openfoundry/agent/client"
+	"github.com/openfoundry/agent/foundry"
 	"github.com/openfoundry/lib/testutil"
 	"github.com/stretchr/testify/require"
 )
 
-func realServer(t *testing.T) *chat.FoundryServer {
+func realServer(t *testing.T) *foundry.FoundryServer {
 	t.Helper()
-	s, err := chat.CreateFoundryServer()
+	s, err := foundry.CreateFoundryServer()
 	require.NoError(t, err)
 	return s
 }

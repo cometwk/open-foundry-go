@@ -11,6 +11,8 @@ import (
 	"github.com/openfoundry/agent/engine"
 	"github.com/openfoundry/agent/engine/agent"
 	"github.com/openfoundry/agent/engine/session"
+	engineTools "github.com/openfoundry/agent/engine/tools"
+	"github.com/openfoundry/agent/foundry/tools"
 	"github.com/openfoundry/agent/route"
 	"github.com/openfoundry/lib/testutil"
 	"github.com/openfoundry/lib/util"
@@ -103,6 +105,9 @@ func (h *handler) chat(c *echo.Context) error {
 	// 调用 agent engine (内含 auto compact + budget check)
 	result, err := agent.HandleMessage(c.Request().Context(), messages, agent.AgentConfig{
 		Cwd: cwd,
+		Extra: map[string]any{
+			engineTools.CreateToolsKey: tools.CreateTools,
+		},
 	}, tracker)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
@@ -127,12 +132,13 @@ func (h *handler) chat(c *echo.Context) error {
 			return "The model request failed."
 		}),
 		aisdk.OnUIMessageStreamFinish(func(args aisdk.UIMessageStreamOnFinishState) {
-			slog.InfoContext(ctx, "resp=\n"+testutil.Pretty(args.ResponseMessage), "ai", "resp")
 			slog.InfoContext(ctx, "array=\n"+testutil.Pretty(args.Messages), "ai", "resp")
 
 			// 增量追加本轮消息 (user 新消息 + assistant 回复)
 			slog.InfoContext(ctx, "save session", "id-debug", id, "cwd-debug", cwd)
-			_, err := h.store.SaveSession(ctx, cwd, id, args.Messages)
+			var m = []aisdk.UIMessage{input.Message}
+			m = append(m, args.Messages...)
+			_, err := h.store.SaveSession(ctx, cwd, id, m)
 			if err != nil {
 				slog.Error("save chat messages failed", "error", err)
 				http.Error(w, "save chat messages failed", http.StatusInternalServerError)

@@ -10,6 +10,9 @@
 package tools
 
 import (
+	"errors"
+	"maps"
+
 	aisdk "github.com/grafana/ai-sdk"
 	"github.com/openfoundry/agent/engine"
 )
@@ -19,6 +22,50 @@ import (
 // 设计: 先组装 base tools, 再将 base tools 传给 agent tool
 // 这样子 agent 获得相同工具集 (不含 agent 自身, 防止无限嵌套)
 func AssembleTools(ctx ToolContext) (aisdk.ToolSet, error) {
+	tools := aisdk.ToolSet{}
+
+	weather, err := CreateWeatherTool(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tools["get_weather"] = weather
+
+	// askUser, err := CreateAskUserTool()
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// tools["ask_user"] = askUser
+
+	skill, err := CreateSkillsTool(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tools["read_skill"] = skill
+
+	fileRead, err := CreateFileReadTool(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tools["file_read"] = fileRead
+
+	// 扩展工具: extra[CreateToolsKey] 存放 CreateToolsFunc
+	if ctx.Extra != nil {
+		fn, ok := ctx.Extra[CreateToolsKey].(CreateToolsFunc)
+		if ok {
+			extraTools, err := fn(ctx.Extra)
+			if err != nil {
+				return nil, err
+			}
+			maps.Copy(tools, extraTools)
+		} else {
+			return nil, errors.New("extra.createTools is not a valid function")
+		}
+	}
+
+	return tools, nil
+}
+
+func AssembleToolsOLD(ctx ToolContext) (aisdk.ToolSet, error) {
 	tools := aisdk.ToolSet{}
 	if false && engine.EnvConfig.AgentTools() {
 		readOnlyTools := aisdk.ToolSet{}
@@ -76,6 +123,7 @@ func AssembleTools(ctx ToolContext) (aisdk.ToolSet, error) {
 		// 	return nil, err
 		// }
 		// tools["ask_user"] = askUser
+
 		skill, err := CreateSkillsTool(ctx)
 		if err != nil {
 			return nil, err
@@ -86,14 +134,22 @@ func AssembleTools(ctx ToolContext) (aisdk.ToolSet, error) {
 			return nil, err
 		}
 		tools["get_weather"] = weather
+
+		fileRead, err := CreateFileReadTool(ctx)
+		if err != nil {
+			return nil, err
+		}
+		tools["file_read"] = fileRead
 	}
 
-	// 扩展工具: extra["createTools"] 存放 func(ToolExtra) aisdk.ToolSet
+	// 扩展工具: extra[CreateToolsKey] 存放 CreateToolsFunc
 	if ctx.Extra != nil {
-		if fn, ok := ctx.Extra["createTools"].(func(ToolExtra) aisdk.ToolSet); ok {
-			for name, tool := range fn(ctx.Extra) {
-				tools[name] = tool
+		if fn, ok := ctx.Extra[CreateToolsKey].(CreateToolsFunc); ok {
+			extraTools, err := fn(ctx.Extra)
+			if err != nil {
+				return nil, err
 			}
+			maps.Copy(tools, extraTools)
 		}
 	}
 	return tools, nil

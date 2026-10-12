@@ -60,8 +60,8 @@ func TestAssembleToolsExtra(t *testing.T) {
 
 	tctx := fullToolContext(t)
 	tctx.Extra = ToolExtra{
-		"createTools": func(ToolExtra) aisdk.ToolSet {
-			return aisdk.ToolSet{"custom_tool": custom}
+		CreateToolsKey: func(ToolExtra) (aisdk.ToolSet, error) {
+			return aisdk.ToolSet{"custom_tool": custom}, nil
 		},
 	}
 	toolSet, err := AssembleTools(tctx)

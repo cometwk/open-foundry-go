@@ -40,8 +40,8 @@ func TestTypesCreateInitialState(t *testing.T) {
 	// ToolExtra: 任意键值 + createTools 回调约定
 	toolsSet := aisdk.ToolSet{}
 	extra := ToolExtra{
-		"custom":      42,
-		"createTools": func(ToolExtra) aisdk.ToolSet { return toolsSet },
+		"custom":       42,
+		CreateToolsKey: func(ToolExtra) (aisdk.ToolSet, error) { return toolsSet, nil },
 	}
 	require.Equal(t, 42, extra["custom"])
 }

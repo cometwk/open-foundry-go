@@ -9,6 +9,7 @@ import (
 	"context"
 	"time"
 
+	aisdk "github.com/grafana/ai-sdk"
 	"github.com/openfoundry/agent/engine"
 )
 
@@ -73,5 +74,10 @@ func CreateInitialState(cwd string) AppState {
 }
 
 // ToolExtra 扩展上下文 — 对应 TS 的 Record<string, any> & { createTools? }
-// 可选键 "createTools" 可存放 func(ToolExtra) aisdk.ToolSet (对应 TS 的 createTools 回调)
+// 可选键
+//
+//	CreateToolsKey 可存放 CreateToolsFunc
 type ToolExtra map[string]any
+type CreateToolsFunc = func(ToolExtra) (aisdk.ToolSet, error)
+
+const CreateToolsKey = "createTools"
